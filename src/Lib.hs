@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NoImplicitPrelude    #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
@@ -117,7 +118,7 @@ runTunnelingServer (host, port) = do
     let path = parsePath . WS.requestPath $ WS.pendingRequest pendingConn
     case path of
       Nothing -> putStrLn "Rejecting connection" >> WS.rejectRequest pendingConn "Invalid tunneling information"
-      Just (proto, rhost, rport) -> do
+      Just (!proto, !rhost, !rport) -> do
         conn <- WS.acceptRequest pendingConn
         case proto of
           UDP -> runUDPClient (BC.unpack rhost, rport) (propagateRW conn)
