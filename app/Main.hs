@@ -33,6 +33,7 @@ data TunnelInfo = TunnelInfo
   , remotePort :: !Int
   } deriving (Show)
 
+
 cmdLine :: WsTunnel
 cmdLine = WsTunnel
   { localToRemote  = def &= explicit &= name "L" &= name "localToRemote" &= typ "[BIND:]PORT:HOST:PORT"
@@ -76,8 +77,6 @@ parseTunnelInfo str = mk $ BC.unpack <$> BC.split ':' (BC.pack str)
     mk _                        = error $  "Invalid tunneling information `" ++ str ++ "`, please use format [BIND:]PORT:HOST:PORT"
 
 
-
-
 main :: IO ()
 main = do
   args <- getArgs
@@ -85,13 +84,14 @@ main = do
 
   let serverInfo = parseServerInfo (WsServerInfo False "" 0) (wsTunnelServer cfg)
 
+
   if serverMode cfg
     then putStrLn ("Starting server with opts " ++ show serverInfo )
-         >> runServer (host serverInfo, port serverInfo)
+         >> runServer (host serverInfo, fromIntegral $ port serverInfo)
     else if not $ null (localToRemote cfg)
                then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)
-                    in runClient (if udpMode cfg then UDP else TCP) (lHost, lPort)
-                       (host serverInfo, port serverInfo) (rHost, rPort)
+                    in runClient (if udpMode cfg then UDP else TCP) (lHost, (fromIntegral lPort))
+                       (host serverInfo, fromIntegral $ port serverInfo) (rHost, (fromIntegral rPort))
                else return ()
 
 
