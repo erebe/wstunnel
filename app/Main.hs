@@ -90,7 +90,7 @@ main = do
          >> runServer (host serverInfo, fromIntegral $ port serverInfo)
     else if not $ null (localToRemote cfg)
                then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)
-                    in runClient (if udpMode cfg then UDP else TCP) (lHost, (fromIntegral lPort))
+                    in runClient (useTls serverInfo) (if udpMode cfg then UDP else TCP) (lHost, (fromIntegral lPort))
                        (host serverInfo, fromIntegral $ port serverInfo) (rHost, (fromIntegral rPort))
                else return ()
 
