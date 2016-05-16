@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns         #-}
+{-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE NoImplicitPrelude    #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
@@ -27,7 +28,6 @@ import qualified Network.Socket.ByteString as N
 import qualified Network.WebSockets        as WS
 import qualified Network.WebSockets.Stream as WS
 
-import           Data.Maybe
 import           Network.Connection        (Connection, ConnectionParams (..),
                                             TLSSettings (..), connectTo,
                                             connectionGetChunk, connectionPut,
@@ -85,36 +85,41 @@ runUDPClient (host, port) app = do
 runUDPServer :: (HostName, PortNumber) -> (UdpAppData -> IO ()) -> IO ()
 runUDPServer (host, port) app = do
   putStrLn $ "WAIT for datagrames on " <> tshow host <> ":" <> tshow port
-  notebook <- newMVar mempty
-  bracket (N.bindPortUDP (fromIntegral port) (fromString host))
-          N.close
-          (runEventLoop notebook)
+  clientsCtx <- newMVar mempty
+  void $ bracket
+         (N.bindPortUDP (fromIntegral port) (fromString host))
+         N.close
+         (runEventLoop clientsCtx)
   putStrLn "CLOSE tunnel"
 
   where
-    runEventLoop :: MVar (H.HashMap N.SockAddr UdpAppData) -> N.Socket -> IO ()
-    runEventLoop clientMapM socket = forever $ do
-      (payload, addr) <- N.recvFrom socket 4096
-      clientCtx <- H.lookup addr <$> readMVar clientMapM
+    addNewClient clientsCtx socket addr payload = do
+      sem <- newMVar payload
+      let appData = UdpAppData { appAddr  = addr
+                                , appSem   = sem
+                                , appRead  = takeMVar sem
+                                , appWrite = \payload' -> void $ N.sendTo socket payload' addr
+                                }
+      void $ withMVar clientsCtx (return . H.insert addr appData)
+      return appData
 
-      if isJust clientCtx
-        then putMVar (appSem $ fromJust clientCtx) payload
-        else
-          void $ async $ bracket
-          (do sem <- newMVar payload
-              let appData = UdpAppData { appAddr  = addr
-                                       , appSem   = sem
-                                       , appRead  = takeMVar sem
-                                       , appWrite = \payload' -> void $ N.sendTo socket payload' addr
-                                       }
-              void $ withMVar clientMapM (return . H.insert addr appData)
-              return appData
-          )
-          (\appData' -> do
-              void $ withMVar clientMapM (return . H.delete (appAddr appData'))
-              putStrLn "TIMEOUT connection"
-          )
-          (timeout (30 * 10^(6 :: Int)) . app)
+    removeClient clientsCtx clientCtx = do
+      void $ withMVar clientsCtx (return . H.delete (appAddr clientCtx))
+      putStrLn "TIMEOUT connection"
+
+    pushDataToClient clientCtx = putMVar (appSem clientCtx)
+
+    runEventLoop clientsCtx socket = forever $ do
+      (payload, addr) <- N.recvFrom socket 4096
+      clientCtx <- H.lookup addr <$> readMVar clientsCtx
+
+      case clientCtx of
+        Just clientCtx' -> pushDataToClient clientCtx' payload
+        _               -> void $ async $ bracket
+                              (addNewClient clientsCtx socket addr payload)
+                              (removeClient clientsCtx)
+                              (timeout (30 * 10^(6 :: Int)) . app)
+
 
 runTunnelingClient :: Proto -> (HostName, PortNumber) -> (HostName, PortNumber) -> (WS.Connection -> IO ()) -> IO ()
 runTunnelingClient proto (wsHost, wsPort) (remoteHost, remotePort) app = do
