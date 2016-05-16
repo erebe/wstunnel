@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns       #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# OPTIONS_GHC -fno-cse #-}
 
@@ -5,7 +6,7 @@ module Main where
 
 import           Lib
 
-import           ClassyPrelude          (guard, readMay)
+import           ClassyPrelude          (ByteString, guard, readMay)
 import qualified Data.ByteString.Char8  as BC
 import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs
@@ -78,16 +79,16 @@ parseTunnelInfo str = mk $ BC.unpack <$> BC.split ':' (BC.pack str)
     mk _                        = error $  "Invalid tunneling information `" ++ str ++ "`, please use format [BIND:]PORT:HOST:PORT"
 
 
-parseRestrictTo :: String -> ((String, Int)-> Bool)
+parseRestrictTo :: String -> ((ByteString, Int)-> Bool)
 parseRestrictTo "" = const True
-parseRestrictTo str = let (h, p) = fromMaybe (error "Invalid Parameter restart") parse
-  in (\(hst, port) -> hst == h && port == p)
+parseRestrictTo str = let (!h, !p) = fromMaybe (error "Invalid Parameter restart") parse
+  in (\(!hst, !port) -> hst == h && port == p)
   where
     parse = do
               let ret = BC.unpack <$> BC.split ':' (BC.pack str)
               guard (length ret == 2)
               portNumber <- readMay $ ret !! 1 :: Maybe Int
-              return (head ret, portNumber)
+              return (BC.pack (head ret), portNumber)
 
 main :: IO ()
 main = do

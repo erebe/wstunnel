@@ -136,14 +136,15 @@ runTunnelingServer (host, port) isAllowed = do
     case path of
       Nothing -> putStrLn "Rejecting connection" >> WS.rejectRequest pendingConn "Invalid tunneling information"
       Just (!proto, !rhost, !rport) ->
-        if isAllowed (rhost, rport)
+        if not $ isAllowed (rhost, rport)
         then do
+          putStrLn "Rejecting tunneling"
+          WS.rejectRequest pendingConn "Restriction is on, You cannot request this tunneling"
+        else do
           conn <- WS.acceptRequest pendingConn
           case proto of
             UDP -> runUDPClient (BC.unpack rhost, fromIntegral rport) (propagateRW conn)
             TCP -> runTCPClient (BC.unpack rhost, fromIntegral rport) (propagateRW conn)
-        else
-          putStrLn "Rejecting tunneling" >> WS.rejectRequest pendingConn "Restriction is on, You cannot request this tunneling"
 
   putStrLn "CLOSE server"
 
@@ -180,9 +181,8 @@ runClient useTls proto local wsServer remote = do
         TCP -> runTCPServer local (\hOther -> out (`propagateRW` hOther))
 
 
-runServer :: (HostName, PortNumber) -> ((String, Int) -> Bool) -> IO ()
-runServer wsInfo isAllowed = let isAllowed' (str, port) = isAllowed (BC.unpack str, fromIntegral port)
-                             in runTunnelingServer wsInfo isAllowed'
+runServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
+runServer = runTunnelingServer
 
 
 runTlsTunnelingClient :: Proto -> (HostName, PortNumber) -> (HostName, PortNumber) -> (WS.Connection -> IO ()) -> IO ()
