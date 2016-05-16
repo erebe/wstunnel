@@ -27,6 +27,7 @@ import qualified Network.Socket.ByteString as N
 import qualified Network.WebSockets        as WS
 import qualified Network.WebSockets.Stream as WS
 
+import           Data.Maybe
 import           Network.Connection        (Connection, ConnectionParams (..),
                                             TLSSettings (..), connectTo,
                                             connectionGetChunk, connectionPut,
@@ -71,16 +72,13 @@ runTCPClient (host, port) app = do
 runUDPClient :: (HostName, PortNumber) -> (UdpAppData -> IO ()) -> IO ()
 runUDPClient (host, port) app = do
   putStrLn $ "CONNECTING to " <> tshow host <> ":" <> tshow port
-  bracket
-    (N.getSocketUDP host (fromIntegral port))
-    (N.close . fst)
-    (\(socket, addrInfo) -> do
-      sem <- newEmptyMVar
-      app UdpAppData { appAddr = N.addrAddress addrInfo
-                      , appSem = sem
-                      , appRead = fst <$> N.recvFrom socket 4096
-                      , appWrite = \payload -> void $ N.sendTo socket payload (N.addrAddress addrInfo)
-                      })
+  bracket (N.getSocketUDP host (fromIntegral port)) (N.close . fst) $ \(socket, addrInfo) -> do
+    sem <- newEmptyMVar
+    app UdpAppData { appAddr = N.addrAddress addrInfo
+                   , appSem = sem
+                   , appRead = fst <$> N.recvFrom socket 4096
+                   , appWrite = \payload -> void $ N.sendTo socket payload (N.addrAddress addrInfo)
+                   }
 
   putStrLn $ "CLOSE connection to " <> tshow host <> ":" <> tshow port
 
@@ -88,33 +86,35 @@ runUDPServer :: (HostName, PortNumber) -> (UdpAppData -> IO ()) -> IO ()
 runUDPServer (host, port) app = do
   putStrLn $ "WAIT for datagrames on " <> tshow host <> ":" <> tshow port
   notebook <- newMVar mempty
-  bracket (N.bindPortUDP (fromIntegral port) (fromString host)) N.close (runEventLoop notebook)
+  bracket (N.bindPortUDP (fromIntegral port) (fromString host))
+          N.close
+          (runEventLoop notebook)
   putStrLn "CLOSE tunnel"
 
   where
     runEventLoop :: MVar (H.HashMap N.SockAddr UdpAppData) -> N.Socket -> IO ()
-    runEventLoop clientMapM socket = do
+    runEventLoop clientMapM socket = forever $ do
       (payload, addr) <- N.recvFrom socket 4096
-      clientMap <- readMVar clientMapM
-      case H.lookup addr clientMap of
-        Just appData -> putMVar (appSem appData) payload
-        Nothing      -> do
-          let action = bracket (do sem <- newMVar payload
-                                   let appData = UdpAppData addr sem (takeMVar sem) (\payload' -> void $ N.sendTo socket payload' addr)
-                                   void $ swapMVar clientMapM (H.insert addr appData clientMap)
-                                   return appData
-                               )
-                               (\appData' -> do
-                                    m <- takeMVar clientMapM
-                                    putMVar clientMapM (H.delete (appAddr appData') m)
-                                    putStrLn "TIMEOUT connection"
-                               )
-                               (timeout (30 * 10^(6 :: Int)) . app)
+      clientCtx <- H.lookup addr <$> readMVar clientMapM
 
-          void $ async action
-
-      runEventLoop clientMapM socket
-
+      if isJust clientCtx
+        then putMVar (appSem $ fromJust clientCtx) payload
+        else
+          void $ async $ bracket
+          (do sem <- newMVar payload
+              let appData = UdpAppData { appAddr  = addr
+                                       , appSem   = sem
+                                       , appRead  = takeMVar sem
+                                       , appWrite = \payload' -> void $ N.sendTo socket payload' addr
+                                       }
+              void $ withMVar clientMapM (return . H.insert addr appData)
+              return appData
+          )
+          (\appData' -> do
+              void $ withMVar clientMapM (return . H.delete (appAddr appData'))
+              putStrLn "TIMEOUT connection"
+          )
+          (timeout (30 * 10^(6 :: Int)) . app)
 
 runTunnelingClient :: Proto -> (HostName, PortNumber) -> (HostName, PortNumber) -> (WS.Connection -> IO ()) -> IO ()
 runTunnelingClient proto (wsHost, wsPort) (remoteHost, remotePort) app = do
@@ -177,10 +177,12 @@ runServer = runTunnelingServer
 
 runTlsTunnelingClient :: Proto -> (HostName, PortNumber) -> (HostName, PortNumber) -> (WS.Connection -> IO ()) -> IO ()
 runTlsTunnelingClient proto (wsHost, wsPort) (remoteHost, remotePort) app = do
-  context <- initConnectionContext
+  putStrLn $ "OPEN tls connection to " <> tshow remoteHost <> ":" <> tshow remotePort
+  context    <- initConnectionContext
   connection <- connectTo context (connectionParams wsHost (fromIntegral wsPort))
-  stream <- WS.makeStream (reader connection) (writer connection)
+  stream     <- WS.makeStream (reader connection) (writer connection)
   WS.runClientWithStream stream wsHost (toPath proto remoteHost remotePort) WS.defaultConnectionOptions [] app
+  putStrLn $ "CLOSE tls connection to " <> tshow remoteHost <> ":" <> tshow remotePort
 
 
 connectionParams :: HostName -> PortNumber -> ConnectionParams
