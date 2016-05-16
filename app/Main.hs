@@ -5,8 +5,9 @@ module Main where
 
 import           Lib
 
-import           ClassyPrelude          (readMay)
+import           ClassyPrelude          (guard, readMay)
 import qualified Data.ByteString.Char8  as BC
+import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs
 import           System.Environment     (getArgs, withArgs)
 
@@ -77,6 +78,17 @@ parseTunnelInfo str = mk $ BC.unpack <$> BC.split ':' (BC.pack str)
     mk _                        = error $  "Invalid tunneling information `" ++ str ++ "`, please use format [BIND:]PORT:HOST:PORT"
 
 
+parseRestrictTo :: String -> ((String, Int)-> Bool)
+parseRestrictTo "" = const True
+parseRestrictTo str = let (h, p) = fromMaybe (error "Invalid Parameter restart") parse
+  in (\(hst, port) -> hst == h && port == p)
+  where
+    parse = do
+              let ret = BC.unpack <$> BC.split ':' (BC.pack str)
+              guard (length ret == 2)
+              portNumber <- readMay $ ret !! 1 :: Maybe Int
+              return (head ret, portNumber)
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -87,7 +99,7 @@ main = do
 
   if serverMode cfg
     then putStrLn ("Starting server with opts " ++ show serverInfo )
-         >> runServer (host serverInfo, fromIntegral $ port serverInfo)
+         >> runServer (host serverInfo, fromIntegral $ port serverInfo) (parseRestrictTo $ restrictTo cfg)
     else if not $ null (localToRemote cfg)
                then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)
                     in runClient (useTls serverInfo) (if udpMode cfg then UDP else TCP) (lHost, (fromIntegral lPort))
