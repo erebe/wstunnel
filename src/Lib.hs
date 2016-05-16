@@ -19,22 +19,18 @@ import qualified Data.ByteString           as B
 import qualified Data.ByteString.Char8     as BC
 
 import qualified Data.Streaming.Network    as N
+import           Network.Socket            (HostName, PortNumber)
 import qualified Network.Socket            as N hiding (recv, recvFrom, send,
                                                  sendTo)
 import qualified Network.Socket.ByteString as N
+
 import qualified Network.WebSockets        as WS
+import qualified Network.WebSockets.Stream as WS
 
-
-import qualified Data.ByteString.Lazy      as BL
 import           Network.Connection        (Connection, ConnectionParams (..),
                                             TLSSettings (..), connectTo,
                                             connectionGetChunk, connectionPut,
                                             initConnectionContext)
-import           Network.Socket            (HostName, PortNumber)
-import           Network.WebSockets        (ClientApp, ConnectionOptions,
-                                            Headers, defaultConnectionOptions,
-                                            runClientWithStream)
-import           Network.WebSockets.Stream (makeStream)
 
 
 instance Hashable N.SockAddr where
@@ -62,7 +58,7 @@ instance N.HasReadWrite UdpAppData where
 runTCPServer :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
 runTCPServer (host, port) app = do
   putStrLn $ "WAIT for connection on " <> tshow host <> ":" <> tshow port
-  _ <- N.runTCPServer (N.serverSettingsTCP (fromIntegral port) (fromString host)) app
+  void $ N.runTCPServer (N.serverSettingsTCP (fromIntegral port) (fromString host)) app
   putStrLn "CLOSE tunnel"
 
 runTCPClient :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
@@ -183,8 +179,8 @@ runTlsTunnelingClient :: Proto -> (HostName, PortNumber) -> (HostName, PortNumbe
 runTlsTunnelingClient proto (wsHost, wsPort) (remoteHost, remotePort) app = do
   context <- initConnectionContext
   connection <- connectTo context (connectionParams wsHost (fromIntegral wsPort))
-  stream <- makeStream (reader connection) (writer connection)
-  runClientWithStream stream wsHost (toPath proto remoteHost remotePort) defaultConnectionOptions [] app
+  stream <- WS.makeStream (reader connection) (writer connection)
+  WS.runClientWithStream stream wsHost (toPath proto remoteHost remotePort) WS.defaultConnectionOptions [] app
 
 
 connectionParams :: HostName -> PortNumber -> ConnectionParams
@@ -205,7 +201,7 @@ tlsSettings = TLSSettingsSimple
 reader :: Connection -> IO (Maybe ByteString)
 reader connection = fmap Just (connectionGetChunk connection)
 
-writer :: Connection -> Maybe BL.ByteString -> IO ()
+writer :: Connection -> Maybe LByteString -> IO ()
 writer connection = maybe (return ()) (connectionPut connection . toStrict)
 
 toPath :: Proto -> HostName -> PortNumber -> String
