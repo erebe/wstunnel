@@ -22,7 +22,7 @@ library
                      , async
                      , unordered-containers
                      , network
-                     , streaming-commons >= 0.1.3
+                     , streaming-commons >= 0.1.15
                      , connection >= 0.2
                      , websockets
 
