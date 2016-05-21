@@ -237,6 +237,8 @@ fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
 
 
 
+-- openssl genrsa 512 > host.key
+-- openssl req -new -x509 -nodes -sha1 -days 9999 -key host.key > host.cert
 serverKey :: ByteString
 serverKey = "-----BEGIN RSA PRIVATE KEY-----\n" <>
   "MIIBOgIBAAJBAMEEloIcF3sTGYhQmybyDm1NOpXmf94rR1fOwENjuW6jh4WTaz5k\n" <>
