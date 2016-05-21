@@ -31,12 +31,7 @@ import qualified Network.WebSockets            as WS
 import qualified Network.WebSockets.Connection as WS
 import qualified Network.WebSockets.Stream     as WS
 
-import           Network.Connection            (Connection,
-                                                ConnectionParams (..),
-                                                TLSSettings (..), connectTo,
-                                                connectionGetChunk,
-                                                connectionPut,
-                                                initConnectionContext)
+import           Network.Connection            (settingDisableCertificateValidation)
 
 
 instance Hashable N.SockAddr where
@@ -215,34 +210,18 @@ runServer useTLS = if useTLS then runTlsTunnelingServer else runTunnelingServer
 runTlsTunnelingClient :: Proto -> (HostName, PortNumber) -> (HostName, PortNumber) -> (WS.Connection -> IO ()) -> IO ()
 runTlsTunnelingClient proto (wsHost, wsPort) (remoteHost, remotePort) app = do
   putStrLn $ "OPEN tls connection to " <> tshow remoteHost <> ":" <> tshow remotePort
-  context    <- initConnectionContext
-  connection <- connectTo context (connectionParams wsHost (fromIntegral wsPort))
-  stream     <- WS.makeStream (reader connection) (writer connection)
-  WS.runClientWithStream stream wsHost (toPath proto remoteHost remotePort) WS.defaultConnectionOptions [] app
+  let tlsCfg = N.tlsClientConfig (fromIntegral wsPort) (BC.pack wsHost)
+  let tlsSettings = (N.tlsClientTLSSettings tlsCfg) { settingDisableCertificateValidation = True }
+  N.runTLSClient (tlsCfg { N.tlsClientTLSSettings = tlsSettings } )$ \appData ->
+    runApp appData app
+
   putStrLn $ "CLOSE tls connection to " <> tshow remoteHost <> ":" <> tshow remotePort
 
-
-connectionParams :: HostName -> PortNumber -> ConnectionParams
-connectionParams host port = ConnectionParams
-  { connectionHostname = host
-  , connectionPort = port
-  , connectionUseSecure = Just tlsSettings
-  , connectionUseSocks = Nothing
-  }
-
-tlsSettings :: TLSSettings
-tlsSettings = TLSSettingsSimple
-  { settingDisableCertificateValidation = True
-  , settingDisableSession = False
-  , settingUseServerName = False
-  }
-
-reader :: Connection -> IO (Maybe ByteString)
-reader connection = fmap Just (connectionGetChunk connection)
-
-writer :: Connection -> Maybe LByteString -> IO ()
-writer connection = maybe (return ()) (connectionPut connection . toStrict)
-
+  where
+    runApp :: N.AppData -> (WS.Connection -> IO ()) -> IO ()
+    runApp appData app = do
+      stream <- WS.makeStream (Just <$> N.appRead appData) (N.appWrite appData . toStrict . fromJust)
+      WS.runClientWithStream stream wsHost (toPath proto remoteHost remotePort) WS.defaultConnectionOptions [] app
 
 toPath :: Proto -> HostName -> PortNumber -> String
 toPath proto remoteHost remotePort = "/" <> toLower (show proto) <> "/" <> remoteHost <> "/" <> show remotePort

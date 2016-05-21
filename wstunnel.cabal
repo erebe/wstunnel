@@ -23,9 +23,9 @@ library
                      , unordered-containers
                      , network
                      , streaming-commons
-                     , connection
                      , websockets
                      , network-conduit-tls
+                     , connection
 
   default-language:    Haskell2010
 
