@@ -100,7 +100,7 @@ main = do
 
   if serverMode cfg
     then putStrLn ("Starting server with opts " ++ show serverInfo )
-         >> runServer (host serverInfo, fromIntegral $ port serverInfo) (parseRestrictTo $ restrictTo cfg)
+         >> runServer (useTls serverInfo) (host serverInfo, fromIntegral $ port serverInfo) (parseRestrictTo $ restrictTo cfg)
     else if not $ null (localToRemote cfg)
                then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)
                     in runClient (useTls serverInfo) (if udpMode cfg then UDP else TCP) (lHost, (fromIntegral lPort))

@@ -19,7 +19,9 @@ import           System.Timeout                (timeout)
 
 import qualified Data.ByteString.Char8         as BC
 
+import qualified Data.Conduit.Network.TLS      as N
 import qualified Data.Streaming.Network        as N
+
 import           Network.Socket                (HostName, PortNumber)
 import qualified Network.Socket                as N hiding (recv, recvFrom,
                                                      send, sendTo)
@@ -133,13 +135,28 @@ runTunnelingClient proto (wsHost, wsPort) (remoteHost, remotePort) app = do
   putStrLn $ "CLOSE connection to " <> tshow remoteHost <> ":" <> tshow remotePort
 
 
+runTlsTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
+runTlsTunnelingServer (bindTo, portNumber) isAllowed = do
+  putStrLn $ "WAIT for TLS connection on " <> tshow bindTo <> ":" <> tshow portNumber
+  N.runTCPServerTLS (N.tlsConfig (fromString bindTo) (fromIntegral portNumber) "/tmp/ssl/server.crt" "/tmp/ssl/server.key") $ \sClient ->
+    runApp sClient WS.defaultConnectionOptions (runServerEventLoop isAllowed)
+
+  putStrLn "CLOSE server"
+
+  where
+    runApp :: N.AppData -> WS.ConnectionOptions -> WS.ServerApp -> IO ()
+    runApp appData opts  app= do
+      stream <- WS.makeStream (Just <$> N.appRead appData) (N.appWrite appData . toStrict . fromJust)
+      bracket (WS.makePendingConnectionFromStream stream opts)
+              (\conn -> catch (WS.close $ WS.pendingStream conn) (\(_ :: SomeException) -> return ()))
+              app
 
 runTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
 runTunnelingServer (host, port) isAllowed = do
   putStrLn $ "WAIT for connection on " <> tshow host <> ":" <> tshow port
 
   void $ N.runTCPServer (N.serverSettingsTCP (fromIntegral port) (fromString host)) $ \sClient ->
-    runApp (fromJust $ N.appRawSocket sClient) WS.defaultConnectionOptions runEventLoop
+    runApp (fromJust $ N.appRawSocket sClient) WS.defaultConnectionOptions (runServerEventLoop isAllowed)
 
   putStrLn "CLOSE server"
 
@@ -148,20 +165,21 @@ runTunnelingServer (host, port) isAllowed = do
     runApp socket opts = bracket (WS.makePendingConnection socket opts)
                          (\conn -> catch (WS.close $ WS.pendingStream conn) (\(_ :: SomeException) -> return ()))
 
-    runEventLoop pendingConn = do
-     let path =  fromPath . WS.requestPath $ WS.pendingRequest pendingConn
-     case path of
-       Nothing -> putStrLn "Rejecting connection" >> WS.rejectRequest pendingConn "Invalid tunneling information"
-       Just (!proto, !rhost, !rport) ->
-         if not $ isAllowed (rhost, rport)
-         then do
-           putStrLn "Rejecting tunneling"
-           WS.rejectRequest pendingConn "Restriction is on, You cannot request this tunneling"
-         else do
-           conn <- WS.acceptRequest pendingConn
-           case proto of
-             UDP -> runUDPClient (BC.unpack rhost, fromIntegral rport) (propagateRW conn)
-             TCP -> runTCPClient (BC.unpack rhost, fromIntegral rport) (propagateRW conn)
+runServerEventLoop :: ((ByteString, Int) -> Bool) -> WS.PendingConnection -> IO ()
+runServerEventLoop isAllowed pendingConn = do
+  let path =  fromPath . WS.requestPath $ WS.pendingRequest pendingConn
+  case path of
+    Nothing -> putStrLn "Rejecting connection" >> WS.rejectRequest pendingConn "Invalid tunneling information"
+    Just (!proto, !rhost, !rport) ->
+      if not $ isAllowed (rhost, rport)
+      then do
+        putStrLn "Rejecting tunneling"
+        WS.rejectRequest pendingConn "Restriction is on, You cannot request this tunneling"
+      else do
+        conn <- WS.acceptRequest pendingConn
+        case proto of
+          UDP -> runUDPClient (BC.unpack rhost, fromIntegral rport) (propagateRW conn)
+          TCP -> runTCPClient (BC.unpack rhost, fromIntegral rport) (propagateRW conn)
 
 
 
@@ -190,8 +208,8 @@ runClient useTls proto local wsServer remote = do
         TCP -> runTCPServer local (\hOther -> out (`propagateRW` hOther))
 
 
-runServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
-runServer = runTunnelingServer
+runServer :: Bool -> (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
+runServer useTLS = if useTLS then runTlsTunnelingServer else runTunnelingServer
 
 
 runTlsTunnelingClient :: Proto -> (HostName, PortNumber) -> (HostName, PortNumber) -> (WS.Connection -> IO ()) -> IO ()
