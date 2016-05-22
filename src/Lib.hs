@@ -1,8 +1,10 @@
 {-# LANGUAGE BangPatterns         #-}
-{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE NoImplicitPrelude    #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 
 module Lib
@@ -34,11 +36,10 @@ import qualified Network.WebSockets.Stream     as WS
 import           Network.Connection            (settingDisableCertificateValidation)
 
 
-instance Hashable N.SockAddr where
-  hashWithSalt salt (N.SockAddrInet port host)               = hashWithSalt salt ((fromIntegral port :: Int) + hash host)
-  hashWithSalt salt (N.SockAddrInet6 port flow host scopeID) = hashWithSalt salt ((fromIntegral port :: Int) + hash host + hash flow + hash scopeID)
-  hashWithSalt salt (N.SockAddrUnix addr)                    = hashWithSalt salt addr
-  hashWithSalt salt (N.SockAddrCan addr)                     = hashWithSalt salt addr
+deriving instance Generic PortNumber
+deriving instance Hashable PortNumber
+deriving instance Generic N.SockAddr
+deriving instance Hashable N.SockAddr
 
 data Proto = UDP | TCP deriving (Show, Read)
 
@@ -91,8 +92,7 @@ runUDPServer (host, port) app = do
   putStrLn "CLOSE tunnel"
 
   where
-    addNewClient :: IORef (H.HashMap N.SockAddr UdpAppData) -> N.Socket -> N.SockAddr -> ByteString
-                    -> IO UdpAppData
+    addNewClient :: IORef (H.HashMap N.SockAddr UdpAppData) -> N.Socket -> N.SockAddr -> ByteString -> IO UdpAppData
     addNewClient clientsCtx socket addr payload = do
       sem <- newMVar payload
       let appData = UdpAppData { appAddr  = addr
