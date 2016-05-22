@@ -58,20 +58,20 @@ instance N.HasReadWrite UdpAppData where
 
 runTCPServer :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
 runTCPServer (host, port) app = do
-  putStrLn $ "WAIT for connection on " <> tshow host <> ":" <> tshow port
+  putStrLn $ "WAIT for connection on " <> fromString host <> ":" <> tshow port
   void $ N.runTCPServer (N.serverSettingsTCP (fromIntegral port) (fromString host)) app
   putStrLn "CLOSE tunnel"
 
 runTCPClient :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
 runTCPClient (host, port) app = do
-  putStrLn $ "CONNECTING to " <> tshow host <> ":" <> tshow port
+  putStrLn $ "CONNECTING to " <> fromString host <> ":" <> tshow port
   void $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (BC.pack host)) app
-  putStrLn $ "CLOSE connection to " <> tshow host <> ":" <> tshow port
+  putStrLn $ "CLOSE connection to " <> fromString host <> ":" <> tshow port
 
 
 runUDPClient :: (HostName, PortNumber) -> (UdpAppData -> IO ()) -> IO ()
 runUDPClient (host, port) app = do
-  putStrLn $ "CONNECTING to " <> tshow host <> ":" <> tshow port
+  putStrLn $ "CONNECTING to " <> fromString host <> ":" <> tshow port
   bracket (N.getSocketUDP host (fromIntegral port)) (N.close . fst) $ \(socket, addrInfo) -> do
     sem <- newEmptyMVar
     app UdpAppData { appAddr  = N.addrAddress addrInfo
@@ -80,11 +80,12 @@ runUDPClient (host, port) app = do
                    , appWrite = \payload -> void $ N.sendTo socket payload (N.addrAddress addrInfo)
                    }
 
-  putStrLn $ "CLOSE connection to " <> tshow host <> ":" <> tshow port
+  putStrLn $ "CLOSE connection to " <> fromString host <> ":" <> tshow port
+
 
 runUDPServer :: (HostName, PortNumber) -> (UdpAppData -> IO ()) -> IO ()
 runUDPServer (host, port) app = do
-  putStrLn $ "WAIT for datagrames on " <> tshow host <> ":" <> tshow port
+  putStrLn $ "WAIT for datagrames on " <> fromString host <> ":" <> tshow port
   clientsCtx <- newIORef mempty
   void $ bracket (N.bindPortUDP (fromIntegral port) (fromString host)) N.close (runEventLoop clientsCtx)
   putStrLn "CLOSE tunnel"
@@ -125,14 +126,30 @@ runUDPServer (host, port) app = do
 
 runTunnelingClient :: Proto -> (HostName, PortNumber) -> (HostName, PortNumber) -> (WS.Connection -> IO ()) -> IO ()
 runTunnelingClient proto (wsHost, wsPort) (remoteHost, remotePort) app = do
-  putStrLn $ "OPEN connection to " <> tshow remoteHost <> ":" <> tshow remotePort
+  putStrLn $ "OPEN connection to " <> fromString remoteHost <> ":" <> tshow remotePort
   void $  WS.runClient wsHost (fromIntegral wsPort) (toPath proto remoteHost remotePort) app
-  putStrLn $ "CLOSE connection to " <> tshow remoteHost <> ":" <> tshow remotePort
+  putStrLn $ "CLOSE connection to " <> fromString remoteHost <> ":" <> tshow remotePort
+
+runTlsTunnelingClient :: Proto -> (HostName, PortNumber) -> (HostName, PortNumber) -> (WS.Connection -> IO ()) -> IO ()
+runTlsTunnelingClient proto (wsHost, wsPort) (remoteHost, remotePort) app = do
+  putStrLn $ "OPEN tls connection to " <> fromString remoteHost <> ":" <> tshow remotePort
+  let tlsCfg = N.tlsClientConfig (fromIntegral wsPort) (BC.pack wsHost)
+  let tlsSettings = (N.tlsClientTLSSettings tlsCfg) { settingDisableCertificateValidation = True }
+  N.runTLSClient (tlsCfg { N.tlsClientTLSSettings = tlsSettings } )$ \appData ->
+    runApp appData app
+
+  putStrLn $ "CLOSE tls connection to " <> fromString remoteHost <> ":" <> tshow remotePort
+
+  where
+    runApp :: N.AppData -> (WS.Connection -> IO ()) -> IO ()
+    runApp appData app = do
+      stream <- WS.makeStream (Just <$> N.appRead appData) (N.appWrite appData . toStrict . fromJust)
+      WS.runClientWithStream stream wsHost (toPath proto remoteHost remotePort) WS.defaultConnectionOptions [] app
 
 
 runTlsTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
 runTlsTunnelingServer (bindTo, portNumber) isAllowed = do
-  putStrLn $ "WAIT for TLS connection on " <> tshow bindTo <> ":" <> tshow portNumber
+  putStrLn $ "WAIT for TLS connection on " <> fromString bindTo <> ":" <> tshow portNumber
   N.runTCPServerTLS (N.tlsConfigBS (fromString bindTo) (fromIntegral portNumber) serverCertificate serverKey) $ \sClient ->
     runApp sClient WS.defaultConnectionOptions (runServerEventLoop isAllowed)
 
@@ -148,7 +165,7 @@ runTlsTunnelingServer (bindTo, portNumber) isAllowed = do
 
 runTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
 runTunnelingServer (host, port) isAllowed = do
-  putStrLn $ "WAIT for connection on " <> tshow host <> ":" <> tshow port
+  putStrLn $ "WAIT for connection on " <> fromString host <> ":" <> tshow port
 
   void $ N.runTCPServer (N.serverSettingsTCP (fromIntegral port) (fromString host)) $ \sClient ->
     runApp (fromJust $ N.appRawSocket sClient) WS.defaultConnectionOptions (runServerEventLoop isAllowed)
@@ -207,21 +224,6 @@ runServer :: Bool -> (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO
 runServer useTLS = if useTLS then runTlsTunnelingServer else runTunnelingServer
 
 
-runTlsTunnelingClient :: Proto -> (HostName, PortNumber) -> (HostName, PortNumber) -> (WS.Connection -> IO ()) -> IO ()
-runTlsTunnelingClient proto (wsHost, wsPort) (remoteHost, remotePort) app = do
-  putStrLn $ "OPEN tls connection to " <> tshow remoteHost <> ":" <> tshow remotePort
-  let tlsCfg = N.tlsClientConfig (fromIntegral wsPort) (BC.pack wsHost)
-  let tlsSettings = (N.tlsClientTLSSettings tlsCfg) { settingDisableCertificateValidation = True }
-  N.runTLSClient (tlsCfg { N.tlsClientTLSSettings = tlsSettings } )$ \appData ->
-    runApp appData app
-
-  putStrLn $ "CLOSE tls connection to " <> tshow remoteHost <> ":" <> tshow remotePort
-
-  where
-    runApp :: N.AppData -> (WS.Connection -> IO ()) -> IO ()
-    runApp appData app = do
-      stream <- WS.makeStream (Just <$> N.appRead appData) (N.appWrite appData . toStrict . fromJust)
-      WS.runClientWithStream stream wsHost (toPath proto remoteHost remotePort) WS.defaultConnectionOptions [] app
 
 toPath :: Proto -> HostName -> PortNumber -> String
 toPath proto remoteHost remotePort = "/" <> toLower (show proto) <> "/" <> remoteHost <> "/" <> show remotePort
