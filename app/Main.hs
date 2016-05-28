@@ -4,7 +4,7 @@
 
 module Main where
 
-import           Lib
+import           Tunnel
 
 import           ClassyPrelude          (ByteString, guard, readMay)
 import qualified Data.ByteString.Char8  as BC
@@ -65,8 +65,8 @@ toPort str = case readMay str of
 
 parseServerInfo :: WsServerInfo -> String -> WsServerInfo
 parseServerInfo server []                           = server
-parseServerInfo server ('w':'s':':':'/':'/':xs)     = parseServerInfo (server {useTls = False, port = 80}) xs
-parseServerInfo server ('w':'s':'s':':':'/':'/':xs) = parseServerInfo (server {useTls = True, port = 443}) xs
+parseServerInfo server ('w':'s':':':'/':'/':xs)     = parseServerInfo (server {Main.useTls = False, port = 80}) xs
+parseServerInfo server ('w':'s':'s':':':'/':'/':xs) = parseServerInfo (server {Main.useTls = True, port = 443}) xs
 parseServerInfo server (':':prt)                    = server {port = toPort prt}
 parseServerInfo server hostPath                     = parseServerInfo (server {host = takeWhile (/= ':') hostPath}) (dropWhile (/= ':') hostPath)
 
@@ -74,8 +74,8 @@ parseServerInfo server hostPath                     = parseServerInfo (server {h
 parseTunnelInfo :: String -> TunnelInfo
 parseTunnelInfo str = mk $ BC.unpack <$> BC.split ':' (BC.pack str)
   where
-    mk [lPort, host, rPort]     = TunnelInfo {localHost = "127.0.0.1", localPort = toPort lPort, remoteHost = host, remotePort = toPort rPort}
-    mk [bind,lPort, host,rPort] = TunnelInfo {localHost = bind, localPort = toPort lPort, remoteHost = host, remotePort = toPort rPort}
+    mk [lPort, host, rPort]     = TunnelInfo {localHost = "127.0.0.1", Main.localPort = toPort lPort, remoteHost = host, remotePort = toPort rPort}
+    mk [bind,lPort, host,rPort] = TunnelInfo {localHost = bind, Main.localPort = toPort lPort, remoteHost = host, remotePort = toPort rPort}
     mk _                        = error $  "Invalid tunneling information `" ++ str ++ "`, please use format [BIND:]PORT:HOST:PORT"
 
 
@@ -100,11 +100,18 @@ main = do
 
   if serverMode cfg
     then putStrLn ("Starting server with opts " ++ show serverInfo )
-         >> runServer (useTls serverInfo) (host serverInfo, fromIntegral $ port serverInfo) (parseRestrictTo $ restrictTo cfg)
+         >> runServer (Main.useTls serverInfo) (host serverInfo, fromIntegral $ port serverInfo) (parseRestrictTo $ restrictTo cfg)
     else if not $ null (localToRemote cfg)
                then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)
-                    in runClient (useTls serverInfo) (if udpMode cfg then UDP else TCP) (lHost, (fromIntegral lPort))
-                       (host serverInfo, fromIntegral $ port serverInfo) (rHost, (fromIntegral rPort))
+                    in runClient TunnelSettings { localBind = lHost
+                                                , Tunnel.localPort = fromIntegral lPort
+                                                , serverHost = host serverInfo
+                                                , serverPort = fromIntegral $ port serverInfo
+                                                , destHost = rHost
+                                                , destPort = fromIntegral rPort
+                                                , Tunnel.useTls = Main.useTls serverInfo
+                                                , protocol = if udpMode cfg then UDP else TCP
+                                                }
                else return ()
 
 
