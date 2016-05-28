@@ -14,12 +14,12 @@ import           System.Environment     (getArgs, withArgs)
 
 data WsTunnel = WsTunnel
   { localToRemote  :: String
-  , remoteToLocal  :: String
+  -- , remoteToLocal  :: String
   , wsTunnelServer :: String
   , udpMode        :: Bool
+  , proxy          :: String
   , serverMode     :: Bool
   , restrictTo     :: String
-  , proxy          :: String
   , _last          :: Bool
   } deriving (Show, Data, Typeable)
 
@@ -41,12 +41,12 @@ cmdLine :: WsTunnel
 cmdLine = WsTunnel
   { localToRemote  = def &= explicit &= name "L" &= name "localToRemote" &= typ "[BIND:]PORT:HOST:PORT"
                          &= help "Listen on local and forward traffic from remote" &= groupname "Client options"
-  , remoteToLocal  = def &= explicit &= name "R" &= name "RemoteToLocal" &= typ "[BIND:]PORT:HOST:PORT"
-                         &= help "Listen on remote and forward traffic from local"
+  -- , remoteToLocal  = def &= explicit &= name "R" &= name "RemoteToLocal" &= typ "[BIND:]PORT:HOST:PORT"
+  --                        &= help "Listen on remote and forward traffic from local"
   , udpMode        = def &= explicit &= name "u" &= name "udp" &= help "forward UDP traffic instead of TCP"
-  , wsTunnelServer = def &= argPos 0 &= typ "ws[s]://wstunnelServer[:port]"
   , proxy          = def &= explicit &= name "p" &= name "httpProxy"
                          &= help "If set, will use this proxy to connect to the server" &= typ "HOST:PORT"
+  , wsTunnelServer = def &= argPos 0 &= typ "ws[s]://wstunnelServer[:port]"
 
   , serverMode     = def &= explicit &= name "server"
                          &= help "Start a server that will forward traffic for you" &= groupname "Server options"
