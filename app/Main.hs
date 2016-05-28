@@ -106,8 +106,6 @@ main = do
 
   let serverInfo = parseServerInfo (WsServerInfo False "" 0) (wsTunnelServer cfg)
 
-  print $ parseProxyInfo (proxy cfg)
-
   if serverMode cfg
     then putStrLn ("Starting server with opts " ++ show serverInfo )
          >> runServer (Main.useTls serverInfo) (host serverInfo, fromIntegral $ port serverInfo) (parseRestrictTo $ restrictTo cfg)
