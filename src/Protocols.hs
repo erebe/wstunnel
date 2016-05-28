@@ -42,6 +42,7 @@ instance N.HasReadWrite UdpAppData where
   writeLens f appData = fmap (\writeData -> appData { appWrite = writeData}) (f $ appWrite appData)
 
 
+
 runTCPServer :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
 runTCPServer (host, port) app = do
   putStrLn $ "WAIT for connection on " <> fromString host <> ":" <> tshow port

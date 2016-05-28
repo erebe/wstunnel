@@ -12,10 +12,8 @@ module Tunnel
     ) where
 
 import           ClassyPrelude
-import           Control.Concurrent.Async      (async, race_)
-import qualified Data.HashMap.Strict           as H
+import           Control.Concurrent.Async      (race_)
 import           Data.Maybe                    (fromJust)
-import           System.Timeout                (timeout)
 
 import qualified Data.ByteString.Char8         as BC
 
@@ -25,30 +23,35 @@ import qualified Data.Streaming.Network        as N
 import           Network.Socket                (HostName, PortNumber)
 import qualified Network.Socket                as N hiding (recv, recvFrom,
                                                      send, sendTo)
-import qualified Network.Socket.ByteString     as N
 
 import qualified Network.WebSockets            as WS
 import qualified Network.WebSockets.Connection as WS
 import qualified Network.WebSockets.Stream     as WS
 
-import           Network.Connection            (settingDisableCertificateValidation)
+import qualified Network.Connection            as NC
 import           Protocols
+import           System.IO                     (IOMode (ReadWriteMode))
 
 
 
 data TunnelSettings = TunnelSettings
-  { localBind  :: HostName
-  , localPort  :: PortNumber
-  , serverHost :: HostName
-  , serverPort :: PortNumber
-  , destHost   :: HostName
-  , destPort   :: PortNumber
-  , protocol   :: Protocol
-  , useTls     :: Bool
+  { proxySetting :: Maybe (HostName, PortNumber)
+  , localBind    :: HostName
+  , localPort    :: PortNumber
+  , serverHost   :: HostName
+  , serverPort   :: PortNumber
+  , destHost     :: HostName
+  , destPort     :: PortNumber
+  , protocol     :: Protocol
+  , useTls       :: Bool
   }
 
 instance Show TunnelSettings where
   show TunnelSettings{..} =  localBind <> ":" <> show localPort
+                             <> (if isNothing proxySetting
+                                 then mempty
+                                 else " <==PROXY==> " <> fst (fromJust proxySetting) <> ":" <> (show . snd . fromJust $ proxySetting)
+                                )
                              <> " <==" <> (if useTls then "WSS" else "WS") <> "==> "
                              <> serverHost <> ":" <> show serverPort
                              <> " <==" <>  show protocol <> "==> " <> destHost <> ":" <> show destPort
@@ -57,7 +60,7 @@ data Connection = Connection
   { read          :: IO (Maybe ByteString)
   , write         :: ByteString -> IO ()
   , close         :: IO ()
-  , rawConnection :: Maybe WS.Connection
+  , rawConnection :: Maybe N.AppData
   }
 
 
@@ -68,20 +71,27 @@ instance ToConnection WS.Connection where
   toConnection conn = Connection { read = Just <$> WS.receiveData conn
                                  , write = WS.sendBinaryData conn
                                  , close = WS.sendClose conn (mempty :: LByteString)
-                                 , rawConnection = Just conn
+                                 , rawConnection = Nothing
                                  }
 
 instance ToConnection N.AppData where
   toConnection conn = Connection { read = Just <$> N.appRead conn
                                  , write = N.appWrite conn
                                  , close = N.appCloseConnection conn
-                                 , rawConnection = Nothing
+                                 , rawConnection = Just conn
                                  }
 
 instance ToConnection UdpAppData where
   toConnection conn = Connection { read = Just <$> appRead conn
                                  , write = appWrite conn
                                  , close = return ()
+                                 , rawConnection = Nothing
+                                 }
+
+instance ToConnection NC.Connection where
+  toConnection conn = Connection { read = Just <$> NC.connectionGetChunk conn
+                                 , write = NC.connectionPut conn
+                                 , close = NC.connectionClose conn
                                  , rawConnection = Nothing
                                  }
 
@@ -97,16 +107,48 @@ runTunnelingClientWith info@TunnelSettings{..} app conn = do
 
   putStrLn $ "CLOSE tunnel " <> tshow info
 
+httpProxyConnection :: (HostName, PortNumber) -> TunnelSettings -> (Connection -> IO ()) -> IO ()
+httpProxyConnection (host, port) TunnelSettings{..} app =
+  myTry $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> do
+    void $ N.appWrite conn $ "CONNECT " <> fromString serverHost <> ":" <> fromString (show serverPort) <> " HTTP/1.0\r\n"
+                          <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <>"\r\n\r\n"
+    response <- readProxyResponse mempty conn
+    if isConnected response
+    then app (toConnection conn)
+    else print $ "Proxy refused the connection :: \n" <> response
+
+  where
+    readProxyResponse buff conn = do
+      response <- N.appRead conn
+      if "\r\n\r\n" `BC.isSuffixOf` response
+        then return $ buff <> response
+        else readProxyResponse (buff <> response) conn
+
+    isConnected response = " 200 " `BC.isInfixOf` response
+
 tcpConnection :: TunnelSettings -> (Connection -> IO ()) -> IO ()
-tcpConnection info@TunnelSettings{..} app =
-  N.runTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) (app . toConnection)
+tcpConnection TunnelSettings{..} app =
+  myTry $ N.runTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) (app . toConnection)
 
-tlsConnection :: TunnelSettings ->  (Connection -> IO ()) -> IO ()
-tlsConnection info@TunnelSettings{..} app = do
-  let tlsCfg = N.tlsClientConfig (fromIntegral serverPort) (fromString serverHost)
-  let tlsSettings = (N.tlsClientTLSSettings tlsCfg) { settingDisableCertificateValidation = True }
-  N.runTLSClient (tlsCfg { N.tlsClientTLSSettings = tlsSettings } )  (app . toConnection)
 
+runTLSClient :: TunnelSettings -> Connection -> (Connection -> IO ()) -> IO ()
+runTLSClient TunnelSettings{..} conn app = do
+  let tlsSettings = NC.TLSSettingsSimple { NC.settingDisableCertificateValidation = True
+                                         , NC.settingDisableSession = False
+                                         , NC.settingUseServerName = False
+                                         }
+  let connectionParams = NC.ConnectionParams { NC.connectionHostname = serverHost
+                                             , NC.connectionPort = serverPort
+                                             , NC.connectionUseSecure = Just tlsSettings
+                                             , NC.connectionUseSocks = Nothing
+                                             }
+
+  context <- NC.initConnectionContext
+  let socket = fromJust . N.appRawSocket . fromJust $ rawConnection conn
+  h <- N.socketToHandle socket ReadWriteMode
+
+  connection <- NC.connectFromHandle context h connectionParams
+  app (toConnection connection)
 
 
 runTlsTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
@@ -176,7 +218,10 @@ myTry f = void $ catch f (\(_ :: SomeException) -> return ())
 
 runClient :: TunnelSettings -> IO ()
 runClient cfg@TunnelSettings{..} = do
-  let out app = (if useTls then tlsConnection cfg else tcpConnection cfg) (runTunnelingClientWith cfg app)
+  let out app = (if isJust proxySetting then httpProxyConnection (fromJust proxySetting) cfg else tcpConnection cfg) $ \cnx ->
+        (if useTls then runTLSClient cfg cnx else \app' -> app' cnx) $ \cnx' ->
+          runTunnelingClientWith cfg app cnx'
+
   case protocol of
         UDP -> runUDPServer (localBind, localPort) (\hOther -> out (`propagateRW` toConnection hOther))
         TCP -> runTCPServer (localBind, localPort) (\hOther -> out (`propagateRW` toConnection hOther))

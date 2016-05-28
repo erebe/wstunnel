@@ -19,6 +19,7 @@ data WsTunnel = WsTunnel
   , udpMode        :: Bool
   , serverMode     :: Bool
   , restrictTo     :: String
+  , proxy          :: String
   , _last          :: Bool
   } deriving (Show, Data, Typeable)
 
@@ -44,12 +45,13 @@ cmdLine = WsTunnel
                          &= help "Listen on remote and forward traffic from local"
   , udpMode        = def &= explicit &= name "u" &= name "udp" &= help "forward UDP traffic instead of TCP"
   , wsTunnelServer = def &= argPos 0 &= typ "ws[s]://wstunnelServer[:port]"
+  , proxy          = def &= explicit &= name "p" &= name "httpProxy"
+                         &= help "If set, will use this proxy to connect to the server" &= typ "HOST:PORT"
 
   , serverMode     = def &= explicit &= name "server"
                          &= help "Start a server that will forward traffic for you" &= groupname "Server options"
   , restrictTo     = def &= explicit &= name "r" &= name "restrictTo"
                          &= help "Accept traffic to be forwarded only to this service" &= typ "HOST:PORT"
-
   , _last          = def &= explicit &= name "ツ" &= groupname "Common options"
   } &= summary (   "Use the websockets protocol to tunnel {TCP,UDP} traffic\n"
                 ++ "wsTunnelClient <---> wsTunnelServer <---> RemoteHost\n"
@@ -79,7 +81,7 @@ parseTunnelInfo str = mk $ BC.unpack <$> BC.split ':' (BC.pack str)
     mk _                        = error $  "Invalid tunneling information `" ++ str ++ "`, please use format [BIND:]PORT:HOST:PORT"
 
 
-parseRestrictTo :: String -> ((ByteString, Int)-> Bool)
+parseRestrictTo :: String -> ((ByteString, Int) -> Bool)
 parseRestrictTo "" = const True
 parseRestrictTo str = let (!h, !p) = fromMaybe (error "Invalid Parameter restart") parse
   in (\(!hst, !port) -> hst == h && port == p)
@@ -90,6 +92,13 @@ parseRestrictTo str = let (!h, !p) = fromMaybe (error "Invalid Parameter restart
               portNumber <- readMay $ ret !! 1 :: Maybe Int
               return (BC.pack (head ret), portNumber)
 
+parseProxyInfo :: String -> Maybe (String, Int)
+parseProxyInfo str = do
+  let ret = BC.unpack <$> BC.split ':' (BC.pack str)
+  guard (length ret == 2)
+  portNumber <- readMay $ ret !! 1 :: Maybe Int
+  return (head ret, portNumber)
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -97,6 +106,7 @@ main = do
 
   let serverInfo = parseServerInfo (WsServerInfo False "" 0) (wsTunnelServer cfg)
 
+  print $ parseProxyInfo (proxy cfg)
 
   if serverMode cfg
     then putStrLn ("Starting server with opts " ++ show serverInfo )
@@ -111,6 +121,7 @@ main = do
                                                 , destPort = fromIntegral rPort
                                                 , Tunnel.useTls = Main.useTls serverInfo
                                                 , protocol = if udpMode cfg then UDP else TCP
+                                                , proxySetting = (\(h, p) -> (h, fromIntegral p)) <$> parseProxyInfo (proxy cfg)
                                                 }
                else return ()
 
