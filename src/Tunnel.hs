@@ -56,6 +56,7 @@ instance Show TunnelSettings where
                              <> serverHost <> ":" <> show serverPort
                              <> " <==" <>  show protocol <> "==> " <> destHost <> ":" <> show destPort
 
+
 data Connection = Connection
   { read          :: IO (Maybe ByteString)
   , write         :: ByteString -> IO ()
@@ -98,14 +99,15 @@ instance ToConnection NC.Connection where
 connectionToStream :: Connection -> IO WS.Stream
 connectionToStream Connection{..} =  WS.makeStream read (write . toStrict . fromJust)
 
-runTunnelingClientWith :: TunnelSettings -> (Connection -> IO ()) -> Connection -> IO ()
-runTunnelingClientWith info@TunnelSettings{..} app conn = do
+runTunnelingClientWith :: TunnelSettings -> (Connection -> IO ()) -> IO (Connection -> IO ())
+runTunnelingClientWith info@TunnelSettings{..} app = do
   putStrLn $ "OPEN tunnel " <> tshow info
-  stream <- connectionToStream conn
-  void $ WS.runClientWithStream stream serverHost (toPath info) WS.defaultConnectionOptions [] $ \conn' ->
-    app (toConnection conn')
+  return $ \conn -> do
+    stream <- connectionToStream conn
+    void $ WS.runClientWithStream stream serverHost (toPath info) WS.defaultConnectionOptions [] $ \conn' ->
+      app (toConnection conn')
+    putStrLn $ "CLOSE tunnel " <> tshow info
 
-  putStrLn $ "CLOSE tunnel " <> tshow info
 
 httpProxyConnection :: (HostName, PortNumber) -> TunnelSettings -> (Connection -> IO ()) -> IO ()
 httpProxyConnection (host, port) TunnelSettings{..} app =
@@ -131,8 +133,8 @@ tcpConnection TunnelSettings{..} app =
   myTry $ N.runTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) (app . toConnection)
 
 
-runTLSClient :: TunnelSettings -> Connection -> (Connection -> IO ()) -> IO ()
-runTLSClient TunnelSettings{..} conn app = do
+runTLSClient :: TunnelSettings -> (Connection -> IO ()) -> IO (Connection -> IO ())
+runTLSClient TunnelSettings{..} app = do
   let tlsSettings = NC.TLSSettingsSimple { NC.settingDisableCertificateValidation = True
                                          , NC.settingDisableSession = False
                                          , NC.settingUseServerName = False
@@ -143,12 +145,13 @@ runTLSClient TunnelSettings{..} conn app = do
                                              , NC.connectionUseSocks = Nothing
                                              }
 
-  context <- NC.initConnectionContext
-  let socket = fromJust . N.appRawSocket . fromJust $ rawConnection conn
-  h <- N.socketToHandle socket ReadWriteMode
+  return $ \conn -> do
+    context <- NC.initConnectionContext
+    let socket = fromJust . N.appRawSocket . fromJust $ rawConnection conn
+    h <- N.socketToHandle socket ReadWriteMode
 
-  connection <- NC.connectFromHandle context h connectionParams
-  app (toConnection connection)
+    connection <- NC.connectFromHandle context h connectionParams
+    app (toConnection connection)
 
 
 runTlsTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
@@ -218,13 +221,15 @@ myTry f = void $ catch f (\(_ :: SomeException) -> return ())
 
 runClient :: TunnelSettings -> IO ()
 runClient cfg@TunnelSettings{..} = do
-  let out app = (if isJust proxySetting then httpProxyConnection (fromJust proxySetting) cfg else tcpConnection cfg) $ \cnx ->
-        (if useTls then runTLSClient cfg cnx else \app' -> app' cnx) $ \cnx' ->
-          runTunnelingClientWith cfg app cnx'
+  let withTcp = if isJust proxySetting then httpProxyConnection (fromJust proxySetting) cfg else tcpConnection cfg
+  let doTlsIf tlsNeeded app = if tlsNeeded then runTLSClient cfg app else return app
+  let tunnelClient = runTunnelingClientWith cfg
+  let tunnelServer app = tunnelClient app >>= doTlsIf useTls >>= withTcp
+
 
   case protocol of
-        UDP -> runUDPServer (localBind, localPort) (\hOther -> out (`propagateRW` toConnection hOther))
-        TCP -> runTCPServer (localBind, localPort) (\hOther -> out (`propagateRW` toConnection hOther))
+        UDP -> runUDPServer (localBind, localPort) (\localH -> tunnelServer (`propagateRW` toConnection localH))
+        TCP -> runTCPServer (localBind, localPort) (\localH -> tunnelServer (`propagateRW` toConnection localH))
 
 
 runServer :: Bool -> (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
