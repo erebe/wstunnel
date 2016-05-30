@@ -100,7 +100,7 @@ connectionToStream :: Connection -> IO WS.Stream
 connectionToStream Connection{..} =  WS.makeStream read (write . toStrict . fromJust)
 
 runTunnelingClientWith :: TunnelSettings -> (Connection -> IO ()) -> (Connection -> IO ())
-runTunnelingClientWith info@TunnelSettings{..} app = \conn -> do
+runTunnelingClientWith info@TunnelSettings{..} app conn = do
     stream <- connectionToStream conn
     void $ WS.runClientWithStream stream serverHost (toPath info) WS.defaultConnectionOptions [] $ \conn' ->
       app (toConnection conn')

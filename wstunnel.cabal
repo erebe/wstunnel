@@ -26,6 +26,7 @@ library
                      , websockets
                      , network-conduit-tls
                      , connection
+                     , hslogger
 
   default-language:    Haskell2010
 
@@ -38,6 +39,8 @@ executable wstunnel
                      , cmdargs
                      , classy-prelude
                      , bytestring
+                     , hslogger
+
   default-language:    Haskell2010
 
 test-suite wstunnel-test
