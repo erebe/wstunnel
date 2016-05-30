@@ -99,10 +99,8 @@ instance ToConnection NC.Connection where
 connectionToStream :: Connection -> IO WS.Stream
 connectionToStream Connection{..} =  WS.makeStream read (write . toStrict . fromJust)
 
-runTunnelingClientWith :: TunnelSettings -> (Connection -> IO ()) -> IO (Connection -> IO ())
-runTunnelingClientWith info@TunnelSettings{..} app = do
-  putStrLn $ "OPEN tunnel " <> tshow info
-  return $ \conn -> do
+runTunnelingClientWith :: TunnelSettings -> (Connection -> IO ()) -> (Connection -> IO ())
+runTunnelingClientWith info@TunnelSettings{..} app = \conn -> do
     stream <- connectionToStream conn
     void $ WS.runClientWithStream stream serverHost (toPath info) WS.defaultConnectionOptions [] $ \conn' ->
       app (toConnection conn')
@@ -113,16 +111,16 @@ httpProxyConnection :: (HostName, PortNumber) -> TunnelSettings -> (Connection -
 httpProxyConnection (host, port) TunnelSettings{..} app =
   myTry $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> do
     void $ N.appWrite conn $ "CONNECT " <> fromString serverHost <> ":" <> fromString (show serverPort) <> " HTTP/1.0\r\n"
-                          <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <>"\r\n\r\n"
+                           <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <>"\r\n\r\n"
     response <- readProxyResponse mempty conn
     if isConnected response
     then app (toConnection conn)
-    else print $ "Proxy refused the connection :: \n" <> response
+    else putStrLn $ "Proxy refused the connection :: \n" <> fromString (BC.unpack response)
 
   where
     readProxyResponse buff conn = do
       response <- N.appRead conn
-      if "\r\n\r\n" `BC.isSuffixOf` response
+      if "\r\n\r\n" `BC.isInfixOf` response
         then return $ buff <> response
         else readProxyResponse (buff <> response) conn
 
@@ -133,8 +131,8 @@ tcpConnection TunnelSettings{..} app =
   myTry $ N.runTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) (app . toConnection)
 
 
-runTLSClient :: TunnelSettings -> (Connection -> IO ()) -> IO (Connection -> IO ())
-runTLSClient TunnelSettings{..} app = do
+runTLSClient :: TunnelSettings -> (Connection -> IO ()) -> (Connection -> IO ())
+runTLSClient TunnelSettings{..} app conn = do
   let tlsSettings = NC.TLSSettingsSimple { NC.settingDisableCertificateValidation = True
                                          , NC.settingDisableSession = False
                                          , NC.settingUseServerName = False
@@ -145,13 +143,12 @@ runTLSClient TunnelSettings{..} app = do
                                              , NC.connectionUseSocks = Nothing
                                              }
 
-  return $ \conn -> do
-    context <- NC.initConnectionContext
-    let socket = fromJust . N.appRawSocket . fromJust $ rawConnection conn
-    h <- N.socketToHandle socket ReadWriteMode
+  context <- NC.initConnectionContext
+  let socket = fromJust . N.appRawSocket . fromJust $ rawConnection conn
+  h <- N.socketToHandle socket ReadWriteMode
 
-    connection <- NC.connectFromHandle context h connectionParams
-    app (toConnection connection)
+  connection <- NC.connectFromHandle context h connectionParams
+  finally (app (toConnection connection)) (hClose h)
 
 
 runTlsTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
@@ -217,14 +214,14 @@ propagateWrites hTunnel hOther = myTry $ do
 
 
 myTry :: IO () -> IO ()
-myTry f = void $ catch f (\(_ :: SomeException) -> return ())
+myTry f = void $ catch f (\(e :: SomeException) -> print e)
 
 runClient :: TunnelSettings -> IO ()
 runClient cfg@TunnelSettings{..} = do
   let withTcp = if isJust proxySetting then httpProxyConnection (fromJust proxySetting) cfg else tcpConnection cfg
-  let doTlsIf tlsNeeded app = if tlsNeeded then runTLSClient cfg app else return app
+  let doTlsIf tlsNeeded app = if tlsNeeded then runTLSClient cfg app else app
   let tunnelClient = runTunnelingClientWith cfg
-  let tunnelServer app = tunnelClient app >>= doTlsIf useTls >>= withTcp
+  let tunnelServer app = withTcp (doTlsIf useTls . tunnelClient $ app)
 
 
   case protocol of
