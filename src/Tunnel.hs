@@ -31,6 +31,7 @@ import qualified Network.WebSockets.Stream     as WS
 import qualified Network.Connection            as NC
 import           Protocols
 import           System.IO                     (IOMode (ReadWriteMode))
+import System.Timeout
 
 
 
@@ -110,21 +111,25 @@ runTunnelingClientWith info@TunnelSettings{..} app conn = do
 httpProxyConnection :: (HostName, PortNumber) -> TunnelSettings -> (Connection -> IO ()) -> IO ()
 httpProxyConnection (host, port) TunnelSettings{..} app =
   myTry $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> do
-    void $ N.appWrite conn $ "CONNECT " <> fromString serverHost <> ":" <> fromString (show serverPort) <> " HTTP/1.0\r\n"
-                           <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <>"\r\n\r\n"
-    response <- readProxyResponse mempty conn
-    if isConnected response
-    then app (toConnection conn)
+    _ <- sendConnectRequest conn
+    responseM <- timeout (1000000 * 10) $ readProxyResponse mempty conn
+    let response = fromMaybe "No response of the proxy aftre 10s" responseM
+
+    if isAuthorized response
+    then app $ toConnection conn
     else putStrLn $ "Proxy refused the connection :: \n" <> fromString (BC.unpack response)
 
   where
+    sendConnectRequest h = N.appWrite h $ "CONNECT " <> fromString serverHost <> ":" <> fromString (show serverPort) <> " HTTP/1.0\r\n"
+                                        <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <>"\r\n\r\n"
+
     readProxyResponse buff conn = do
       response <- N.appRead conn
       if "\r\n\r\n" `BC.isInfixOf` response
         then return $ buff <> response
         else readProxyResponse (buff <> response) conn
 
-    isConnected response = " 200 " `BC.isInfixOf` response
+    isAuthorized response = " 200 " `BC.isInfixOf` response
 
 tcpConnection :: TunnelSettings -> (Connection -> IO ()) -> IO ()
 tcpConnection TunnelSettings{..} app =
