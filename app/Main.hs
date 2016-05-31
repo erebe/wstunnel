@@ -11,6 +11,7 @@ import qualified Data.ByteString.Char8  as BC
 import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs
 import           System.Environment     (getArgs, withArgs)
+import qualified System.Log.Logger as LOG
 
 data WsTunnel = WsTunnel
   { localToRemote  :: String
@@ -105,6 +106,8 @@ main = do
   cfg <- if null args then withArgs ["--help"] (cmdArgs cmdLine) else cmdArgs cmdLine
 
   let serverInfo = parseServerInfo (WsServerInfo False "" 0) (wsTunnelServer cfg)
+  LOG.updateGlobalLogger "wstunnel" (LOG.setLevel LOG.INFO)
+
 
   if serverMode cfg
     then putStrLn ("Starting server with opts " ++ show serverInfo )

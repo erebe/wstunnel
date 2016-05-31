@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Tunnel
     ( runClient
@@ -33,6 +34,7 @@ import           Protocols
 import           System.IO                     (IOMode (ReadWriteMode))
 import System.Timeout
 
+import qualified System.Log.Logger as LOG
 
 
 data TunnelSettings = TunnelSettings
@@ -65,6 +67,10 @@ data Connection = Connection
   , rawConnection :: Maybe N.AppData
   }
 
+
+data Error = ProxyConnectError String
+           | ProxyForwardError String
+           deriving (Show, Read)
 
 class ToConnection a where
   toConnection :: a -> Connection
@@ -110,26 +116,28 @@ runTunnelingClientWith info@TunnelSettings{..} app conn = do
 
 httpProxyConnection :: (HostName, PortNumber) -> TunnelSettings -> (Connection -> IO ()) -> IO ()
 httpProxyConnection (host, port) TunnelSettings{..} app =
-  myTry $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> do
+  mcatch $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> myTry $ do
     _ <- sendConnectRequest conn
-    responseM <- timeout (1000000 * 10) $ readProxyResponse mempty conn
-    let response = fromMaybe "No response of the proxy aftre 10s" responseM
+    responseM <- timeout (1000000 * 10) $ readConnectResponse mempty conn
+    let response = fromMaybe "No response of the proxy after 10s" responseM
 
     if isAuthorized response
     then app $ toConnection conn
-    else putStrLn $ "Proxy refused the connection :: \n" <> fromString (BC.unpack response)
+    else LOG.errorM "wstunnel" $ "Proxy refused the connection :: \n===\n" <> fromString (BC.unpack response) <> "\n==="
 
   where
     sendConnectRequest h = N.appWrite h $ "CONNECT " <> fromString serverHost <> ":" <> fromString (show serverPort) <> " HTTP/1.0\r\n"
-                                        <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <>"\r\n\r\n"
+                                        <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <> "\r\n\r\n"
 
-    readProxyResponse buff conn = do
+    readConnectResponse buff conn = do
       response <- N.appRead conn
       if "\r\n\r\n" `BC.isInfixOf` response
         then return $ buff <> response
-        else readProxyResponse (buff <> response) conn
+        else readConnectResponse (buff <> response) conn
 
     isAuthorized response = " 200 " `BC.isInfixOf` response
+
+    mcatch action = action `catch` (\(e :: SomeException) -> LOG.errorM "wstunnel" $ "Cannot connect to the proxy :: " <> show e)
 
 tcpConnection :: TunnelSettings -> (Connection -> IO ()) -> IO ()
 tcpConnection TunnelSettings{..} app =
