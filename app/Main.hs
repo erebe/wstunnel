@@ -11,7 +11,7 @@ import qualified Data.ByteString.Char8  as BC
 import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs
 import           System.Environment     (getArgs, withArgs)
-import qualified System.Log.Logger as LOG
+import qualified System.Log.Logger      as LOG
 
 data WsTunnel = WsTunnel
   { localToRemote  :: String

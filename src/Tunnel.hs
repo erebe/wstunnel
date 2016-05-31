@@ -1,9 +1,10 @@
 {-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE FlexibleContexts #-}
+
 
 module Tunnel
     ( runClient
@@ -32,9 +33,9 @@ import qualified Network.WebSockets.Stream     as WS
 import qualified Network.Connection            as NC
 import           Protocols
 import           System.IO                     (IOMode (ReadWriteMode))
-import System.Timeout
+import           System.Timeout
 
-import qualified System.Log.Logger as LOG
+import qualified System.Log.Logger             as LOG
 
 
 data TunnelSettings = TunnelSettings
@@ -68,8 +69,13 @@ data Connection = Connection
   }
 
 
-data Error = ProxyConnectError String
+data Error = ProxyConnectionError String
            | ProxyForwardError String
+           | LocalServerError String
+           | TunnelError String
+           | WebsocketError String
+           | TlsError String
+           | Other String
            deriving (Show, Read)
 
 class ToConnection a where
@@ -106,46 +112,21 @@ instance ToConnection NC.Connection where
 connectionToStream :: Connection -> IO WS.Stream
 connectionToStream Connection{..} =  WS.makeStream read (write . toStrict . fromJust)
 
-runTunnelingClientWith :: TunnelSettings -> (Connection -> IO ()) -> (Connection -> IO ())
-runTunnelingClientWith info@TunnelSettings{..} app conn = do
-    stream <- connectionToStream conn
-    void $ WS.runClientWithStream stream serverHost (toPath info) WS.defaultConnectionOptions [] $ \conn' ->
-      app (toConnection conn')
-    putStrLn $ "CLOSE tunnel " <> tshow info
-
-
-httpProxyConnection :: (HostName, PortNumber) -> TunnelSettings -> (Connection -> IO ()) -> IO ()
-httpProxyConnection (host, port) TunnelSettings{..} app =
-  mcatch $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> myTry $ do
-    _ <- sendConnectRequest conn
-    responseM <- timeout (1000000 * 10) $ readConnectResponse mempty conn
-    let response = fromMaybe "No response of the proxy after 10s" responseM
-
-    if isAuthorized response
-    then app $ toConnection conn
-    else LOG.errorM "wstunnel" $ "Proxy refused the connection :: \n===\n" <> fromString (BC.unpack response) <> "\n==="
+--
+--  Pipes
+--
+tunnelingClientP :: TunnelSettings -> (Connection -> IO (Either Error ())) -> (Connection -> IO (Either Error ()))
+tunnelingClientP info@TunnelSettings{..} app conn = do
+  stream <- connectionToStream conn
+  onError $ WS.runClientWithStream stream serverHost (toPath info) WS.defaultConnectionOptions [] (app . toConnection)
 
   where
-    sendConnectRequest h = N.appWrite h $ "CONNECT " <> fromString serverHost <> ":" <> fromString (show serverPort) <> " HTTP/1.0\r\n"
-                                        <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <> "\r\n\r\n"
-
-    readConnectResponse buff conn = do
-      response <- N.appRead conn
-      if "\r\n\r\n" `BC.isInfixOf` response
-        then return $ buff <> response
-        else readConnectResponse (buff <> response) conn
-
-    isAuthorized response = " 200 " `BC.isInfixOf` response
-
-    mcatch action = action `catch` (\(e :: SomeException) -> LOG.errorM "wstunnel" $ "Cannot connect to the proxy :: " <> show e)
-
-tcpConnection :: TunnelSettings -> (Connection -> IO ()) -> IO ()
-tcpConnection TunnelSettings{..} app =
-  myTry $ N.runTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) (app . toConnection)
+    onError = flip catch (\(e :: SomeException) -> return . Left . WebsocketError $ show e)
 
 
-runTLSClient :: TunnelSettings -> (Connection -> IO ()) -> (Connection -> IO ())
-runTLSClient TunnelSettings{..} app conn = do
+
+tlsClientP :: TunnelSettings -> (Connection -> IO (Either Error ())) -> (Connection -> IO (Either Error ()))
+tlsClientP TunnelSettings{..} app conn = do
   let tlsSettings = NC.TLSSettingsSimple { NC.settingDisableCertificateValidation = True
                                          , NC.settingDisableSession = False
                                          , NC.settingUseServerName = False
@@ -156,21 +137,116 @@ runTLSClient TunnelSettings{..} app conn = do
                                              , NC.connectionUseSocks = Nothing
                                              }
 
-  context <- NC.initConnectionContext
-  let socket = fromJust . N.appRawSocket . fromJust $ rawConnection conn
-  h <- N.socketToHandle socket ReadWriteMode
+  onError $ do
+    context <- NC.initConnectionContext
+    let socket = fromJust . N.appRawSocket . fromJust $ rawConnection conn
+    h <- N.socketToHandle socket ReadWriteMode
 
-  connection <- NC.connectFromHandle context h connectionParams
-  finally (app (toConnection connection)) (hClose h)
+    connection <- NC.connectFromHandle context h connectionParams
+    finally (app (toConnection connection)) (hClose h)
 
+  where
+    onError = flip catch (\(e :: SomeException) -> return . Left . TlsError $ show e)
+
+
+--
+--  Connectors
+--
+tcpConnection :: TunnelSettings -> (Connection -> IO (Either Error ())) -> IO (Either Error ())
+tcpConnection TunnelSettings{..} app =
+  N.runTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) (app . toConnection)
+  `catch`
+    (\(e :: SomeException) -> return $ if take 10 (show e) == "user error" then Right () else Left $ TunnelError $ show e)
+
+httpProxyConnection :: (HostName, PortNumber) -> TunnelSettings -> (Connection -> IO (Either Error ())) -> IO (Either Error ())
+httpProxyConnection (host, port) TunnelSettings{..} app =
+  onError $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> do
+    _ <- sendConnectRequest conn
+    responseM <- timeout (1000000 * 10) $ readConnectResponse mempty conn
+    let response = fromMaybe "No response of the proxy after 10s" responseM
+
+    if isAuthorized response
+    then app (toConnection conn)
+    else return . Left . ProxyForwardError $ BC.unpack response
+
+  where
+    sendConnectRequest h = N.appWrite h $ "CONNECT " <> fromString serverHost <> ":" <> fromString (show serverPort) <> " HTTP/1.0\r\n"
+                                        <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <> "\r\n\r\n"
+
+    readConnectResponse buff conn = do
+      response <- N.appRead conn
+      if "\r\n\r\n" `BC.isInfixOf` response
+      then return $ buff <> response
+      else readConnectResponse (buff <> response) conn
+
+    isAuthorized response = " 200 " `BC.isInfixOf` response
+
+    onError = flip catch (\(e :: SomeException) -> return $ if take 10 (show e) == "user error"
+                                                            then Right ()
+                                                            else Left $ ProxyConnectionError $ show e)
+
+--
+--  Client
+--
+runClient :: TunnelSettings -> IO ()
+runClient cfg@TunnelSettings{..} = do
+  let withTcp = if isJust proxySetting then httpProxyConnection (fromJust proxySetting) cfg else tcpConnection cfg
+  let doTlsIf tlsNeeded app = if tlsNeeded then tlsClientP cfg app else app
+  let tunnelClient = tunnelingClientP cfg
+  let tunnelServer app = withTcp (doTlsIf useTls . tunnelClient $ app)
+
+  let app localH = do
+        info $ "CREATE tunnel :: " <> show cfg
+        ret <- tunnelServer (`propagateRW` toConnection localH)
+        handleError ret
+        info $ "CLOSE tunnel :: " <> show cfg
+
+  case protocol of
+        UDP -> runUDPServer (localBind, localPort) app
+        TCP -> runTCPServer (localBind, localPort) app
+
+handleError :: Either Error () -> IO ()
+handleError (Right ()) = return ()
+handleError (Left err) =
+  case err of
+    ProxyConnectionError msg -> info "Cannot connect to the proxy" >> debug msg
+    ProxyForwardError msg    -> info "Connection not allowed by the proxy" >> debug msg
+    TunnelError msg          -> info "Cannot establish the connection to the server" >> debug msg
+    LocalServerError msg     -> info "Cannot create the localServer, port already binded ?" >> debug msg
+    WebsocketError msg       -> info "Cannot establish websocket connection with the server" >> debug msg
+    TlsError msg             -> info "Cannot do tls handshake with the server" >> debug msg
+    Other msg                -> debug msg
+
+
+propagateRW :: Connection -> Connection -> IO (Either Error ())
+propagateRW hTunnel hOther =
+  myTry $ race_ (propagateReads hTunnel hOther) (propagateWrites hTunnel hOther)
+
+propagateReads :: Connection -> Connection -> IO ()
+propagateReads hTunnel hOther = forever $ read hTunnel >>= write hOther . fromJust
+
+propagateWrites :: Connection -> Connection -> IO ()
+propagateWrites hTunnel hOther = do
+  payload <- fromJust <$> read hOther
+  unless (null payload) (write hTunnel payload >> propagateWrites hTunnel hOther)
+
+
+myTry :: IO a -> IO (Either Error ())
+myTry f = either (\(e :: SomeException) -> Left . Other $ show e) (const $ Right ()) <$> try f
+
+
+--
+--  Server
+--
 
 runTlsTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
 runTlsTunnelingServer (bindTo, portNumber) isAllowed = do
-  putStrLn $ "WAIT for TLS connection on " <> fromString bindTo <> ":" <> tshow portNumber
+  info $ "WAIT for TLS connection on " <> fromString bindTo <> ":" <> show portNumber
+
   N.runTCPServerTLS (N.tlsConfigBS (fromString bindTo) (fromIntegral portNumber) serverCertificate serverKey) $ \sClient ->
     runApp sClient WS.defaultConnectionOptions (serverEventLoop isAllowed)
 
-  putStrLn "CLOSE server"
+  info "SHUTDOWN server"
 
   where
     runApp :: N.AppData -> WS.ConnectionOptions -> WS.ServerApp -> IO ()
@@ -182,12 +258,12 @@ runTlsTunnelingServer (bindTo, portNumber) isAllowed = do
 
 runTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
 runTunnelingServer (host, port) isAllowed = do
-  putStrLn $ "WAIT for connection on " <> fromString host <> ":" <> tshow port
+  info $ "WAIT for connection on " <> fromString host <> ":" <> show port
 
   void $ N.runTCPServer (N.serverSettingsTCP (fromIntegral port) (fromString host)) $ \sClient ->
     runApp (fromJust $ N.appRawSocket sClient) WS.defaultConnectionOptions (serverEventLoop isAllowed)
 
-  putStrLn "CLOSE server"
+  info "CLOSE server"
 
   where
     runApp :: N.Socket -> WS.ConnectionOptions -> WS.ServerApp -> IO ()
@@ -198,66 +274,22 @@ serverEventLoop :: ((ByteString, Int) -> Bool) -> WS.PendingConnection -> IO ()
 serverEventLoop isAllowed pendingConn = do
   let path =  fromPath . WS.requestPath $ WS.pendingRequest pendingConn
   case path of
-    Nothing -> putStrLn "Rejecting connection" >> WS.rejectRequest pendingConn "Invalid tunneling information"
+    Nothing -> info "Rejecting connection" >> WS.rejectRequest pendingConn "Invalid tunneling information"
     Just (!proto, !rhost, !rport) ->
       if not $ isAllowed (rhost, rport)
       then do
-        putStrLn "Rejecting tunneling"
+        info "Rejecting tunneling"
         WS.rejectRequest pendingConn "Restriction is on, You cannot request this tunneling"
       else do
         conn <- WS.acceptRequest pendingConn
         case proto of
-          UDP -> runUDPClient (BC.unpack rhost, fromIntegral rport) (\cnx -> toConnection conn `propagateRW` toConnection cnx)
-          TCP -> runTCPClient (BC.unpack rhost, fromIntegral rport) (\cnx -> toConnection conn `propagateRW` toConnection cnx)
-
-
-
-
-propagateRW :: Connection -> Connection -> IO ()
-propagateRW hTunnel hOther =
-  myTry $ race_ (propagateReads hTunnel hOther) (propagateWrites hTunnel hOther)
-
-propagateReads :: Connection -> Connection -> IO ()
-propagateReads hTunnel hOther = myTry (forever $ read hTunnel >>= write hOther . fromJust)
-
-propagateWrites :: Connection -> Connection -> IO ()
-propagateWrites hTunnel hOther = myTry $ do
-  payload <- fromJust <$> read hOther
-  unless (null payload) (write hTunnel payload >> propagateWrites hTunnel hOther)
-
-
-myTry :: IO () -> IO ()
-myTry f = void $ catch f (\(e :: SomeException) -> print e)
-
-runClient :: TunnelSettings -> IO ()
-runClient cfg@TunnelSettings{..} = do
-  let withTcp = if isJust proxySetting then httpProxyConnection (fromJust proxySetting) cfg else tcpConnection cfg
-  let doTlsIf tlsNeeded app = if tlsNeeded then runTLSClient cfg app else app
-  let tunnelClient = runTunnelingClientWith cfg
-  let tunnelServer app = withTcp (doTlsIf useTls . tunnelClient $ app)
-
-
-  case protocol of
-        UDP -> runUDPServer (localBind, localPort) (\localH -> tunnelServer (`propagateRW` toConnection localH))
-        TCP -> runTCPServer (localBind, localPort) (\localH -> tunnelServer (`propagateRW` toConnection localH))
+          UDP -> runUDPClient (BC.unpack rhost, fromIntegral rport) (\cnx -> void $ toConnection conn `propagateRW` toConnection cnx)
+          TCP -> runTCPClient (BC.unpack rhost, fromIntegral rport) (\cnx -> void $ toConnection conn `propagateRW` toConnection cnx)
 
 
 runServer :: Bool -> (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
 runServer useTLS = if useTLS then runTlsTunnelingServer else runTunnelingServer
 
-
-
-toPath :: TunnelSettings -> String
-toPath TunnelSettings{..} = "/" <> toLower (show protocol) <> "/" <> destHost <> "/" <> show destPort
-
-fromPath :: ByteString -> Maybe (Protocol, ByteString, Int)
-fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
-  in do
-    guard (length rets == 3)
-    let [protocol, h, prt] = rets
-    prt' <- readMay . BC.unpack $ prt :: Maybe Int
-    proto <- readMay . toUpper . BC.unpack $ protocol :: Maybe Protocol
-    return (proto, h, prt')
 
 
 
@@ -290,3 +322,25 @@ serverCertificate = "-----BEGIN CERTIFICATE-----\n" <>
   "DQYJKoZIhvcNAQEFBQADQQCP4oYOIrX7xvmQih3hvF4kUnbKjtttImdGruonsLAz\n" <>
   "OL2VExC6OqlDP2yu14BlsjTt+X2v6mhHnSM16c6AkpM/\n" <>
   "-----END CERTIFICATE-----"
+
+
+
+--
+--  Commons
+--
+
+
+toPath :: TunnelSettings -> String
+toPath TunnelSettings{..} = "/" <> toLower (show protocol) <> "/" <> destHost <> "/" <> show destPort
+
+fromPath :: ByteString -> Maybe (Protocol, ByteString, Int)
+fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
+  in do
+    guard (length rets == 3)
+    let [protocol, h, prt] = rets
+    prt' <- readMay . BC.unpack $ prt :: Maybe Int
+    proto <- readMay . toUpper . BC.unpack $ protocol :: Maybe Protocol
+    return (proto, h, prt')
+
+info = LOG.infoM "wstunnel"
+debug = LOG.debugM "wstunnel"
