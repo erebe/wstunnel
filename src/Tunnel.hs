@@ -36,8 +36,7 @@ import           Protocols
 import           System.IO                     (IOMode (ReadWriteMode))
 import           System.Timeout
 
-import qualified System.Log.Logger             as LOG
-
+import           Utils
 
 data TunnelSettings = TunnelSettings
   { proxySetting :: Maybe (HostName, PortNumber)
@@ -77,7 +76,7 @@ data Error = ProxyConnectionError String
            | WebsocketError String
            | TlsError String
            | Other String
-           deriving (Show, Read)
+           deriving (Show)
 
 class ToConnection a where
   toConnection :: a -> Connection
@@ -121,63 +120,59 @@ rrunTCPClient cfg app = bracket
         , rawConnection = Just s
         })
 
-connectionToStream :: Connection -> IO WS.Stream
-connectionToStream Connection{..} =  WS.makeStream read (write . toStrict . fromJust)
-
 --
 --  Pipes
 --
 tunnelingClientP :: TunnelSettings -> (Connection -> IO (Either Error ())) -> (Connection -> IO (Either Error ()))
-tunnelingClientP cfg@TunnelSettings{..} app conn = do
+tunnelingClientP cfg@TunnelSettings{..} app conn = onError $ do
   debug "Oppening Websocket stream"
+
   stream <- connectionToStream conn
-  ret <- onError $ WS.runClientWithStream stream serverHost (toPath cfg) WS.defaultConnectionOptions [] (app . toConnection)
+  ret <- WS.runClientWithStream stream serverHost (toPath cfg) WS.defaultConnectionOptions [] (app . toConnection)
 
   debug "Closing Websocket stream"
   return ret
 
   where
+    connectionToStream Connection{..} =  WS.makeStream read (write . toStrict . fromJust)
     onError = flip catch (\(e :: SomeException) -> return . Left . WebsocketError $ show e)
 
 
 tlsClientP :: TunnelSettings -> (Connection -> IO (Either Error ())) -> (Connection -> IO (Either Error ()))
-tlsClientP TunnelSettings{..} app conn = do
-  let tlsSettings = NC.TLSSettingsSimple { NC.settingDisableCertificateValidation = True
-                                         , NC.settingDisableSession = False
-                                         , NC.settingUseServerName = False
-                                         }
-  let connectionParams = NC.ConnectionParams { NC.connectionHostname = serverHost
-                                             , NC.connectionPort = serverPort
-                                             , NC.connectionUseSecure = Just tlsSettings
-                                             , NC.connectionUseSocks = Nothing
-                                             }
+tlsClientP TunnelSettings{..} app conn = onError $ do
+    debug "Doing tls Handshake"
 
-  debug "Doing tls Handshake"
-
-  ret <- onError $ do
     context <- NC.initConnectionContext
     let socket = fromJust $ rawConnection conn
     h <- N.socketToHandle socket ReadWriteMode
 
     connection <- NC.connectFromHandle context h connectionParams
-    finally (app (toConnection connection)) (hClose h)
+    ret <- app (toConnection connection) `finally` hClose h
 
-  debug "Closing TLS"
-  return ret
+    debug "Closing TLS"
+    return ret
 
   where
     onError = flip catch (\(e :: SomeException) -> return . Left . TlsError $ show e)
+    tlsSettings = NC.TLSSettingsSimple { NC.settingDisableCertificateValidation = True
+                                       , NC.settingDisableSession = False
+                                       , NC.settingUseServerName = False
+                                       }
+    connectionParams = NC.ConnectionParams { NC.connectionHostname = serverHost
+                                           , NC.connectionPort = serverPort
+                                           , NC.connectionUseSecure = Just tlsSettings
+                                           , NC.connectionUseSocks = Nothing
+                                           }
 
 
 --
 --  Connectors
 --
 tcpConnection :: TunnelSettings -> (Connection -> IO (Either Error ())) -> IO (Either Error ())
-tcpConnection TunnelSettings{..} app = do
+tcpConnection TunnelSettings{..} app = onError $ do
   debug $ "Oppening tcp connection to " <> fromString serverHost <> ":" <> show (fromIntegral serverPort :: Int)
 
-  ret <- onError $ rrunTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) app
-
+  ret <- rrunTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) app
 
   debug $ "Closing tcp connection to " <> fromString serverHost <> ":" <> show (fromIntegral serverPort :: Int)
   return ret
@@ -188,10 +183,10 @@ tcpConnection TunnelSettings{..} app = do
 
 
 httpProxyConnection :: (HostName, PortNumber) -> TunnelSettings -> (Connection -> IO (Either Error ())) -> IO (Either Error ())
-httpProxyConnection (host, port) TunnelSettings{..} app = do
-  debug $ "Oppening tcp connection to proxy " <> fromString host <> ":" <> show (fromIntegral port :: Int)
+httpProxyConnection endPoint@(host, port) TunnelSettings{..} app = onError $ do
+  debug $ "Oppening tcp connection to proxy " <> toStr endPoint
 
-  ret <- onError $ rrunTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> do
+  ret <- rrunTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> do
     _ <- sendConnectRequest conn
     responseM <- timeout (1000000 * 10) $ readConnectResponse mempty conn
     let response = fromMaybe "No response of the proxy after 10s" responseM
@@ -280,8 +275,8 @@ myTry f = either (\(e :: SomeException) -> Left . Other $ show e) (const $ Right
 --
 
 runTlsTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
-runTlsTunnelingServer (bindTo, portNumber) isAllowed = do
-  info $ "WAIT for TLS connection on " <> fromString bindTo <> ":" <> show portNumber
+runTlsTunnelingServer endPoint@(bindTo, portNumber) isAllowed = do
+  info $ "WAIT for TLS connection on " <> toStr endPoint
 
   N.runTCPServerTLS (N.tlsConfigBS (fromString bindTo) (fromIntegral portNumber) serverCertificate serverKey) $ \sClient ->
     runApp sClient WS.defaultConnectionOptions (serverEventLoop isAllowed)
@@ -297,8 +292,8 @@ runTlsTunnelingServer (bindTo, portNumber) isAllowed = do
               app
 
 runTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
-runTunnelingServer (host, port) isAllowed = do
-  info $ "WAIT for connection on " <> fromString host <> ":" <> show port
+runTunnelingServer endPoint@(host, port) isAllowed = do
+  info $ "WAIT for connection on " <> toStr endPoint
 
   void $ N.runTCPServer (N.serverSettingsTCP (fromIntegral port) (fromString host)) $ \sClient ->
     runApp (fromJust $ N.appRawSocket sClient) WS.defaultConnectionOptions (serverEventLoop isAllowed)

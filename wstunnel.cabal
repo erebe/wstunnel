@@ -15,7 +15,7 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Tunnel, Protocols
+  exposed-modules:     Tunnel, Protocols, Utils
   build-depends:       base
                      , classy-prelude
                      , bytestring

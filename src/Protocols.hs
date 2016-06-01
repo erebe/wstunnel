@@ -22,7 +22,7 @@ import qualified Network.Socket            as N hiding (recv, recvFrom, send,
                                                  sendTo)
 import qualified Network.Socket.ByteString as N
 
-import qualified System.Log.Logger         as LOG
+import           Utils
 
 deriving instance Generic PortNumber
 deriving instance Hashable PortNumber
@@ -43,12 +43,6 @@ instance N.HasReadWrite UdpAppData where
   readLens f appData =  fmap (\getData -> appData { appRead = getData})  (f $ appRead appData)
   writeLens f appData = fmap (\writeData -> appData { appWrite = writeData}) (f $ appWrite appData)
 
-toStr :: (HostName, PortNumber) -> String
-toStr (host, port) = fromString host <> ":" <> show port
-
-err msg = LOG.errorM "wstunnel" $ "ERROR :: " <> msg
-info = LOG.infoM "wstunnel"
-debug msg = LOG.debugM "wstunnel" $ "DEBUG :: " <> msg
 
 runTCPServer :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
 runTCPServer endPoint@(host, port) app = do
