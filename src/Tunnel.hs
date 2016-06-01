@@ -23,9 +23,9 @@ import qualified Data.Conduit.Network.TLS      as N
 import qualified Data.Streaming.Network        as N
 
 import           Network.Socket                (HostName, PortNumber)
-import qualified Network.Socket.ByteString     as N
 import qualified Network.Socket                as N hiding (recv, recvFrom,
                                                      send, sendTo)
+import qualified Network.Socket.ByteString     as N
 
 import qualified Network.WebSockets            as WS
 import qualified Network.WebSockets.Connection as WS
@@ -113,7 +113,7 @@ instance ToConnection NC.Connection where
 rrunTCPClient :: N.ClientSettings -> (Connection -> IO a) -> IO a
 rrunTCPClient cfg app = bracket
     (N.getSocketFamilyTCP (N.getHost cfg) (N.getPort cfg) (N.getAddrFamily cfg))
-    (\r -> catch (N.sClose $ fst r) (\(e :: SomeException) -> return ()))
+    (\r -> catch (N.sClose $ fst r) (\(_ :: SomeException) -> return ()))
     (\(s, _) -> app Connection
         { read = Just <$> N.safeRecv s (N.getReadBufferSize cfg)
         , write = N.sendAll s
@@ -138,7 +138,6 @@ tunnelingClientP cfg@TunnelSettings{..} app conn = do
 
   where
     onError = flip catch (\(e :: SomeException) -> return . Left . WebsocketError $ show e)
-
 
 
 tlsClientP :: TunnelSettings -> (Connection -> IO (Either Error ())) -> (Connection -> IO (Either Error ()))
@@ -245,14 +244,14 @@ runClient cfg@TunnelSettings{..} = do
 
 handleError :: Either Error () -> IO ()
 handleError (Right ()) = return ()
-handleError (Left err) =
-  case err of
-    ProxyConnectionError msg -> info "Cannot connect to the proxy" >> debugPP msg
-    ProxyForwardError msg    -> info "Connection not allowed by the proxy" >> debugPP msg
-    TunnelError msg          -> info "Cannot establish the connection to the server" >> debugPP msg
-    LocalServerError msg     -> info "Cannot create the localServer, port already binded ?" >> debugPP msg
-    WebsocketError msg       -> info "Cannot establish websocket connection with the server" >> debugPP msg
-    TlsError msg             -> info "Cannot do tls handshake with the server" >> debugPP msg
+handleError (Left errMsg) =
+  case errMsg of
+    ProxyConnectionError msg -> err "Cannot connect to the proxy" >> debugPP msg
+    ProxyForwardError msg    -> err "Connection not allowed by the proxy" >> debugPP msg
+    TunnelError msg          -> err "Cannot establish the connection to the server" >> debugPP msg
+    LocalServerError msg     -> err "Cannot create the localServer, port already binded ?" >> debugPP msg
+    WebsocketError msg       -> err "Cannot establish websocket connection with the server" >> debugPP msg
+    TlsError msg             -> err "Cannot do tls handshake with the server" >> debugPP msg
     Other msg                -> debugPP msg
 
   where
@@ -382,6 +381,3 @@ fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
     prt' <- readMay . BC.unpack $ prt :: Maybe Int
     proto <- readMay . toUpper . BC.unpack $ protocol :: Maybe Protocol
     return (proto, h, prt')
-
-info = LOG.infoM "wstunnel"
-debug = LOG.debugM "wstunnel"

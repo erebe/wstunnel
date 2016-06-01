@@ -16,12 +16,14 @@ import qualified System.Log.Logger      as LOG
 data WsTunnel = WsTunnel
   { localToRemote  :: String
   -- , remoteToLocal  :: String
+  -- , dynamicToRemote  :: String
   , wsTunnelServer :: String
   , udpMode        :: Bool
   , proxy          :: String
   , serverMode     :: Bool
   , restrictTo     :: String
   , verbose        :: Bool
+  , quiet          :: Bool
   } deriving (Show, Data, Typeable)
 
 data WsServerInfo = WsServerInfo
@@ -54,6 +56,7 @@ cmdLine = WsTunnel
   , restrictTo     = def &= explicit &= name "r" &= name "restrictTo"
                          &= help "Accept traffic to be forwarded only to this service" &= typ "HOST:PORT"
   , verbose        = def &= groupname "Common options" &= help "Print debug information"
+  , quiet          = def &= help "Print only errors"
   } &= summary (   "Use the websockets protocol to tunnel {TCP,UDP} traffic\n"
                 ++ "wsTunnelClient <---> wsTunnelServer <---> RemoteHost\n"
                 ++ "Use secure connection (wss://) to bypass proxies"
@@ -106,7 +109,11 @@ main = do
   cfg <- if null args then withArgs ["--help"] (cmdArgs cmdLine) else cmdArgs cmdLine
 
   let serverInfo = parseServerInfo (WsServerInfo False "" 0) (wsTunnelServer cfg)
-  LOG.updateGlobalLogger "wstunnel" (if verbose cfg then LOG.setLevel LOG.DEBUG else LOG.setLevel LOG.INFO)
+  LOG.updateGlobalLogger "wstunnel" (if quiet cfg
+                                     then LOG.setLevel LOG.ERROR
+                                     else if verbose cfg
+                                     then LOG.setLevel LOG.DEBUG
+                                     else LOG.setLevel LOG.INFO)
 
 
   if serverMode cfg

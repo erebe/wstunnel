@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -21,6 +22,7 @@ import qualified Network.Socket            as N hiding (recv, recvFrom, send,
                                                  sendTo)
 import qualified Network.Socket.ByteString as N
 
+import qualified System.Log.Logger         as LOG
 
 deriving instance Generic PortNumber
 deriving instance Hashable PortNumber
@@ -41,24 +43,29 @@ instance N.HasReadWrite UdpAppData where
   readLens f appData =  fmap (\getData -> appData { appRead = getData})  (f $ appRead appData)
   writeLens f appData = fmap (\writeData -> appData { appWrite = writeData}) (f $ appWrite appData)
 
+toStr :: (HostName, PortNumber) -> String
+toStr (host, port) = fromString host <> ":" <> show port
 
+err msg = LOG.errorM "wstunnel" $ "ERROR :: " <> msg
+info = LOG.infoM "wstunnel"
+debug msg = LOG.debugM "wstunnel" $ "DEBUG :: " <> msg
 
 runTCPServer :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
-runTCPServer (host, port) app = do
-  putStrLn $ "WAIT for connection on " <> fromString host <> ":" <> tshow port
+runTCPServer endPoint@(host, port) app = do
+  info $ "WAIT for tcp connection on " <> toStr endPoint
   void $ N.runTCPServer (N.serverSettingsTCP (fromIntegral port) (fromString host)) app
-  putStrLn "CLOSE tunnel"
+  info $ "CLOSE tcp server on " <> toStr endPoint
 
 runTCPClient :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
-runTCPClient (host, port) app = do
-  putStrLn $ "CONNECTING to " <> fromString host <> ":" <> tshow port
+runTCPClient endPoint@(host, port) app = do
+  info $ "CONNECTING to " <> toStr endPoint
   void $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (BC.pack host)) app
-  putStrLn $ "CLOSE connection to " <> fromString host <> ":" <> tshow port
+  info $ "CLOSE connection to " <> toStr endPoint
 
 
 runUDPClient :: (HostName, PortNumber) -> (UdpAppData -> IO ()) -> IO ()
-runUDPClient (host, port) app = do
-  putStrLn $ "CONNECTING to " <> fromString host <> ":" <> tshow port
+runUDPClient endPoint@(host, port) app = do
+  info $ "SENDING datagrammes to " <> toStr endPoint
   bracket (N.getSocketUDP host (fromIntegral port)) (N.close . fst) $ \(socket, addrInfo) -> do
     sem <- newEmptyMVar
     app UdpAppData { appAddr  = N.addrAddress addrInfo
@@ -67,15 +74,15 @@ runUDPClient (host, port) app = do
                    , appWrite = \payload -> void $ N.sendTo socket payload (N.addrAddress addrInfo)
                    }
 
-  putStrLn $ "CLOSE connection to " <> fromString host <> ":" <> tshow port
+  info $ "CLOSE udp connection to " <> toStr endPoint
 
 
 runUDPServer :: (HostName, PortNumber) -> (UdpAppData -> IO ()) -> IO ()
-runUDPServer (host, port) app = do
-  putStrLn $ "WAIT for datagrames on " <> fromString host <> ":" <> tshow port
+runUDPServer endPoint@(host, port) app = do
+  info $ "WAIT for datagrames on " <> toStr endPoint
   clientsCtx <- newIORef mempty
   void $ bracket (N.bindPortUDP (fromIntegral port) (fromString host)) N.close (runEventLoop clientsCtx)
-  putStrLn "CLOSE tunnel"
+  info $ "CLOSE udp server" <> toStr endPoint
 
   where
     addNewClient :: IORef (H.HashMap N.SockAddr UdpAppData) -> N.Socket -> N.SockAddr -> ByteString -> IO UdpAppData
@@ -92,7 +99,7 @@ runUDPServer (host, port) app = do
     removeClient :: IORef (H.HashMap N.SockAddr UdpAppData) -> UdpAppData -> IO ()
     removeClient clientsCtx clientCtx = do
       void $ atomicModifyIORef' clientsCtx (\clients -> (H.delete (appAddr clientCtx) clients, ()))
-      putStrLn "TIMEOUT connection"
+      debug "TIMEOUT connection"
 
     pushDataToClient :: UdpAppData -> ByteString -> IO ()
     pushDataToClient clientCtx = putMVar (appSem clientCtx)
