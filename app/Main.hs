@@ -21,7 +21,7 @@ data WsTunnel = WsTunnel
   , proxy          :: String
   , serverMode     :: Bool
   , restrictTo     :: String
-  , _last          :: Bool
+  , verbose        :: Bool
   } deriving (Show, Data, Typeable)
 
 data WsServerInfo = WsServerInfo
@@ -53,7 +53,7 @@ cmdLine = WsTunnel
                          &= help "Start a server that will forward traffic for you" &= groupname "Server options"
   , restrictTo     = def &= explicit &= name "r" &= name "restrictTo"
                          &= help "Accept traffic to be forwarded only to this service" &= typ "HOST:PORT"
-  , _last          = def &= explicit &= name "ツ" &= groupname "Common options"
+  , verbose        = def &= groupname "Common options" &= help "Print debug information"
   } &= summary (   "Use the websockets protocol to tunnel {TCP,UDP} traffic\n"
                 ++ "wsTunnelClient <---> wsTunnelServer <---> RemoteHost\n"
                 ++ "Use secure connection (wss://) to bypass proxies"
@@ -106,7 +106,7 @@ main = do
   cfg <- if null args then withArgs ["--help"] (cmdArgs cmdLine) else cmdArgs cmdLine
 
   let serverInfo = parseServerInfo (WsServerInfo False "" 0) (wsTunnelServer cfg)
-  LOG.updateGlobalLogger "wstunnel" (LOG.setLevel LOG.INFO)
+  LOG.updateGlobalLogger "wstunnel" (if verbose cfg then LOG.setLevel LOG.DEBUG else LOG.setLevel LOG.INFO)
 
 
   if serverMode cfg

@@ -116,9 +116,13 @@ connectionToStream Connection{..} =  WS.makeStream read (write . toStrict . from
 --  Pipes
 --
 tunnelingClientP :: TunnelSettings -> (Connection -> IO (Either Error ())) -> (Connection -> IO (Either Error ()))
-tunnelingClientP info@TunnelSettings{..} app conn = do
+tunnelingClientP cfg@TunnelSettings{..} app conn = do
+  debug "Oppening Websocket stream"
   stream <- connectionToStream conn
-  onError $ WS.runClientWithStream stream serverHost (toPath info) WS.defaultConnectionOptions [] (app . toConnection)
+  ret <- onError $ WS.runClientWithStream stream serverHost (toPath cfg) WS.defaultConnectionOptions [] (app . toConnection)
+
+  debug "Closing Websocket stream"
+  return ret
 
   where
     onError = flip catch (\(e :: SomeException) -> return . Left . WebsocketError $ show e)
@@ -137,13 +141,18 @@ tlsClientP TunnelSettings{..} app conn = do
                                              , NC.connectionUseSocks = Nothing
                                              }
 
-  onError $ do
+  debug "Doing tls Handshake"
+
+  ret <- onError $ do
     context <- NC.initConnectionContext
     let socket = fromJust . N.appRawSocket . fromJust $ rawConnection conn
     h <- N.socketToHandle socket ReadWriteMode
 
     connection <- NC.connectFromHandle context h connectionParams
     finally (app (toConnection connection)) (hClose h)
+
+  debug "Closing TLS"
+  return ret
 
   where
     onError = flip catch (\(e :: SomeException) -> return . Left . TlsError $ show e)
@@ -153,21 +162,40 @@ tlsClientP TunnelSettings{..} app conn = do
 --  Connectors
 --
 tcpConnection :: TunnelSettings -> (Connection -> IO (Either Error ())) -> IO (Either Error ())
-tcpConnection TunnelSettings{..} app =
-  N.runTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) (app . toConnection)
-  `catch`
-    (\(e :: SomeException) -> return $ if take 10 (show e) == "user error" then Right () else Left $ TunnelError $ show e)
+tcpConnection TunnelSettings{..} app = do
+  debug $ "Oppening tcp connection to " <> fromString serverHost <> ":" <> show (fromIntegral serverPort :: Int)
+
+  ret <- onError $ N.runTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) $ \conn -> do
+              ret <- app (toConnection conn)
+              either (info . show) (const $ return ()) ret
+              return ret
+
+
+  debug $ "Closing tcp connection to " <> fromString serverHost <> ":" <> show (fromIntegral serverPort :: Int)
+  return ret
+
+  where
+    onError = flip catch (\(e :: SomeException) -> return $ if take 10 (show e) == "user error" then Right () else Left $ TunnelError $ show e)
+
+
 
 httpProxyConnection :: (HostName, PortNumber) -> TunnelSettings -> (Connection -> IO (Either Error ())) -> IO (Either Error ())
-httpProxyConnection (host, port) TunnelSettings{..} app =
-  onError $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> do
+httpProxyConnection (host, port) TunnelSettings{..} app = do
+  debug $ "Oppening tcp connection to proxy " <> fromString host <> ":" <> show (fromIntegral port :: Int)
+
+  ret <- onError $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> do
     _ <- sendConnectRequest conn
     responseM <- timeout (1000000 * 10) $ readConnectResponse mempty conn
     let response = fromMaybe "No response of the proxy after 10s" responseM
 
     if isAuthorized response
-    then app (toConnection conn)
+    then do ret <- app (toConnection conn)
+            either (info . show) (const $ return ()) ret
+            return ret
     else return . Left . ProxyForwardError $ BC.unpack response
+
+  debug $ "Closing tcp connection to proxy " <> fromString host <> ":" <> show (fromIntegral port :: Int)
+  return ret
 
   where
     sendConnectRequest h = N.appWrite h $ "CONNECT " <> fromString serverHost <> ":" <> fromString (show serverPort) <> " HTTP/1.0\r\n"
@@ -190,16 +218,19 @@ httpProxyConnection (host, port) TunnelSettings{..} app =
 --
 runClient :: TunnelSettings -> IO ()
 runClient cfg@TunnelSettings{..} = do
-  let withTcp = if isJust proxySetting then httpProxyConnection (fromJust proxySetting) cfg else tcpConnection cfg
+  let withEndPoint = if isJust proxySetting then httpProxyConnection (fromJust proxySetting) cfg else tcpConnection cfg
   let doTlsIf tlsNeeded app = if tlsNeeded then tlsClientP cfg app else app
-  let tunnelClient = tunnelingClientP cfg
-  let tunnelServer app = withTcp (doTlsIf useTls . tunnelClient $ app)
+  let runTunnelClient = tunnelingClientP cfg
+  let withTunnel app = withEndPoint (doTlsIf useTls . runTunnelClient $ app)
 
   let app localH = do
-        info $ "CREATE tunnel :: " <> show cfg
-        ret <- tunnelServer (`propagateRW` toConnection localH)
+        ret <- withTunnel $ \remoteH -> do
+          info $ "CREATE tunnel :: " <> show cfg
+          ret <- remoteH `propagateRW` toConnection localH
+          info $ "CLOSE tunnel :: " <> show cfg
+          return ret
+
         handleError ret
-        info $ "CLOSE tunnel :: " <> show cfg
 
   case protocol of
         UDP -> runUDPServer (localBind, localPort) app
@@ -209,13 +240,16 @@ handleError :: Either Error () -> IO ()
 handleError (Right ()) = return ()
 handleError (Left err) =
   case err of
-    ProxyConnectionError msg -> info "Cannot connect to the proxy" >> debug msg
-    ProxyForwardError msg    -> info "Connection not allowed by the proxy" >> debug msg
-    TunnelError msg          -> info "Cannot establish the connection to the server" >> debug msg
-    LocalServerError msg     -> info "Cannot create the localServer, port already binded ?" >> debug msg
-    WebsocketError msg       -> info "Cannot establish websocket connection with the server" >> debug msg
-    TlsError msg             -> info "Cannot do tls handshake with the server" >> debug msg
-    Other msg                -> debug msg
+    ProxyConnectionError msg -> info "Cannot connect to the proxy" >> debugPP msg
+    ProxyForwardError msg    -> info "Connection not allowed by the proxy" >> debugPP msg
+    TunnelError msg          -> info "Cannot establish the connection to the server" >> debugPP msg
+    LocalServerError msg     -> info "Cannot create the localServer, port already binded ?" >> debugPP msg
+    WebsocketError msg       -> info "Cannot establish websocket connection with the server" >> debugPP msg
+    TlsError msg             -> info "Cannot do tls handshake with the server" >> debugPP msg
+    Other msg                -> debugPP msg
+
+  where
+    debugPP msg = debug $ "====\n" <> msg <> "\n===="
 
 
 propagateRW :: Connection -> Connection -> IO (Either Error ())
