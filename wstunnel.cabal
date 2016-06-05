@@ -27,6 +27,7 @@ library
                      , network-conduit-tls
                      , connection
                      , hslogger
+                     , base64-bytestring >= 1.0
 
   default-language:    Haskell2010
 

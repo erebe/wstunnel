@@ -6,7 +6,8 @@ module Main where
 
 import           Tunnel
 
-import           ClassyPrelude          (ByteString, guard, readMay)
+import           ClassyPrelude          (ByteString, guard, readMay,
+                                         traceShowId)
 import qualified Data.ByteString.Char8  as BC
 import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs
@@ -48,7 +49,7 @@ cmdLine = WsTunnel
   --                        &= help "Listen on remote and forward traffic from local"
   , udpMode        = def &= explicit &= name "u" &= name "udp" &= help "forward UDP traffic instead of TCP"
   , proxy          = def &= explicit &= name "p" &= name "httpProxy"
-                         &= help "If set, will use this proxy to connect to the server" &= typ "HOST:PORT"
+                         &= help "If set, will use this proxy to connect to the server" &= typ "USER:PASS@HOST:PORT"
   , wsTunnelServer = def &= argPos 0 &= typ "ws[s]://wstunnelServer[:port]"
 
   , serverMode     = def &= explicit &= name "server"
@@ -71,10 +72,10 @@ toPort str = case readMay str of
 
 parseServerInfo :: WsServerInfo -> String -> WsServerInfo
 parseServerInfo server []                           = server
-parseServerInfo server ('w':'s':':':'/':'/':xs)     = parseServerInfo (server {Main.useTls = False, port = 80}) xs
-parseServerInfo server ('w':'s':'s':':':'/':'/':xs) = parseServerInfo (server {Main.useTls = True, port = 443}) xs
-parseServerInfo server (':':prt)                    = server {port = toPort prt}
-parseServerInfo server hostPath                     = parseServerInfo (server {host = takeWhile (/= ':') hostPath}) (dropWhile (/= ':') hostPath)
+parseServerInfo server ('w':'s':':':'/':'/':xs)     = parseServerInfo (server {Main.useTls = False, Main.port = 80}) xs
+parseServerInfo server ('w':'s':'s':':':'/':'/':xs) = parseServerInfo (server {Main.useTls = True, Main.port = 443}) xs
+parseServerInfo server (':':prt)                    = server {Main.port = toPort prt}
+parseServerInfo server hostPath                     = parseServerInfo (server {Main.host = takeWhile (/= ':') hostPath}) (dropWhile (/= ':') hostPath)
 
 
 parseTunnelInfo :: String -> TunnelInfo
@@ -96,12 +97,23 @@ parseRestrictTo str = let (!h, !p) = fromMaybe (error "Invalid Parameter restart
               portNumber <- readMay $ ret !! 1 :: Maybe Int
               return (BC.pack (head ret), portNumber)
 
-parseProxyInfo :: String -> Maybe (String, Int)
+parseProxyInfo :: String -> Maybe ProxySettings
 parseProxyInfo str = do
-  let ret = BC.unpack <$> BC.split ':' (BC.pack str)
-  guard (length ret == 2)
-  portNumber <- readMay $ ret !! 1 :: Maybe Int
-  return (head ret, portNumber)
+  let ret = BC.split ':' (BC.pack str)
+
+  guard (length ret >= 2)
+  if length ret == 3
+  then do
+    portNumber <- readMay $ BC.unpack $ ret !! 2 :: Maybe Int
+    let cred = (head ret, head (BC.split '@' (ret !! 1)))
+    let h = BC.split '@' (ret !! 1) !! 1
+    return $ ProxySettings (BC.unpack h) (fromIntegral portNumber) (Just cred)
+  else if length ret == 2
+  then do
+    portNumber <- readMay . BC.unpack $ ret !! 1 :: Maybe Int
+    return $ ProxySettings (BC.unpack $ head ret) (fromIntegral portNumber) Nothing
+    else Nothing
+
 
 main :: IO ()
 main = do
@@ -118,18 +130,18 @@ main = do
 
   if serverMode cfg
     then putStrLn ("Starting server with opts " ++ show serverInfo )
-         >> runServer (Main.useTls serverInfo) (host serverInfo, fromIntegral $ port serverInfo) (parseRestrictTo $ restrictTo cfg)
+         >> runServer (Main.useTls serverInfo) (Main.host serverInfo, fromIntegral $ Main.port serverInfo) (parseRestrictTo $ restrictTo cfg)
     else if not $ null (localToRemote cfg)
                then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)
                     in runClient TunnelSettings { localBind = lHost
                                                 , Tunnel.localPort = fromIntegral lPort
-                                                , serverHost = host serverInfo
-                                                , serverPort = fromIntegral $ port serverInfo
+                                                , serverHost = Main.host serverInfo
+                                                , serverPort = fromIntegral $ Main.port serverInfo
                                                 , destHost = rHost
                                                 , destPort = fromIntegral rPort
                                                 , Tunnel.useTls = Main.useTls serverInfo
                                                 , protocol = if udpMode cfg then UDP else TCP
-                                                , proxySetting = (\(h, p) -> (h, fromIntegral p)) <$> parseProxyInfo (proxy cfg)
+                                                , proxySetting = parseProxyInfo (proxy cfg)
                                                 }
                else return ()
 

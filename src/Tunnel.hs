@@ -11,6 +11,7 @@ module Tunnel
     , runServer
     , TunnelSettings(..)
     , Protocol(..)
+    , ProxySettings(..)
     ) where
 
 import           ClassyPrelude
@@ -36,10 +37,18 @@ import           Protocols
 import           System.IO                     (IOMode (ReadWriteMode))
 import           System.Timeout
 
+import qualified Data.ByteString.Base64        as B64
+
 import           Utils
 
+data ProxySettings = ProxySettings
+  { host        :: HostName
+  , port        :: PortNumber
+  , credentials :: Maybe (ByteString, ByteString)
+  } deriving (Show)
+
 data TunnelSettings = TunnelSettings
-  { proxySetting :: Maybe (HostName, PortNumber)
+  { proxySetting :: Maybe ProxySettings
   , localBind    :: HostName
   , localPort    :: PortNumber
   , serverHost   :: HostName
@@ -54,7 +63,7 @@ instance Show TunnelSettings where
   show TunnelSettings{..} =  localBind <> ":" <> show localPort
                              <> (if isNothing proxySetting
                                  then mempty
-                                 else " <==PROXY==> " <> fst (fromJust proxySetting) <> ":" <> (show . snd . fromJust $ proxySetting)
+                                 else " <==PROXY==> " <> host (fromJust proxySetting) <> ":" <> (show . port $ fromJust proxySetting)
                                 )
                              <> " <==" <> (if useTls then "WSS" else "WS") <> "==> "
                              <> serverHost <> ":" <> show serverPort
@@ -182,12 +191,13 @@ tcpConnection TunnelSettings{..} app = onError $ do
 
 
 
-httpProxyConnection :: (HostName, PortNumber) -> TunnelSettings -> (Connection -> IO (Either Error ())) -> IO (Either Error ())
-httpProxyConnection endPoint@(host, port) TunnelSettings{..} app = onError $ do
-  debug $ "Oppening tcp connection to proxy " <> toStr endPoint
+httpProxyConnection :: TunnelSettings -> (Connection -> IO (Either Error ())) -> IO (Either Error ())
+httpProxyConnection TunnelSettings{..} app = onError $ do
+  let settings = fromJust proxySetting
+  debug $ "Oppening tcp connection to proxy " <> show settings
 
-  ret <- rrunTCPClient (N.clientSettingsTCP (fromIntegral port) (fromString host)) $ \conn -> do
-    _ <- sendConnectRequest conn
+  ret <- rrunTCPClient (N.clientSettingsTCP (fromIntegral (port settings)) (BC.pack $ host settings)) $ \conn -> do
+    _ <- sendConnectRequest settings conn
     responseM <- timeout (1000000 * 10) $ readConnectResponse mempty conn
     let response = fromMaybe "No response of the proxy after 10s" responseM
 
@@ -195,12 +205,15 @@ httpProxyConnection endPoint@(host, port) TunnelSettings{..} app = onError $ do
     then app conn
     else return . Left . ProxyForwardError $ BC.unpack response
 
-  debug $ "Closing tcp connection to proxy " <> fromString host <> ":" <> show (fromIntegral port :: Int)
+  debug $ "Closing tcp connection to proxy " <> show settings
   return ret
 
   where
-    sendConnectRequest h = write h $ "CONNECT " <> fromString serverHost <> ":" <> fromString (show serverPort) <> " HTTP/1.0\r\n"
-                                   <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <> "\r\n\r\n"
+    credentialsToHeader (user, password) = "Proxy-Authorization: Basic " <> B64.encode (user <> ":" <> password) <> "\r\n"
+    sendConnectRequest settings h = write h $ "CONNECT " <> fromString serverHost <> ":" <> fromString (show serverPort) <> " HTTP/1.0\r\n"
+                                  <> "Host: " <> fromString serverHost <> ":" <> fromString (show serverPort) <> "\r\n"
+                                  <> maybe mempty credentialsToHeader (credentials settings)
+                                  <> "\r\n"
 
     readConnectResponse buff conn = do
       response <- fromJust <$> read conn
@@ -219,7 +232,7 @@ httpProxyConnection endPoint@(host, port) TunnelSettings{..} app = onError $ do
 --
 runClient :: TunnelSettings -> IO ()
 runClient cfg@TunnelSettings{..} = do
-  let withEndPoint = if isJust proxySetting then httpProxyConnection (fromJust proxySetting) cfg else tcpConnection cfg
+  let withEndPoint = if isJust proxySetting then httpProxyConnection cfg else tcpConnection cfg
   let doTlsIf tlsNeeded app = if tlsNeeded then tlsClientP cfg app else app
   let runTunnelClient = tunnelingClientP cfg
   let withTunnel app = withEndPoint (doTlsIf useTls . runTunnelClient $ app)
