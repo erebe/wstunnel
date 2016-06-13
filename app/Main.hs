@@ -6,8 +6,7 @@ module Main where
 
 import           Tunnel
 
-import           ClassyPrelude          (ByteString, guard, readMay,
-                                         traceShowId)
+import           ClassyPrelude          (ByteString, guard, readMay)
 import qualified Data.ByteString.Char8  as BC
 import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs

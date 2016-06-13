@@ -31,7 +31,6 @@ deriving instance Hashable N.SockAddr
 
 data Protocol = UDP | TCP deriving (Show, Read)
 
-
 data UdpAppData = UdpAppData
   { appAddr  :: N.SockAddr
   , appSem   :: MVar ByteString
