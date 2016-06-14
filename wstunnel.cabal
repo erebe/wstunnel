@@ -29,6 +29,7 @@ library
                      , hslogger
                      , base64-bytestring >= 1.0
                      , binary >= 0.7
+                     , mtl
 
   default-language:    Haskell2010
 
