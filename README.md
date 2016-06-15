@@ -1,8 +1,8 @@
 # wstunnel
 
 ## TODO
-- Add sock5 proxy
-- Add better logging
-- Add better error handling
-- Add httpProxy authentification
-- Add Reverse tunnel
+- [ ] Add sock5 proxy
+- [x] Add better logging
+- [x] Add better error handling
+- [x] Add httpProxy authentification
+- [ ] Add Reverse tunnel
