@@ -7,6 +7,7 @@
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StrictData            #-}
+{-# LANGUAGE ExistentialQuantification            #-}
 
 module Socks5 where
 
@@ -212,19 +213,6 @@ data ServerSettings m = ServerSettings
   }
 
 
-runSocks5Server :: IO ()
-runSocks5Server = do
-
-  N.runTCPServer (N.serverSettingsTCP 8888 (fromString"127.0.0.1" )) $ \cnx -> do
-    request <- decode .fromStrict <$> N.appRead cnx :: IO RequestAuth
-    traceShowM request
-    N.appWrite cnx (toStrict . encode $ ResponseAuth (fromIntegral socksVersion) NoAuth)
-    request <- decode .fromStrict <$> N.appRead cnx :: IO Request
-    traceShowM request
-
-    return ()
-
-  return ()
 
 
 

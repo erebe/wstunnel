@@ -41,6 +41,8 @@ import           System.Timeout
 import qualified Data.ByteString.Base64        as B64
 
 import           Utils
+import qualified Socks5
+import Data.Binary (encode, decode)
 
 data ProxySettings = ProxySettings
   { host        :: HostName
@@ -389,3 +391,43 @@ fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
     prt' <- readMay . BC.unpack $ prt :: Maybe Int
     proto <- readMay . toUpper . BC.unpack $ protocol :: Maybe Protocol
     return (proto, h, prt')
+
+
+runSocks5Server :: Socks5.ServerSettings IO -> (N.AppData -> IO()) -> IO ()
+runSocks5Server Socks5.ServerSettings{..} inner = do
+  N.runTCPServer (N.serverSettingsTCP (fromIntegral listenOn) (fromString bindOn)) $ \cnx -> do
+    responseAuth <- join $ onAuthentification . decode . fromStrict <$> N.appRead cnx :: IO Socks5.ResponseAuth
+    N.appWrite cnx (toStrict $ encode responseAuth)
+    request <- decode .fromStrict <$> N.appRead cnx :: IO Socks5.Request
+    traceShowM request
+    ret <- onRequest request
+    N.appWrite cnx (toStrict . encode $ ret)
+    inner cnx
+
+
+
+    return ()
+
+  return ()
+
+
+
+main :: IO ()
+main = do
+
+  runSocks5Server (Socks5.ServerSettings 8888 "127.0.0.1" auth req) $ \cnx -> do
+    putStrLn "tota"
+    da <- N.appRead cnx
+    putStrLn "toot"
+    print da
+    return ()
+
+  return ()
+
+  where
+    auth authReq = do
+      traceShowM authReq
+      return $ Socks5.ResponseAuth (fromIntegral Socks5.socksVersion) Socks5.NoAuth
+    req request= do
+      traceShowM request
+      return $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED 0x00000000 0x0000

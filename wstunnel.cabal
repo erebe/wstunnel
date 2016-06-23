@@ -15,7 +15,7 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Tunnel, Protocols, Utils
+  exposed-modules:     Tunnel, Protocols, Utils, Socks5
   build-depends:       async
                      , base
                      , base64-bytestring >= 1.0
