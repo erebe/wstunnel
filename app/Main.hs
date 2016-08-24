@@ -14,16 +14,16 @@ import           System.Environment     (getArgs, withArgs)
 import qualified System.Log.Logger      as LOG
 
 data WsTunnel = WsTunnel
-  { localToRemote  :: String
+  { localToRemote   :: String
   -- , remoteToLocal  :: String
-  -- , dynamicToRemote  :: String
-  , wsTunnelServer :: String
-  , udpMode        :: Bool
-  , proxy          :: String
-  , serverMode     :: Bool
-  , restrictTo     :: String
-  , verbose        :: Bool
-  , quiet          :: Bool
+  , dynamicToRemote :: String
+  , wsTunnelServer  :: String
+  , udpMode         :: Bool
+  , proxy           :: String
+  , serverMode      :: Bool
+  , restrictTo      :: String
+  , verbose         :: Bool
+  , quiet           :: Bool
   } deriving (Show, Data, Typeable)
 
 data WsServerInfo = WsServerInfo
@@ -43,9 +43,11 @@ data TunnelInfo = TunnelInfo
 cmdLine :: WsTunnel
 cmdLine = WsTunnel
   { localToRemote  = def &= explicit &= name "L" &= name "localToRemote" &= typ "[BIND:]PORT:HOST:PORT"
-                         &= help "Listen on local and forward traffic from remote" &= groupname "Client options"
+                         &= help "Listen on local and forwards traffic from remote" &= groupname "Client options"
   -- , remoteToLocal  = def &= explicit &= name "R" &= name "RemoteToLocal" &= typ "[BIND:]PORT:HOST:PORT"
   --                        &= help "Listen on remote and forward traffic from local"
+  , dynamicToRemote= def &= explicit &= name "D" &= name "dynamicToRemote" &= typ "[BIND:]PORT"
+                         &= help "Listen on local and dynamically (with socks5 proxy) forwards traffic from remote" &= groupname "Client options"
   , udpMode        = def &= explicit &= name "u" &= name "udp" &= help "forward UDP traffic instead of TCP"
   , proxy          = def &= explicit &= name "p" &= name "httpProxy"
                          &= help "If set, will use this proxy to connect to the server" &= typ "USER:PASS@HOST:PORT"
@@ -130,19 +132,33 @@ main = do
   if serverMode cfg
     then putStrLn ("Starting server with opts " ++ show serverInfo )
          >> runServer (Main.useTls serverInfo) (Main.host serverInfo, fromIntegral $ Main.port serverInfo) (parseRestrictTo $ restrictTo cfg)
-    else if not $ null (localToRemote cfg)
-               then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)
-                    in runClient TunnelSettings { localBind = lHost
-                                                , Tunnel.localPort = fromIntegral lPort
-                                                , serverHost = Main.host serverInfo
-                                                , serverPort = fromIntegral $ Main.port serverInfo
-                                                , destHost = rHost
-                                                , destPort = fromIntegral rPort
-                                                , Tunnel.useTls = Main.useTls serverInfo
-                                                , protocol = if udpMode cfg then UDP else TCP
-                                                , proxySetting = parseProxyInfo (proxy cfg)
-                                                }
-               else return ()
+  else if not $ null (localToRemote cfg)
+    then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)
+         in runClient TunnelSettings { localBind = lHost
+                                      , Tunnel.localPort = fromIntegral lPort
+                                      , serverHost = Main.host serverInfo
+                                      , serverPort = fromIntegral $ Main.port serverInfo
+                                      , destHost = rHost
+                                      , destPort = fromIntegral rPort
+                                      , Tunnel.useTls = Main.useTls serverInfo
+                                      , protocol = if udpMode cfg then UDP else TCP
+                                      , proxySetting = parseProxyInfo (proxy cfg)
+                                      , useSocks = False
+                                      }
+  else if not $ null (dynamicToRemote cfg) 
+    then let (TunnelInfo lHost lPort _ _) = parseTunnelInfo $ (localToRemote cfg) ++ ":127.0.0.1:0"
+         in runClient TunnelSettings {  localBind = lHost
+                                      , Tunnel.localPort = fromIntegral lPort
+                                      , serverHost = Main.host serverInfo
+                                      , serverPort = fromIntegral $ Main.port serverInfo
+                                      , destHost = ""
+                                      , destPort = fromIntegral 0
+                                      , Tunnel.useTls = Main.useTls serverInfo
+                                      , protocol = if udpMode cfg then UDP else TCP
+                                      , proxySetting = parseProxyInfo (proxy cfg)
+                                      , useSocks = True
+                                      }
+  else return ()
 
 
   putStrLn "Goodbye !"

@@ -60,6 +60,7 @@ data TunnelSettings = TunnelSettings
   , destPort     :: PortNumber
   , protocol     :: Protocol
   , useTls       :: Bool
+  , useSocks     :: Bool
   }
 
 instance Show TunnelSettings where
