@@ -236,21 +236,21 @@ runClient :: TunnelSettings -> IO ()
 runClient cfg@TunnelSettings{..} = do
   let withEndPoint = if isJust proxySetting then httpProxyConnection cfg else tcpConnection cfg
   let doTlsIf tlsNeeded app = if tlsNeeded then tlsClientP cfg app else app
-  let runTunnelClient = tunnelingClientP cfg
-  let withTunnel app = withEndPoint (doTlsIf useTls . runTunnelClient $ app)
+  let withTunnel cfg' app = withEndPoint (doTlsIf useTls . tunnelingClientP cfg' $ app)
 
-  let app localH = do
-        ret <- withTunnel $ \remoteH -> do
-          info $ "CREATE tunnel :: " <> show cfg
+  let app cfg' localH = do
+        ret <- withTunnel cfg' $ \remoteH -> do
+          info $ "CREATE tunnel :: " <> show cfg'
           ret <- remoteH <==> toConnection localH
-          info $ "CLOSE tunnel :: " <> show cfg
+          info $ "CLOSE tunnel :: " <> show cfg'
           return ret
 
         handleError ret
 
   case protocol of
-        UDP -> runUDPServer (localBind, localPort) app
-        TCP -> runTCPServer (localBind, localPort) app
+        UDP -> runUDPServer (localBind, localPort) (app cfg)
+        TCP -> runTCPServer (localBind, localPort) (app cfg)
+        SOCKS5 -> runSocks5Server (Socks5.ServerSettings localPort localBind) cfg app
 
 handleError :: Either Error () -> IO ()
 handleError (Right ()) = return ()
@@ -382,7 +382,7 @@ serverCertificate = "-----BEGIN CERTIFICATE-----\n" <>
 
 
 toPath :: TunnelSettings -> String
-toPath TunnelSettings{..} = "/" <> toLower (show protocol) <> "/" <> destHost <> "/" <> show destPort
+toPath TunnelSettings{..} = "/" <> toLower (show $ if protocol == SOCKS5 then TCP else protocol) <> "/" <> destHost <> "/" <> show destPort
 
 fromPath :: ByteString -> Maybe (Protocol, ByteString, Int)
 fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
@@ -394,41 +394,50 @@ fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
     return (proto, h, prt')
 
 
-runSocks5Server :: Socks5.ServerSettings IO -> (N.AppData -> IO()) -> IO ()
-runSocks5Server Socks5.ServerSettings{..} inner = do
+runSocks5Server :: Socks5.ServerSettings -> TunnelSettings -> (TunnelSettings -> N.AppData -> IO()) -> IO ()
+runSocks5Server Socks5.ServerSettings{..} cfg inner = do
   N.runTCPServer (N.serverSettingsTCP (fromIntegral listenOn) (fromString bindOn)) $ \cnx -> do
     responseAuth <- join $ onAuthentification . decode . fromStrict <$> N.appRead cnx :: IO Socks5.ResponseAuth
     N.appWrite cnx (toStrict $ encode responseAuth)
-    request <- decode .fromStrict <$> N.appRead cnx :: IO Socks5.Request
-    traceShowM request
+    request <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.Request
     ret <- onRequest request
     N.appWrite cnx (toStrict . encode $ ret)
-    inner cnx
 
+    let cfg' = cfg { destHost = Socks5.addr request, destPort = Socks5.port request }
 
-
-    return ()
-
-  return ()
-
-
-
-main :: IO ()
-main = do
-
-  runSocks5Server (Socks5.ServerSettings 8888 "127.0.0.1" auth req) $ \cnx -> do
-    putStrLn "tota"
-    da <- N.appRead cnx
-    putStrLn "toot"
-    print da
+    inner cfg' cnx
     return ()
 
   return ()
 
   where
-    auth authReq = do
-      traceShowM authReq
+    onAuthentification :: (MonadIO m, MonadError IOException m) => Socks5.RequestAuth -> m Socks5.ResponseAuth
+    onAuthentification authReq = do
       return $ Socks5.ResponseAuth (fromIntegral Socks5.socksVersion) Socks5.NoAuth
-    req request= do
+
+    onRequest          :: (MonadIO m, MonadError IOException m) => Socks5.Request -> m Socks5.Response
+    onRequest request = do
       traceShowM request
-      return $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED 0x00000000 0x0000
+      return $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED (Socks5.addr request) (Socks5.port request)
+
+
+
+-- main :: IO ()
+-- main = do
+
+--   runSocks5Server (Socks5.ServerSettings 8888 "127.0.0.1") $ \cnx -> do
+--     putStrLn "tota"
+--     da <- N.appRead cnx
+--     putStrLn "toot"
+--     print da
+--     return ()
+
+--   return ()
+
+--   where
+--     auth authReq = do
+--       traceShowM authReq
+--       return $ Socks5.ResponseAuth (fromIntegral Socks5.socksVersion) Socks5.NoAuth
+--     req request= do
+--       traceShowM request
+--       return $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED 0x00000000 0x0000

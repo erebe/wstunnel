@@ -145,16 +145,16 @@ main = do
                                       , proxySetting = parseProxyInfo (proxy cfg)
                                       , useSocks = False
                                       }
-  else if not $ null (dynamicToRemote cfg) 
-    then let (TunnelInfo lHost lPort _ _) = parseTunnelInfo $ (localToRemote cfg) ++ ":127.0.0.1:0"
+  else if not $ null (dynamicToRemote cfg)
+    then let (TunnelInfo lHost lPort _ _) = parseTunnelInfo $ (dynamicToRemote cfg) ++ ":127.0.0.1:1212"
          in runClient TunnelSettings {  localBind = lHost
                                       , Tunnel.localPort = fromIntegral lPort
                                       , serverHost = Main.host serverInfo
                                       , serverPort = fromIntegral $ Main.port serverInfo
                                       , destHost = ""
-                                      , destPort = fromIntegral 0
+                                      , destPort = 0
                                       , Tunnel.useTls = Main.useTls serverInfo
-                                      , protocol = if udpMode cfg then UDP else TCP
+                                      , protocol = SOCKS5
                                       , proxySetting = parseProxyInfo (proxy cfg)
                                       , useSocks = True
                                       }

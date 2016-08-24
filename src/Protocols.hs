@@ -29,7 +29,7 @@ deriving instance Hashable PortNumber
 deriving instance Generic N.SockAddr
 deriving instance Hashable N.SockAddr
 
-data Protocol = UDP | TCP deriving (Show, Read)
+data Protocol = UDP | TCP | SOCKS5 deriving (Show, Read, Eq)
 
 data UdpAppData = UdpAppData
   { appAddr  :: N.SockAddr

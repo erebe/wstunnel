@@ -1,13 +1,13 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE NoImplicitPrelude     #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE RankNTypes            #-}
-{-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE StrictData            #-}
-{-# LANGUAGE ExistentialQuantification            #-}
+{-# LANGUAGE DeriveAnyClass            #-}
+{-# LANGUAGE DuplicateRecordFields     #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE NoImplicitPrelude         #-}
+{-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE RankNTypes                #-}
+{-# LANGUAGE RecordWildCards           #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE StrictData                #-}
 
 module Socks5 where
 
@@ -155,7 +155,7 @@ toHex = foldr showHex "" . unpack
 data Response = Response
   { version    :: Int
   , returnCode :: RetCode
-  , serverAddr :: HostAddress
+  , serverAddr :: HostName
   , serverPort :: PortNumber
   } deriving (Show)
 
@@ -182,8 +182,10 @@ instance Binary Response where
     put returnCode
     putWord8 0x00 -- Reserved
     putWord8 0x03 -- DOMAINNAME
-    putWord32be serverAddr
-    putWord16be $ fromIntegral serverPort
+    let host = BC8.pack serverAddr
+    putWord8 (fromIntegral . length $ host)
+    traverse_ put host
+    putWord16be (fromIntegral serverPort)
 
 
   get = do
@@ -193,23 +195,26 @@ instance Binary Response where
     getWord8 -- RESERVED
     opCode <- fromIntegral <$> getWord8 -- Type
     guard(opCode == 0x03)
-    addr <- getWord32be
+    length <- fromIntegral <$> getWord8
+    host <- either (const T.empty) id . E.decodeUtf8' <$> replicateM length getWord8
+    guard (not $ null host)
+
     port <- getWord16be
 
     return Response
       { version = version
       , returnCode = ret
-      , serverAddr = addr
+      , serverAddr = unpack host
       , serverPort = fromIntegral port
       }
 
 
 
-data ServerSettings m = ServerSettings
-  { listenOn           :: PortNumber
-  , bindOn             :: HostName
-  , onAuthentification :: (MonadIO m, MonadError IOException m) => RequestAuth -> m ResponseAuth
-  , onRequest          :: (MonadIO m, MonadError IOException m) => Request -> m Response
+data ServerSettings = ServerSettings
+  { listenOn :: PortNumber
+  , bindOn   :: HostName
+  -- , onAuthentification :: (MonadIO m, MonadError IOException m) => RequestAuth -> m ResponseAuth
+  -- , onRequest          :: (MonadIO m, MonadError IOException m) => Request -> m Response
   }
 
 
