@@ -1,12 +1,15 @@
 # wstunnel
 ```
-
 Use the websockets protocol to tunnel {TCP,UDP} traffic
 wsTunnelClient <---> wsTunnelServer <---> RemoteHost
 Use secure connection (wss://) to bypass proxies
+
 wstunnel [OPTIONS] ws[s]://wstunnelServer[:port]
 Client options:
-  -L --localToRemote=[BIND:]PORT:HOST:PORT  Listen on local and forward
+  -L --localToRemote=[BIND:]PORT:HOST:PORT  Listen on local and forwards
+                                            traffic from remote
+  -D --dynamicToRemote=[BIND:]PORT          Listen on local and dynamically
+                                            (with socks5 proxy) forwards
                                             traffic from remote
   -u --udp                                  forward UDP traffic instead of
                                             TCP
@@ -22,7 +25,6 @@ Common options:
   -q --quiet                                Print only errors
   -h --help                                 Display help message
   -V --version                              Print version information
-                                                                                
 ```
 
 ## TODO
