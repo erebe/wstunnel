@@ -55,7 +55,7 @@ The server will listen on any interface on port 443 (https) and restrict traffic
 **Be aware that the server will use self signed certificate with weak cryptographic algorithm.
 It was made in order to add the least possible overhead while still being compliant with tls.**
 
-**So do not rely on wstunnel to protect your privacy, if you want to do forwards only traffic that is already secure by design (ex: https)**
+**So do not rely on wstunnel to protect your privacy, if you want to do so, forwards only traffic that is already secure by design (ex: https)**
 
 Now on the client side start the client with
 ```
