@@ -71,7 +71,7 @@ instance Show TunnelSettings where
                                 )
                              <> " <==" <> (if useTls then "WSS" else "WS") <> "==> "
                              <> serverHost <> ":" <> show serverPort
-                             <> " <==" <>  show protocol <> "==> " <> destHost <> ":" <> show destPort
+                             <> " <==" <>  show (if protocol == SOCKS5 then TCP else protocol) <> "==> " <> destHost <> ":" <> show destPort
 
 
 data Connection = Connection
@@ -395,49 +395,27 @@ fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
 
 
 runSocks5Server :: Socks5.ServerSettings -> TunnelSettings -> (TunnelSettings -> N.AppData -> IO()) -> IO ()
-runSocks5Server Socks5.ServerSettings{..} cfg inner = do
-  N.runTCPServer (N.serverSettingsTCP (fromIntegral listenOn) (fromString bindOn)) $ \cnx -> do
-    responseAuth <- join $ onAuthentification . decode . fromStrict <$> N.appRead cnx :: IO Socks5.ResponseAuth
-    N.appWrite cnx (toStrict $ encode responseAuth)
-    request <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.Request
-    ret <- onRequest request
-    N.appWrite cnx (toStrict . encode $ ret)
+runSocks5Server socksSettings@Socks5.ServerSettings{..} cfg inner = do
+  debug $ "Starting socks5 proxy " <> show socksSettings
 
+  N.runTCPServer (N.serverSettingsTCP (fromIntegral listenOn) (fromString bindOn)) $ \cnx -> do
+    -- Get the auth request and response with a no Auth
+    authRequest <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.ResponseAuth
+    debug $ "Socks5 authentification request " <> show authRequest
+    let responseAuth = encode $ Socks5.ResponseAuth (fromIntegral Socks5.socksVersion) Socks5.NoAuth
+    N.appWrite cnx (toStrict responseAuth)
+
+    -- Get the request and update dynamically the tunnel config
+    request <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.Request
+    debug $ "Socks5 forward request " <> show request
+    let responseRequest =  encode $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED (Socks5.addr request) (Socks5.port request)
     let cfg' = cfg { destHost = Socks5.addr request, destPort = Socks5.port request }
+    N.appWrite cnx (toStrict responseRequest)
 
     inner cfg' cnx
-    return ()
 
-  return ()
-
-  where
-    onAuthentification :: (MonadIO m, MonadError IOException m) => Socks5.RequestAuth -> m Socks5.ResponseAuth
-    onAuthentification authReq = do
-      return $ Socks5.ResponseAuth (fromIntegral Socks5.socksVersion) Socks5.NoAuth
-
-    onRequest          :: (MonadIO m, MonadError IOException m) => Socks5.Request -> m Socks5.Response
-    onRequest request = do
-      traceShowM request
-      return $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED (Socks5.addr request) (Socks5.port request)
+  debug $ "Closing socks5 proxy " <> show socksSettings
 
 
 
--- main :: IO ()
--- main = do
 
---   runSocks5Server (Socks5.ServerSettings 8888 "127.0.0.1") $ \cnx -> do
---     putStrLn "tota"
---     da <- N.appRead cnx
---     putStrLn "toot"
---     print da
---     return ()
-
---   return ()
-
---   where
---     auth authReq = do
---       traceShowM authReq
---       return $ Socks5.ResponseAuth (fromIntegral Socks5.socksVersion) Socks5.NoAuth
---     req request= do
---       traceShowM request
---       return $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED 0x00000000 0x0000

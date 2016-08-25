@@ -215,7 +215,7 @@ data ServerSettings = ServerSettings
   , bindOn   :: HostName
   -- , onAuthentification :: (MonadIO m, MonadError IOException m) => RequestAuth -> m ResponseAuth
   -- , onRequest          :: (MonadIO m, MonadError IOException m) => Request -> m Response
-  }
+  } deriving (Show)
 
 
 
