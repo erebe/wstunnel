@@ -48,9 +48,9 @@ Start your wstunnel server with tls activated
 wstunnel --server wss://0.0.0.0:443 -r 127.0.0.1:22
 ```
 The server will listen on any interface on port 443 (https) and restrict traffic to be forwarded only to the ssh daemon.
-Be aware that the server will use self signed certificate with weak cryptographic algorithm.
+**Be aware that the server will use self signed certificate with weak cryptographic algorithm.
 It was made in order add the least possible overhead while still being compliant with tls.
-So do not rely on wstunnel to protect your privacy, if you want to do forwards only traffic that is already secure by design (ex: https)
+So do not rely on wstunnel to protect your privacy, if you want to do forwards only traffic that is already secure by design (ex: https)**
 
 Now on the client side start the client with
 ```
