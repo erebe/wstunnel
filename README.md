@@ -1,5 +1,7 @@
 
-![wstunnel logo](https://github.com/erebe/wstunnel/raw/master/logo_wstunnel.png)
+<p align="center">
+  <img src="https://github.com/erebe/wstunnel/raw/master/logo_wstunnel.png" alt="wstunnel logo"/>
+</p>
 
 ## Description
 
