@@ -14,6 +14,7 @@ My inspiration went from [this project](https://www.npmjs.com/package/wstunnel) 
 * Static tunneling (TCP and UDP)
 * Dynamic tunneling (socks5 proxy)
 * Support for proxy
+* Support for https server (with embeded self signed certificate, see comment in the example section)
 * **Standalone binary for linux x86_64** (so just cp it where you want)
 * Standalone archive for windows
 
