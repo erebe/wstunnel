@@ -2,9 +2,9 @@
 # Wstunnel
 ## Description
 
-Most of the time when you are using a public network, you are behind some kind of firewall or proxy in order to limit the traffic to only use certain type of protocols, but most of the time http is allowed.
+Most of the time when you are using a public network, you are behind some kind of firewall or proxy. One of their purpose is to constrain you to only use certain kind of protocols. Nowadays, the most widespread protocol is http and is de facto allowed by third party equipement.
 
-This tool uses the websocket protocol which is compatible with http in order to bypass firewalls and proxies and tunnel what ever traffic you want.
+This tool understands this fact and uses the websocket protocol which is compatible with http in order to bypass firewalls and proxies. Wstunnel allows you to tunnel what ever traffic you want.
 
 My inspiration went from [this project](https://www.npmjs.com/package/wstunnel) but as I don't want to have to install npm and nodejs to use this tool, I remade it in Haskell and improved it. 
 
@@ -13,8 +13,8 @@ My inspiration went from [this project](https://www.npmjs.com/package/wstunnel) 
 * Good error messages and debug informations
 * Static tunneling (TCP and UDP)
 * Dynamic tunneling (socks5 proxy)
-* Support for proxy
-* Support for https server (with embeded self signed certificate, see comment in the example section)
+* Support for http proxy (when behind one)
+* Support for tls/https server (with embeded self signed certificate, see comment in the example section)
 * **Standalone binary for linux x86_64** (so just cp it where you want)
 * Standalone archive for windows
 
