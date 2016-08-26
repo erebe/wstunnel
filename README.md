@@ -1,5 +1,6 @@
 
-# Wstunnel
+![wstunnel logo](https://github.com/erebe/wstunnel/raw/master/logo_wstunnel.png)
+
 ## Description
 
 Most of the time when you are using a public network, you are behind some kind of firewall or proxy. One of their purpose is to constrain you to only use certain kind of protocols. Nowadays, the most widespread protocol is http and is de facto allowed by third party equipement.
