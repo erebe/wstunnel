@@ -101,3 +101,4 @@ ssh -p 9999 login@127.0.0.1
 - [x] Add better error handling
 - [x] Add httpProxy authentification
 - [ ] Add Reverse tunnel
+- [ ] Add more tests for socks5 proxy
