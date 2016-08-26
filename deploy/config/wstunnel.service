@@ -1,0 +1,13 @@
+[Unit]
+Description=wstunnel server
+Wants=network.target
+After=network.target
+
+[Service]
+Type=simple
+User=wstunnel
+ExecStart=/usr/local/bin/wstunnel --server ws://127.0.0.1:{{ listen_port }} -r 127.0.0.1:22
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
