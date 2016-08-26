@@ -1,0 +1,60 @@
+- hosts: server
+  remote_user: root
+
+  vars:
+    # Username
+    user: wstunnel
+    listen_port: 9999
+
+  tasks:
+    - name: Create user {{ user }}
+      user: name={{ user }}
+            comment="{{ user }} user"
+            shell=/bin/false
+            createhome=no
+
+    - name: Install wstunnel app
+      copy: src=config/wstunnel
+            dest=/usr/local/bin/
+            owner=wstunnel
+            group=wstunnel
+            mode=u+rwx
+
+    ################################
+    # NGINX
+    ################################
+    - name: Add nginx config
+      template: src=config/wstunnel.nginx
+                dest=/etc/nginx/sites-available/
+      notify: reload nginx
+
+    - name: Symlink nginx config
+      file: src=/etc/nginx/sites-available/wstunnel.nginx
+            dest=/etc/nginx/sites-enabled/default
+            state=link
+
+    - name: Nginx started
+      service: name=nginx state=started enabled=true
+
+
+    ################################
+    # SYSTEMD
+    ################################
+    - name: Copy systemd service
+      template: src=config/wstunnel.service
+                dest=/usr/lib/systemd/system/
+      notify: reload wstunnel
+    
+    - name: reload systemd
+      command: systemctl daemon-reload
+
+    - name: wstunnel started
+      service: name=wstunnel state=started enabled=true
+
+
+  handlers:
+    - name: reload nginx
+      service: name=nginx state=reloaded enabled=true
+
+    - name: reload wstunnel
+      service: name=wstunnel state=restarted enabled=true
