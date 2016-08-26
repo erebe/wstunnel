@@ -1,4 +1,28 @@
+
 # Wstunnel
+## Description
+
+Most of the time when you are using a public network, you are behind some kind of firewall or proxy in order to limit the traffic to only use certain type of protocols, but most of the time http is allowed.
+
+This tool uses the websocket protocol which is compatible with http in order to bypass firewalls and proxies and tunnel what ever traffic you want.
+
+My inspiration went from [this project](https://www.npmjs.com/package/wstunnel) but as I don't want to have to install npm and nodejs to use this tool, I remade it in Haskell and improve it. 
+
+**What to expect :**
+
+* Good error messages and debug informations
+* Static tunneling (TCP and UDP)
+* Dynamic tunneling (socks5 proxy)
+* Support for proxy
+* **Standalone binary for linux x86_64** (so just cp it where you want)
+* Standalone archive for windows
+
+[Binaries](https://github.com/erebe/wstunnel/tree/master/bin)
+
+P.S: Please do not pay attention to Main.hs because as I hate to write command line code this file is crappy
+
+## Command line
+
 ```
 Use the websockets protocol to tunnel {TCP,UDP} traffic
 wsTunnelClient <---> wsTunnelServer <---> RemoteHost
