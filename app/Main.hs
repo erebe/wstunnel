@@ -4,7 +4,6 @@
 
 module Main where
 
-import           Tunnel
 
 import           ClassyPrelude          (ByteString, guard, readMay)
 import qualified Data.ByteString.Char8  as BC
@@ -12,6 +11,9 @@ import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs
 import           System.Environment     (getArgs, withArgs)
 import qualified System.Log.Logger      as LOG
+
+import           Tunnel
+import           Types
 
 data WsTunnel = WsTunnel
   { localToRemote   :: String
@@ -135,12 +137,12 @@ main = do
   else if not $ null (localToRemote cfg)
     then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)
          in runClient TunnelSettings { localBind = lHost
-                                      , Tunnel.localPort = fromIntegral lPort
+                                      , Types.localPort = fromIntegral lPort
                                       , serverHost = Main.host serverInfo
                                       , serverPort = fromIntegral $ Main.port serverInfo
                                       , destHost = rHost
                                       , destPort = fromIntegral rPort
-                                      , Tunnel.useTls = Main.useTls serverInfo
+                                      , Types.useTls = Main.useTls serverInfo
                                       , protocol = if udpMode cfg then UDP else TCP
                                       , proxySetting = parseProxyInfo (proxy cfg)
                                       , useSocks = False
@@ -148,12 +150,12 @@ main = do
   else if not $ null (dynamicToRemote cfg)
     then let (TunnelInfo lHost lPort _ _) = parseTunnelInfo $ (dynamicToRemote cfg) ++ ":127.0.0.1:1212"
          in runClient TunnelSettings {  localBind = lHost
-                                      , Tunnel.localPort = fromIntegral lPort
+                                      , Types.localPort = fromIntegral lPort
                                       , serverHost = Main.host serverInfo
                                       , serverPort = fromIntegral $ Main.port serverInfo
                                       , destHost = ""
                                       , destPort = 0
-                                      , Tunnel.useTls = Main.useTls serverInfo
+                                      , Types.useTls = Main.useTls serverInfo
                                       , protocol = SOCKS5
                                       , proxySetting = parseProxyInfo (proxy cfg)
                                       , useSocks = True
