@@ -1,6 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
-module Utils where
+module Logger where
 
 import           ClassyPrelude
 import           Network.Socket    (HostName, PortNumber)
