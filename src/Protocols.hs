@@ -1,10 +1,8 @@
-{-# LANGUAGE DeriveAnyClass      #-}
-{-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving  #-}
 
 module Protocols where
 
@@ -22,25 +20,11 @@ import qualified Network.Socket            as N hiding (recv, recvFrom, send,
                                                  sendTo)
 import qualified Network.Socket.ByteString as N
 
-import           Utils
+import           Data.Binary               (decode, encode)
 
-deriving instance Generic PortNumber
-deriving instance Hashable PortNumber
-deriving instance Generic N.SockAddr
-deriving instance Hashable N.SockAddr
-
-data Protocol = UDP | TCP | SOCKS5 deriving (Show, Read, Eq)
-
-data UdpAppData = UdpAppData
-  { appAddr  :: N.SockAddr
-  , appSem   :: MVar ByteString
-  , appRead  :: IO ByteString
-  , appWrite :: ByteString -> IO ()
-  }
-
-instance N.HasReadWrite UdpAppData where
-  readLens f appData =  fmap (\getData -> appData { appRead = getData})  (f $ appRead appData)
-  writeLens f appData = fmap (\writeData -> appData { appWrite = writeData}) (f $ appWrite appData)
+import           Logger
+import qualified Socks5
+import           Types
 
 
 runTCPServer :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
@@ -108,3 +92,26 @@ runUDPServer endPoint@(host, port) app = do
                               (addNewClient clientsCtx socket addr payload)
                               (removeClient clientsCtx)
                               (void . timeout (30 * 10^(6 :: Int)) . app)
+
+
+runSocks5Server :: Socks5.ServerSettings -> TunnelSettings -> (TunnelSettings -> N.AppData -> IO()) -> IO ()
+runSocks5Server socksSettings@Socks5.ServerSettings{..} cfg inner = do
+  info $ "Starting socks5 proxy " <> show socksSettings
+
+  N.runTCPServer (N.serverSettingsTCP (fromIntegral listenOn) (fromString bindOn)) $ \cnx -> do
+    -- Get the auth request and response with a no Auth
+    authRequest <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.ResponseAuth
+    debug $ "Socks5 authentification request " <> show authRequest
+    let responseAuth = encode $ Socks5.ResponseAuth (fromIntegral Socks5.socksVersion) Socks5.NoAuth
+    N.appWrite cnx (toStrict responseAuth)
+
+    -- Get the request and update dynamically the tunnel config
+    request <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.Request
+    debug $ "Socks5 forward request " <> show request
+    let responseRequest =  encode $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED (Socks5.addr request) (Socks5.port request)
+    let cfg' = cfg { destHost = Socks5.addr request, destPort = Socks5.port request }
+    N.appWrite cnx (toStrict responseRequest)
+
+    inner cfg' cnx
+
+  info $ "Closing socks5 proxy " <> show socksSettings
