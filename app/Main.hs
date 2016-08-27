@@ -10,8 +10,8 @@ import qualified Data.ByteString.Char8  as BC
 import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs
 import           System.Environment     (getArgs, withArgs)
-import qualified System.Log.Logger      as LOG
 
+import qualified Logger
 import           Tunnel
 import           Types
 
@@ -124,11 +124,10 @@ main = do
   cfg <- if null args then withArgs ["--help"] (cmdArgs cmdLine) else cmdArgs cmdLine
 
   let serverInfo = parseServerInfo (WsServerInfo False "" 0) (wsTunnelServer cfg)
-  LOG.updateGlobalLogger "wstunnel" (if quiet cfg
-                                     then LOG.setLevel LOG.ERROR
-                                     else if verbose cfg
-                                     then LOG.setLevel LOG.DEBUG
-                                     else LOG.setLevel LOG.INFO)
+  Logger.init (if quiet cfg then Logger.QUIET
+                            else if verbose cfg
+                            then Logger.VERBOSE
+                            else Logger.NORMAL)
 
 
   if serverMode cfg
