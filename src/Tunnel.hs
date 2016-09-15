@@ -12,7 +12,6 @@ module Tunnel
     ) where
 
 import           ClassyPrelude
-import           Control.Concurrent.Async      (race_)
 import           Data.Maybe                    (fromJust)
 
 import qualified Data.ByteString.Char8         as BC
@@ -47,11 +46,11 @@ import qualified Credentials
 rrunTCPClient :: N.ClientSettings -> (Connection -> IO a) -> IO a
 rrunTCPClient cfg app = bracket
     (N.getSocketFamilyTCP (N.getHost cfg) (N.getPort cfg) (N.getAddrFamily cfg))
-    (\r -> catch (N.sClose $ fst r) (\(_ :: SomeException) -> return ()))
+    (\r -> catch (N.close $ fst r) (\(_ :: SomeException) -> return ()))
     (\(s, _) -> app Connection
         { read = Just <$> N.safeRecv s (N.getReadBufferSize cfg)
         , write = N.sendAll s
-        , close = N.sClose s
+        , close = N.close s
         , rawConnection = Just s
         })
 
@@ -280,3 +279,10 @@ propagateWrites :: Connection -> Connection -> IO ()
 propagateWrites hTunnel hOther = do
   payload <- fromJust <$> read hOther
   unless (null payload) (write hTunnel payload >> propagateWrites hTunnel hOther)
+
+
+
+toto :: String -> Connection
+toto  = undefined
+toto :: Int -> Connection
+toto  = undefined
