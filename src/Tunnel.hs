@@ -281,8 +281,3 @@ propagateWrites hTunnel hOther = do
   unless (null payload) (write hTunnel payload >> propagateWrites hTunnel hOther)
 
 
-
-toto :: String -> Connection
-toto  = undefined
-toto :: Int -> Connection
-toto  = undefined
