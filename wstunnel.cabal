@@ -16,6 +16,7 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     Tunnel, Protocols, Types, Logger, Socks5, Credentials
+  default-extensions:  NoImplicitPrelude, ScopedTypeVariables, BangPatterns, RecordWildCards
   build-depends:       async
                      , base
                      , base64-bytestring >= 1.0
@@ -37,7 +38,11 @@ library
 executable wstunnel
   hs-source-dirs:      app
   main-is:             Main.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  default-extensions:  NoImplicitPrelude, ScopedTypeVariables, BangPatterns, RecordWildCards
+  ghc-options:         -threaded
+                       -rtsopts
+                       "-with-rtsopts=-N"
+                       -g
   build-depends:       base
                      , bytestring
                      , classy-prelude
