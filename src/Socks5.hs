@@ -2,11 +2,8 @@
 {-# LANGUAGE DuplicateRecordFields     #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
-{-# LANGUAGE NoImplicitPrelude         #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RankNTypes                #-}
-{-# LANGUAGE RecordWildCards           #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE StrictData                #-}
 
 module Socks5 where
