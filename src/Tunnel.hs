@@ -1,9 +1,5 @@
-{-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 
 module Tunnel
@@ -279,5 +275,3 @@ propagateWrites :: Connection -> Connection -> IO ()
 propagateWrites hTunnel hOther = do
   payload <- fromJust <$> read hOther
   unless (null payload) (write hTunnel payload >> propagateWrites hTunnel hOther)
-
-
