@@ -1,12 +1,13 @@
 {-# LANGUAGE BangPatterns       #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE OverloadedStrings  #-}
 {-# OPTIONS_GHC -fno-cse #-}
 
 module Main where
 
-
-import           ClassyPrelude          (ByteString, guard, readMay)
+import           ClassyPrelude          hiding (getArgs, head)
 import qualified Data.ByteString.Char8  as BC
+import           Data.List              (head, (!!))
 import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs
 import           System.Environment     (getArgs, withArgs)
@@ -71,7 +72,7 @@ cmdLine = WsTunnel
 toPort :: String -> Int
 toPort str = case readMay str of
                   Just por -> por
-                  Nothing -> error $ "Invalid port number `" ++ str ++ "`"
+                  Nothing  -> error $ "Invalid port number `" ++ str ++ "`"
 
 parseServerInfo :: WsServerInfo -> String -> WsServerInfo
 parseServerInfo server []                           = server
@@ -131,7 +132,7 @@ main = do
 
 
   if serverMode cfg
-    then putStrLn ("Starting server with opts " ++ show serverInfo )
+    then putStrLn ("Starting server with opts " <> tshow serverInfo )
          >> runServer (Main.useTls serverInfo) (Main.host serverInfo, fromIntegral $ Main.port serverInfo) (parseRestrictTo $ restrictTo cfg)
   else if not $ null (localToRemote cfg)
     then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)

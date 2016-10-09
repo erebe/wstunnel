@@ -1,8 +1,5 @@
 {-# LANGUAGE FlexibleInstances   #-}
-{-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module Protocols where
 

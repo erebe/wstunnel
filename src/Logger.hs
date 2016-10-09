@@ -1,5 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-
 module Logger where
 
 import           ClassyPrelude
@@ -11,9 +9,9 @@ data Verbosity = QUIET | VERBOSE | NORMAL
 
 init :: Verbosity -> IO ()
 init lvl = LOG.updateGlobalLogger "wstunnel" $ case lvl of
-  QUIET -> LOG.setLevel LOG.ERROR
+  QUIET   -> LOG.setLevel LOG.ERROR
   VERBOSE -> LOG.setLevel LOG.DEBUG
-  NORMAL -> LOG.setLevel LOG.INFO
+  NORMAL  -> LOG.setLevel LOG.INFO
 
 toStr :: (HostName, PortNumber) -> String
 toStr (host, port) = fromString host <> ":" <> show port
