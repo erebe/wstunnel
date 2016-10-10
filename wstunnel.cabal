@@ -15,7 +15,7 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Tunnel, Protocols, Types, Logger, Socks5, Credentials
+  exposed-modules:     Tunnel, Protocols, Types, Logger, Socks5, Credentials, HttpProxy
   default-extensions:  NoImplicitPrelude, ScopedTypeVariables, BangPatterns, RecordWildCards
   build-depends:       async
                      , base
