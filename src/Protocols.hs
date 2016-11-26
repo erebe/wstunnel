@@ -45,7 +45,7 @@ runUDPClient endPoint@(host, port) app = do
     app UdpAppData { appAddr  = N.addrAddress addrInfo
                    , appSem   = sem
                    , appRead  = fst <$> N.recvFrom socket 4096
-                   , appWrite = \payload -> void $ N.sendTo socket payload (N.addrAddress addrInfo)
+                   , appWrite = \payload -> void $ N.sendAllTo socket payload (N.addrAddress addrInfo)
                    }
 
   info $ "CLOSE udp connection to " <> toStr endPoint
@@ -65,7 +65,7 @@ runUDPServer endPoint@(host, port) app = do
       let appData = UdpAppData { appAddr  = addr
                                , appSem   = sem
                                , appRead  = takeMVar sem
-                               , appWrite = \payload' -> void $ N.sendTo socket payload' addr
+                               , appWrite = \payload' -> void $ N.sendAllTo socket payload' addr
                                }
       void $ atomicModifyIORef' clientsCtx (\clients -> (H.insert addr appData clients, ()))
       return appData
@@ -76,7 +76,11 @@ runUDPServer endPoint@(host, port) app = do
       debug "TIMEOUT connection"
 
     pushDataToClient :: UdpAppData -> ByteString -> IO ()
-    pushDataToClient clientCtx = putMVar (appSem clientCtx)
+    pushDataToClient clientCtx payload = putMVar (appSem clientCtx) payload
+      `catch` (\(_ :: SomeException) -> debug $ "DROP udp packet, client thread dead")
+     -- If we are unlucky the client's thread died before we had the time to push the data on a already full mutex
+     -- and will leave us waiting forever for the mutex to empty. So catch the exeception and drop the message.
+     -- Udp is not a reliable protocol so transmission failure should be handled by the application layer
 
     runEventLoop :: IORef (H.HashMap N.SockAddr UdpAppData) -> N.Socket -> IO ()
     runEventLoop clientsCtx socket = forever $ do
