@@ -11,7 +11,7 @@ This tool understands this fact and uses the websocket protocol which is compati
 
 My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) but as I don't want to install npm and nodejs to use this tool, I remade it in Haskell and improved it. 
 
-**What to expect :**
+**What to expect:**
 
 * Good error messages and debug informations
 * Static tunneling (TCP and UDP)
