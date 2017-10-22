@@ -42,6 +42,7 @@ executable wstunnel
   ghc-options:         -threaded
                        -O3
                        -rtsopts "-with-rtsopts=-N"
+--  ld-options:          -static
   build-depends:       base
                      , bytestring
                      , classy-prelude
