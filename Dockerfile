@@ -15,7 +15,8 @@ RUN rm -rf ~/.stack &&  \
 
 COPY . /mnt
 
-RUN stack install --split-objs --ghc-options="-fPIC -fllvm"
+RUN echo '  ld-options: -static -Wl,--unresolved-symbols=ignore-all' >> wstunnel.cabal ; \
+    stack install --split-objs --ghc-options="-fPIC -fllvm"
 RUN upx --ultra-brute /root/.local/bin/wstunnel
 
 
@@ -27,5 +28,5 @@ WORKDIR /root
 COPY --from=builder /root/.local/bin/wstunnel .
 RUN chmod +x ./wstunnel
 
-ENTRYPOINT ["./wstunnel"]
+CMD ["./wstunnel"]
 
