@@ -35,24 +35,6 @@ library
 
   default-language:    Haskell2010
 
-executable wstunnel
-  hs-source-dirs:      app
-  main-is:             Main.hs
-  default-extensions:  NoImplicitPrelude, ScopedTypeVariables, BangPatterns, RecordWildCards
-  ghc-options:         -threaded
-                       -O3
-                       -rtsopts "-with-rtsopts=-N"
---  ld-options:          -static
-  build-depends:       base
-                     , bytestring
-                     , classy-prelude
-                     , cmdargs
-                     , hslogger
-                     , text >= 1.2.2.1
-                     , wstunnel
-
-  default-language:    Haskell2010
-
 test-suite wstunnel-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
@@ -66,3 +48,20 @@ test-suite wstunnel-test
 source-repository head
   type:     git
   location: https://github.com/githubuser/wstunnel
+
+executable wstunnel
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  default-extensions:  NoImplicitPrelude, ScopedTypeVariables, BangPatterns, RecordWildCards
+  ghc-options:         -threaded
+                       -O3
+                       -rtsopts "-with-rtsopts=-N"
+  build-depends:       base
+                     , bytestring
+                     , classy-prelude
+                     , cmdargs
+                     , hslogger
+                     , text >= 1.2.2.1
+                     , wstunnel
+
+  default-language:    Haskell2010
