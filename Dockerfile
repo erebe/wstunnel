@@ -15,7 +15,7 @@ RUN rm -rf ~/.stack &&  \
 
 COPY . /mnt
 
-RUN echo '  ld-options: -static -Wl,--unresolved-symbols=ignore-all' >> wstunnel.cabal ; \
+RUN echo '  ld-options: -static' >> wstunnel.cabal ; \
     stack install --split-objs --ghc-options="-fPIC -fllvm"
 RUN upx --ultra-brute /root/.local/bin/wstunnel
 
