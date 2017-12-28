@@ -34,7 +34,7 @@ data HttpProxySettings = HttpProxySettings
 
 httpProxyConnection :: MonadError Error m => HttpProxySettings -> (HostName, PortNumber) ->  (Connection -> IO (m a)) -> IO (m a)
 httpProxyConnection HttpProxySettings{..} (host, port) app = onError $ do
-  debug $ "Oppening tcp connection to proxy " <> show proxyHost <> ":" <> show proxyPort
+  debug $ "Opening tcp connection to proxy " <> show proxyHost <> ":" <> show proxyPort
 
   ret <- N.runTCPClient (N.clientSettingsTCP (fromIntegral proxyPort) (fromString proxyHost)) $ \conn' -> do
     let conn = toConnection conn'
