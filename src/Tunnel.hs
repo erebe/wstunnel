@@ -58,7 +58,7 @@ tunnelingClientP cfg@TunnelSettings{..} app conn = onError $ do
   debug "Oppening Websocket stream"
 
   stream <- connectionToStream conn
-  ret <- WS.runClientWithStream stream serverHost (toPath cfg) WS.defaultConnectionOptions [] (app . toConnection)
+  ret <- WS.runClientWithStream stream serverHost (toPath cfg) WS.defaultConnectionOptions [] run
 
   debug "Closing Websocket stream"
   return ret
@@ -66,6 +66,9 @@ tunnelingClientP cfg@TunnelSettings{..} app conn = onError $ do
   where
     connectionToStream Connection{..} =  WS.makeStream read (write . toStrict . fromJust)
     onError = flip catch (\(e :: SomeException) -> return . throwError . WebsocketError $ show e)
+    run cnx = do
+      WS.forkPingThread cnx 30
+      app (toConnection cnx)
 
 
 tlsClientP :: MonadError Error m => TunnelSettings -> (Connection -> IO (m ())) -> (Connection -> IO (m ()))
