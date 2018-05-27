@@ -31,7 +31,7 @@ library
                      , streaming-commons
                      , text >= 1.2.2.1
                      , unordered-containers
-                     , websockets
+                     , websockets >= 0.12.4.0
 
   default-language:    Haskell2010
 
