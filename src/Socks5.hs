@@ -128,13 +128,20 @@ instance Binary Request where
     cmd <- get :: Get Command
     _ <- getWord8 -- RESERVED
 
-    opCode <- fromIntegral <$> getWord8 -- DOMAINNAME
-    guard (opCode == 0x03)
+    opCode <- fromIntegral <$> getWord8 -- Addr type, we support only ipv4 and domainame
+    guard (opCode == 0x03 || opCode == 0x01) -- DOMAINNAME OR IPV4
 
-    length <- fromIntegral <$> getWord8
-    host <- either (const T.empty) id . E.decodeUtf8' <$> replicateM length getWord8
+    host <- if opCode == 0x03
+            then do
+              length <- fromIntegral <$> getWord8
+              host <- either (const T.empty) id . E.decodeUtf8' <$> replicateM length getWord8
+              return host
+            else do
+              ipv4 <- replicateM 4 getWord8 :: Get [Word8]
+              let ipv4Str = T.intercalate "." $ fmap (tshow . fromEnum) ipv4
+              return ipv4Str
+
     guard (not $ null host)
-
     port <- fromIntegral <$> getWord16be
 
     return Request
