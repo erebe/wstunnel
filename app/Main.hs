@@ -27,6 +27,7 @@ data WsTunnel = WsTunnel
   , restrictTo      :: String
   , verbose         :: Bool
   , quiet           :: Bool
+  , pathPrefix      :: String
   } deriving (Show, Data, Typeable)
 
 data WsServerInfo = WsServerInfo
@@ -52,6 +53,9 @@ cmdLine = WsTunnel
   , dynamicToRemote= def &= explicit &= name "D" &= name "dynamicToRemote" &= typ "[BIND:]PORT"
                          &= help "Listen on local and dynamically (with socks5 proxy) forwards traffic from remote" &= groupname "Client options"
   , udpMode        = def &= explicit &= name "u" &= name "udp" &= help "forward UDP traffic instead of TCP"
+  , pathPrefix     = def &= explicit &= name "upgradePathPrefix"
+                         &= help "Use a specific prefix that will show up in the http path in the upgrade request. Useful if you need to route requests server side but don't have vhosts"
+                         &= typ "String" &= groupname "Client options"
   , proxy          = def &= explicit &= name "p" &= name "httpProxy"
                          &= help "If set, will use this proxy to connect to the server" &= typ "USER:PASS@HOST:PORT"
   , wsTunnelServer = def &= argPos 0 &= typ "ws[s]://wstunnelServer[:port]"
@@ -122,7 +126,8 @@ parseProxyInfo str = do
 main :: IO ()
 main = do
   args <- getArgs
-  cfg <- if null args then withArgs ["--help"] (cmdArgs cmdLine) else cmdArgs cmdLine
+  cfg' <- if null args then withArgs ["--help"] (cmdArgs cmdLine) else cmdArgs cmdLine
+  let cfg = cfg' { pathPrefix = if pathPrefix cfg' == mempty then "wstunnel" else pathPrefix cfg' }
 
   let serverInfo = parseServerInfo (WsServerInfo False "" 0) (wsTunnelServer cfg)
   Logger.init (if quiet cfg then Logger.QUIET
@@ -146,6 +151,7 @@ main = do
                                       , protocol = if udpMode cfg then UDP else TCP
                                       , proxySetting = parseProxyInfo (proxy cfg)
                                       , useSocks = False
+                                      , upgradePrefix = pathPrefix cfg
                                       }
   else if not $ null (dynamicToRemote cfg)
     then let (TunnelInfo lHost lPort _ _) = parseTunnelInfo $ (dynamicToRemote cfg) ++ ":127.0.0.1:1212"
@@ -159,6 +165,7 @@ main = do
                                       , protocol = SOCKS5
                                       , proxySetting = parseProxyInfo (proxy cfg)
                                       , useSocks = True
+                                      , upgradePrefix = pathPrefix cfg
                                       }
   else return ()
 
