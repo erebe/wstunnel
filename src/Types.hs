@@ -43,16 +43,17 @@ data ProxySettings = ProxySettings
   } deriving (Show)
 
 data TunnelSettings = TunnelSettings
-  { proxySetting :: Maybe ProxySettings
-  , localBind    :: HostName
-  , localPort    :: PortNumber
-  , serverHost   :: HostName
-  , serverPort   :: PortNumber
-  , destHost     :: HostName
-  , destPort     :: PortNumber
-  , protocol     :: Protocol
-  , useTls       :: Bool
-  , useSocks     :: Bool
+  { proxySetting  :: Maybe ProxySettings
+  , localBind     :: HostName
+  , localPort     :: PortNumber
+  , serverHost    :: HostName
+  , serverPort    :: PortNumber
+  , destHost      :: HostName
+  , destPort      :: PortNumber
+  , protocol      :: Protocol
+  , useTls        :: Bool
+  , useSocks      :: Bool
+  , upgradePrefix :: String
   }
 
 instance Show TunnelSettings where
