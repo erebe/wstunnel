@@ -237,13 +237,13 @@ runServer useTLS = if useTLS then runTlsTunnelingServer else runTunnelingServer
 --  Commons
 --
 toPath :: TunnelSettings -> String
-toPath TunnelSettings{..} = "/" <> toLower (show $ if protocol == SOCKS5 then TCP else protocol) <> "/" <> destHost <> "/" <> show destPort
+toPath TunnelSettings{..} = "/" <> upgradePrefix <> "/" <> toLower (show $ if protocol == SOCKS5 then TCP else protocol) <> "/" <> destHost <> "/" <> show destPort
 
 fromPath :: ByteString -> Maybe (Protocol, ByteString, Int)
 fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
   in do
-    guard (length rets == 3)
-    let [protocol, h, prt] = rets
+    guard (length rets == 4)
+    let [_, protocol, h, prt] = rets
     prt' <- readMay . BC.unpack $ prt :: Maybe Int
     proto <- readMay . toUpper . BC.unpack $ protocol :: Maybe Protocol
     return (proto, h, prt')
