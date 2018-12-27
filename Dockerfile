@@ -1,8 +1,8 @@
 FROM alpine:3.6 as builder
 MAINTAINER github@erebe.eu
 
-RUN apk --no-cache add --repository http://dl-cdn.alpinelinux.org/alpine/edge/community \
-        ca-certificates git ghc upx curl musl-dev gmp-dev zlib-dev pcre-dev
+RUN apk --no-cache add ca-certificates git ghc curl musl-dev gmp-dev zlib-dev pcre-dev xz make
+RUN apk --no-cache add --repository http://dl-cdn.alpinelinux.org/alpine/v3.8/community upx
 RUN curl -sSL https://github.com/commercialhaskell/stack/releases/download/v1.6.5/stack-1.6.5-linux-x86_64-static.tar.gz | tar xvz && \
     mv stack*/stack /usr/bin
 
