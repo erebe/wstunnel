@@ -74,6 +74,7 @@ cmdLine = WsTunnel
 
 
 toPort :: String -> Int
+toPort "stdio" = 0
 toPort str = case readMay str of
                   Just por -> por
                   Nothing  -> error $ "Invalid port number `" ++ str ++ "`"
@@ -148,7 +149,7 @@ main = do
                                       , destHost = rHost
                                       , destPort = fromIntegral rPort
                                       , Types.useTls = Main.useTls serverInfo
-                                      , protocol = if udpMode cfg then UDP else TCP
+                                      , protocol = if lPort == 0 then STDIO else if udpMode cfg then UDP else TCP
                                       , proxySetting = parseProxyInfo (proxy cfg)
                                       , useSocks = False
                                       , upgradePrefix = pathPrefix cfg
