@@ -7,6 +7,7 @@ import           ClassyPrelude
 import           Control.Concurrent        (forkIO)
 import qualified Data.HashMap.Strict       as H
 import           System.Timeout            (timeout)
+import           System.IO
 
 import qualified Data.ByteString.Char8     as BC
 
@@ -23,6 +24,20 @@ import           Logger
 import qualified Socks5
 import           Types
 
+
+runSTDIOServer :: (StdioAppData -> IO ()) -> IO ()
+runSTDIOServer app = do
+  stdin_old_buffering <- hGetBuffering stdin
+  stdout_old_buffering <- hGetBuffering stdout
+
+  hSetBuffering stdin (BlockBuffering (Just 512))
+  hSetBuffering stdout NoBuffering
+
+  void $ forever $ app StdioAppData
+
+  hSetBuffering stdin stdin_old_buffering
+  hSetBuffering stdout stdout_old_buffering
+  info $ "CLOSE stdio server"
 
 runTCPServer :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
 runTCPServer endPoint@(host, port) app = do
