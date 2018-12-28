@@ -7,6 +7,8 @@ module Types where
 
 import           ClassyPrelude
 import           Data.Maybe
+import           System.IO (stdin, stdout)
+import           Data.ByteString (hGetSome, hPutStr)
 
 import qualified Data.Streaming.Network        as N
 import qualified Network.Connection            as NC
@@ -23,7 +25,9 @@ deriving instance Generic N.SockAddr
 deriving instance Hashable N.SockAddr
 
 
-data Protocol = UDP | TCP | SOCKS5 deriving (Show, Read, Eq)
+data Protocol = UDP | TCP | STDIO | SOCKS5 deriving (Show, Read, Eq)
+
+data StdioAppData = StdioAppData
 
 data UdpAppData = UdpAppData
   { appAddr  :: N.SockAddr
@@ -76,6 +80,13 @@ data Connection = Connection
 
 class ToConnection a where
   toConnection :: a -> Connection
+
+instance ToConnection StdioAppData where
+  toConnection conn = Connection { read = Just <$> hGetSome stdin 512
+                                 , write = hPutStr stdout
+                                 , close = return ()
+                                 , rawConnection = Nothing
+                                 }
 
 instance ToConnection WS.Connection where
   toConnection conn = Connection { read = Just <$> WS.receiveData conn
