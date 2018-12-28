@@ -160,7 +160,6 @@ runClient cfg@TunnelSettings{..} = do
 
   let app cfg' localH = do
         ret <- withTunnel cfg' $ \remoteH -> do
-          info $ "CREATE tunnel :: " <> show cfg'
           ret <- remoteH <==> toConnection localH
           info $ "CLOSE tunnel :: " <> show cfg'
           return ret
@@ -170,8 +169,8 @@ runClient cfg@TunnelSettings{..} = do
   case protocol of
         UDP -> runUDPServer (localBind, localPort) (app cfg)
         TCP -> runTCPServer (localBind, localPort) (app cfg)
+        STDIO -> runSTDIOServer (app cfg)
         SOCKS5 -> runSocks5Server (Socks5.ServerSettings localPort localBind) cfg app
-
 
 
 
@@ -237,7 +236,9 @@ runServer useTLS = if useTLS then runTlsTunnelingServer else runTunnelingServer
 --  Commons
 --
 toPath :: TunnelSettings -> String
-toPath TunnelSettings{..} = "/" <> upgradePrefix <> "/" <> toLower (show $ if protocol == SOCKS5 then TCP else protocol) <> "/" <> destHost <> "/" <> show destPort
+toPath TunnelSettings{..} = "/" <> upgradePrefix <> "/"
+                            <> toLower (show $ if protocol == UDP then UDP else TCP)
+                            <> "/" <> destHost <> "/" <> show destPort
 
 fromPath :: ByteString -> Maybe (Protocol, ByteString, Int)
 fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
