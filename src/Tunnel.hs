@@ -167,7 +167,7 @@ runClient cfg@TunnelSettings{..} = do
         handleError ret
 
   case protocol of
-        UDP -> runUDPServer (localBind, localPort) (app cfg)
+        UDP -> runUDPServer (localBind, localPort) udpTimeout (app cfg)
         TCP -> runTCPServer (localBind, localPort) (app cfg)
         STDIO -> runSTDIOServer (app cfg)
         SOCKS5 -> runSocks5Server (Socks5.ServerSettings localPort localBind) cfg app
