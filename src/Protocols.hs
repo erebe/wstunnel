@@ -66,8 +66,8 @@ runUDPClient endPoint@(host, port) app = do
   info $ "CLOSE udp connection to " <> toStr endPoint
 
 
-runUDPServer :: (HostName, PortNumber) -> (UdpAppData -> IO ()) -> IO ()
-runUDPServer endPoint@(host, port) app = do
+runUDPServer :: (HostName, PortNumber) ->  Int -> (UdpAppData -> IO ()) -> IO ()
+runUDPServer endPoint@(host, port) cnxTimeout app = do
   info $ "WAIT for datagrames on " <> toStr endPoint
   clientsCtx <- newIORef mempty
   void $ bracket (N.bindPortUDP (fromIntegral port) (fromString host)) N.close (runEventLoop clientsCtx)
@@ -107,7 +107,7 @@ runUDPServer endPoint@(host, port) app = do
         _               -> void . forkIO $ bracket
                               (addNewClient clientsCtx socket addr payload)
                               (removeClient clientsCtx)
-                              (void . timeout (30 * 10^(6 :: Int)) . app)
+                              (void . timeout cnxTimeout . app)
 
 
 runSocks5Server :: Socks5.ServerSettings -> TunnelSettings -> (TunnelSettings -> N.AppData -> IO()) -> IO ()
