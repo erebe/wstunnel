@@ -58,6 +58,7 @@ data TunnelSettings = TunnelSettings
   , useTls        :: Bool
   , useSocks      :: Bool
   , upgradePrefix :: String
+  , udpTimeout    :: Int
   }
 
 instance Show TunnelSettings where
