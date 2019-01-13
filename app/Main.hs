@@ -22,6 +22,7 @@ data WsTunnel = WsTunnel
   , dynamicToRemote :: String
   , wsTunnelServer  :: String
   , udpMode         :: Bool
+  , udpTimeout      :: Int
   , proxy           :: String
   , serverMode      :: Bool
   , restrictTo      :: String
@@ -52,7 +53,8 @@ cmdLine = WsTunnel
   --                        &= help "Listen on remote and forward traffic from local"
   , dynamicToRemote= def &= explicit &= name "D" &= name "dynamicToRemote" &= typ "[BIND:]PORT"
                          &= help "Listen on local and dynamically (with socks5 proxy) forwards traffic from remote" &= groupname "Client options"
-  , udpMode        = def &= explicit &= name "u" &= name "udp" &= help "forward UDP traffic instead of TCP"
+  , udpMode        = def &= explicit &= name "u" &= name "udp" &= help "forward UDP traffic instead of TCP" &= groupname "Client options"
+  , udpTimeout     = def &= explicit &= name "udpTimeoutSec" &= help "When using udp forwarding, timeout in seconds after when the tunnel connection is closed. Default 30sec, -1 means no timeout" &= groupname "Client options"
   , pathPrefix     = def &= explicit &= name "upgradePathPrefix"
                          &= help "Use a specific prefix that will show up in the http path in the upgrade request. Useful if you need to route requests server side but don't have vhosts"
                          &= typ "String" &= groupname "Client options"
@@ -128,7 +130,11 @@ main :: IO ()
 main = do
   args <- getArgs
   cfg' <- if null args then withArgs ["--help"] (cmdArgs cmdLine) else cmdArgs cmdLine
-  let cfg = cfg' { pathPrefix = if pathPrefix cfg' == mempty then "wstunnel" else pathPrefix cfg' }
+  let cfg = cfg' { pathPrefix = if pathPrefix cfg' == mempty then "wstunnel" else pathPrefix cfg'
+                 , Main.udpTimeout = if Main.udpTimeout cfg' == 0 then 30 * 10^(6 :: Int)
+                                     else if Main.udpTimeout cfg' == -1 then -1
+                                     else Main.udpTimeout cfg' * 10^(6:: Int)
+                 }
 
   let serverInfo = parseServerInfo (WsServerInfo False "" 0) (wsTunnelServer cfg)
   Logger.init (if quiet cfg then Logger.QUIET
@@ -153,6 +159,7 @@ main = do
                                       , proxySetting = parseProxyInfo (proxy cfg)
                                       , useSocks = False
                                       , upgradePrefix = pathPrefix cfg
+                                      , udpTimeout = Main.udpTimeout cfg
                                       }
   else if not $ null (dynamicToRemote cfg)
     then let (TunnelInfo lHost lPort _ _) = parseTunnelInfo $ (dynamicToRemote cfg) ++ ":127.0.0.1:1212"
@@ -167,6 +174,7 @@ main = do
                                       , proxySetting = parseProxyInfo (proxy cfg)
                                       , useSocks = True
                                       , upgradePrefix = pathPrefix cfg
+                                      , udpTimeout = Main.udpTimeout cfg
                                       }
   else return ()
 
