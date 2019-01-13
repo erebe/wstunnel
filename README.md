@@ -70,6 +70,12 @@ This command will create a sock5 server listenning only on loopback interface on
 
 Ex: With firefox you can setup a proxy using this tunnel by settings in networking preferences 127.0.0.1:8888 and selecting socks5 proxy
 
+### As Proxy Command for SSH
+You can specify `stdio` as source port on the client side if you wish to use wstunnel as part of a proxy command for ssh
+```
+ssh -o ProxyCommand="wstunnel -L stdio:%h:%p ws://localhost:8080" my-server
+```
+
 ### When behind a corporate proxy
 An other useful example is when you want to bypass an http proxy (a corporate proxy for example)
 The most reliable way to do it is to use wstunnel  as described below
