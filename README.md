@@ -102,7 +102,7 @@ You can now access your server from your local machine on ssh by using
 ssh -p 9999 login@127.0.0.1
 ```
 
-## Wireguard and wstunnel
+### Wireguard and wstunnel
 https://kirill888.github.io/notes/wireguard-via-websocket/
 
 
