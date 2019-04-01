@@ -6,8 +6,6 @@ module Protocols where
 import           ClassyPrelude
 import           Control.Concurrent        (forkIO)
 import qualified Data.HashMap.Strict       as H
-import           System.Timeout            (timeout)
-import           System.IO
 
 import qualified Data.ByteString.Char8     as BC
 

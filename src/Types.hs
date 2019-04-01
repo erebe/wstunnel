@@ -19,8 +19,8 @@ import qualified Network.Socket.ByteString     as N
 
 import qualified Network.WebSockets.Connection as WS
 
-deriving instance Generic PortNumber
-deriving instance Hashable PortNumber
+instance Hashable PortNumber where
+  hashWithSalt s portNumber = hashWithSalt s (toInteger portNumber)
 deriving instance Generic N.SockAddr
 deriving instance Hashable N.SockAddr
 
