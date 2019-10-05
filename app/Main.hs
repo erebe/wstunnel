@@ -15,9 +15,10 @@ import           System.Environment     (getArgs, withArgs)
 import qualified Logger
 import           Tunnel
 import           Types
+import           Control.Concurrent.Async as Async
 
 data WsTunnel = WsTunnel
-  { localToRemote   :: String
+  { localToRemote   :: [String]
   -- , remoteToLocal  :: String
   , dynamicToRemote :: String
   , wsTunnelServer  :: String
@@ -48,13 +49,14 @@ data TunnelInfo = TunnelInfo
 cmdLine :: WsTunnel
 cmdLine = WsTunnel
   { localToRemote  = def &= explicit &= name "L" &= name "localToRemote" &= typ "[BIND:]PORT:HOST:PORT"
-                         &= help "Listen on local and forwards traffic from remote" &= groupname "Client options"
+                         &= help "Listen on local and forwards traffic from remote. Can be used multiple time" &= groupname "Client options"
   -- , remoteToLocal  = def &= explicit &= name "R" &= name "RemoteToLocal" &= typ "[BIND:]PORT:HOST:PORT"
   --                        &= help "Listen on remote and forward traffic from local"
   , dynamicToRemote= def &= explicit &= name "D" &= name "dynamicToRemote" &= typ "[BIND:]PORT"
                          &= help "Listen on local and dynamically (with socks5 proxy) forwards traffic from remote" &= groupname "Client options"
   , udpMode        = def &= explicit &= name "u" &= name "udp" &= help "forward UDP traffic instead of TCP" &= groupname "Client options"
-  , udpTimeout     = def &= explicit &= name "udpTimeoutSec" &= help "When using udp forwarding, timeout in seconds after when the tunnel connection is closed. Default 30sec, -1 means no timeout" &= groupname "Client options"
+  , udpTimeout     = def &= explicit &= name "udpTimeoutSec" &= help "When using udp forwarding, timeout in seconds after when the tunnel connection is closed. Default 30sec, -1 means no timeout"
+                         &= groupname "Client options"
   , pathPrefix     = def &= explicit &= name "upgradePathPrefix"
                          &= help "Use a specific prefix that will show up in the http path in the upgrade request. Useful if you need to route requests server side but don't have vhosts"
                          &= typ "String" &= groupname "Client options"
@@ -142,42 +144,77 @@ main = do
                             then Logger.VERBOSE
                             else Logger.NORMAL)
 
-
-  if serverMode cfg
-    then putStrLn ("Starting server with opts " <> tshow serverInfo )
-         >> runServer (Main.useTls serverInfo) (Main.host serverInfo, fromIntegral $ Main.port serverInfo) (parseRestrictTo $ restrictTo cfg)
-  else if not $ null (localToRemote cfg)
-    then let (TunnelInfo lHost lPort rHost rPort) = parseTunnelInfo (localToRemote cfg)
-         in runClient TunnelSettings { localBind = lHost
-                                      , Types.localPort = fromIntegral lPort
-                                      , serverHost = Main.host serverInfo
-                                      , serverPort = fromIntegral $ Main.port serverInfo
-                                      , destHost = rHost
-                                      , destPort = fromIntegral rPort
-                                      , Types.useTls = Main.useTls serverInfo
-                                      , protocol = if lPort == 0 then STDIO else if udpMode cfg then UDP else TCP
-                                      , proxySetting = parseProxyInfo (proxy cfg)
-                                      , useSocks = False
-                                      , upgradePrefix = pathPrefix cfg
-                                      , udpTimeout = Main.udpTimeout cfg
-                                      }
-  else if not $ null (dynamicToRemote cfg)
-    then let (TunnelInfo lHost lPort _ _) = parseTunnelInfo $ (dynamicToRemote cfg) ++ ":127.0.0.1:1212"
-         in runClient TunnelSettings {  localBind = lHost
-                                      , Types.localPort = fromIntegral lPort
-                                      , serverHost = Main.host serverInfo
-                                      , serverPort = fromIntegral $ Main.port serverInfo
-                                      , destHost = ""
-                                      , destPort = 0
-                                      , Types.useTls = Main.useTls serverInfo
-                                      , protocol = SOCKS5
-                                      , proxySetting = parseProxyInfo (proxy cfg)
-                                      , useSocks = True
-                                      , upgradePrefix = pathPrefix cfg
-                                      , udpTimeout = Main.udpTimeout cfg
-                                      }
-  else return ()
-
-
+  runApp cfg serverInfo
   putStrLn "Goodbye !"
   return ()
+
+
+runApp :: WsTunnel -> WsServerInfo -> IO ()
+runApp cfg serverInfo
+  -- server mode
+  | serverMode cfg = do
+      putStrLn $ "Starting server with opts " <> tshow serverInfo
+      runServer (Main.useTls serverInfo) (Main.host serverInfo, fromIntegral $ Main.port serverInfo) (parseRestrictTo $ restrictTo cfg)
+
+  -- -L localToRemote tunnels
+  | not . null $ localToRemote cfg = do
+      let tunnelInfos = parseTunnelInfo <$> localToRemote cfg
+      let tunnelSettings = tunnelInfos >>= \tunnelInfo -> [toTcpLocalToRemoteTunnelSetting cfg serverInfo tunnelInfo, toUdpLocalToRemoteTunnelSetting cfg serverInfo tunnelInfo]
+      Async.mapConcurrently_ runClient tunnelSettings
+
+  -- -D dynamicToRemote tunnels
+  | not . null $ dynamicToRemote cfg = do
+      let tunnelSetting = toDynamicTunnelSetting cfg serverInfo . parseTunnelInfo $ (dynamicToRemote cfg) ++ ":127.0.0.1:1212"
+      runClient tunnelSetting
+
+  | otherwise = do
+      putStrLn "Cannot parse correctly the command line. Please fill an issue"
+
+  where
+    toTcpLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort)  =
+      TunnelSettings {
+            localBind = lHost
+          , Types.localPort = fromIntegral lPort
+          , serverHost = Main.host serverInfo
+          , serverPort = fromIntegral $ Main.port serverInfo
+          , destHost = rHost
+          , destPort = fromIntegral rPort
+          , Types.useTls = Main.useTls serverInfo
+          , protocol = TCP
+          , proxySetting = parseProxyInfo (proxy cfg)
+          , useSocks = False
+          , upgradePrefix = pathPrefix cfg
+          , udpTimeout = Main.udpTimeout cfg
+      }
+
+    toUdpLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort) =
+      TunnelSettings {
+            localBind = lHost
+          , Types.localPort = fromIntegral lPort
+          , serverHost = Main.host serverInfo
+          , serverPort = fromIntegral $ Main.port serverInfo
+          , destHost = rHost
+          , destPort = fromIntegral rPort
+          , Types.useTls = Main.useTls serverInfo
+          , protocol = UDP
+          , proxySetting = parseProxyInfo (proxy cfg)
+          , useSocks = False
+          , upgradePrefix = pathPrefix cfg
+          , udpTimeout = Main.udpTimeout cfg
+      }
+
+    toDynamicTunnelSetting cfg serverInfo (TunnelInfo lHost lPort _ _) =
+      TunnelSettings {
+            localBind = lHost
+          , Types.localPort = fromIntegral lPort
+          , serverHost = Main.host serverInfo
+          , serverPort = fromIntegral $ Main.port serverInfo
+          , destHost = ""
+          , destPort = 0
+          , Types.useTls = Main.useTls serverInfo
+          , protocol = SOCKS5
+          , proxySetting = parseProxyInfo (proxy cfg)
+          , useSocks = True
+          , upgradePrefix = pathPrefix cfg
+          , udpTimeout = Main.udpTimeout cfg
+      }
