@@ -55,7 +55,7 @@ executable wstunnel
   default-extensions:  NoImplicitPrelude, ScopedTypeVariables, BangPatterns, RecordWildCards
   ghc-options:         -threaded
                        -O3
-                       -rtsopts "-with-rtsopts=-N"
+                       -rtsopts "-with-rtsopts=-N -qb -qg"
   build-depends:       base
                      , bytestring
                      , classy-prelude
