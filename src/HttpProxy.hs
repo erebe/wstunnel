@@ -13,7 +13,6 @@ import qualified Data.ByteString.Char8     as BC
 import           Control.Monad.Except
 import qualified Data.Conduit.Network.TLS  as N
 import qualified Data.Streaming.Network    as N
-import           System.Timeout
 
 import qualified Data.ByteString.Base64    as B64
 import           Network.Socket            (HostName, PortNumber)

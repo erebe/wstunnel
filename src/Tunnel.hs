@@ -27,7 +27,6 @@ import qualified Network.WebSockets.Stream     as WS
 import           Control.Monad.Except
 import qualified Network.Connection            as NC
 import           System.IO                     (IOMode (ReadWriteMode))
-import           System.Timeout
 
 import qualified Data.ByteString.Base64        as B64
 

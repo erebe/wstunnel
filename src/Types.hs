@@ -12,7 +12,8 @@ import           Data.ByteString (hGetSome, hPutStr)
 
 import qualified Data.Streaming.Network        as N
 import qualified Network.Connection            as NC
-import           Network.Socket                (HostName, PortNumber)
+import           Network.Socket                (HostName, PortNumber(..))
+import           Network.Socket.Internal       (PortNumber(..))
 import qualified Network.Socket                as N hiding (recv, recvFrom,
                                                      send, sendTo)
 import qualified Network.Socket.ByteString     as N
