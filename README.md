@@ -62,13 +62,13 @@ On your remote host, start the wstunnel's server by typing this command in your 
 wstunnel --server ws://0.0.0.0:8080
 ```
 This will create a websocket server listenning on any interface on port 8080.
-On the client side use this command to forwards traffic trought the websocket tunnel
+On the client side use this command to forward traffic through the websocket tunnel
 ```
 wstunnel -D 8888 ws://myRemoteHost:8080
 ```
-This command will create a sock5 server listenning only on loopback interface on port 8888 and will forwards traffic.
+This command will create a sock5 server listening on port 8888 of a loopback interface and will forward traffic.
 
-Ex: With firefox you can setup a proxy using this tunnel by settings in networking preferences 127.0.0.1:8888 and selecting socks5 proxy
+Ex: With firefox you can setup a proxy using this tunnel, by setting in networking preferences 127.0.0.1:8888 and selecting socks5 proxy
 
 ### As proxy command for SSH
 You can specify `stdio` as source port on the client side if you wish to use wstunnel as part of a proxy command for ssh
@@ -84,20 +84,20 @@ Start your wstunnel server with tls activated
 ```
 wstunnel --server wss://0.0.0.0:443 -r 127.0.0.1:22
 ```
-The server will listen on any interface on port 443 (https) and restrict traffic to be forwarded only to the ssh daemon.
+The server will listen on any interface using port 443 (https) and restrict traffic to be forwarded only to the ssh daemon.
 
 **Be aware that the server will use self signed certificate with weak cryptographic algorithm.
 It was made in order to add the least possible overhead while still being compliant with tls.**
 
-**So do not rely on wstunnel to protect your privacy, if you want to do so, forwards only traffic that is already secure by design (ex: https)**
+**Do not rely on wstunnel to protect your privacy, as it only forwards traffic that is already secure by design (ex: https)**
 
 Now on the client side start the client with
 ```
 wstunnel -L 9999:127.0.0.1:22 -p mycorporateproxy:8080 wss://myRemoteHost:443
 ```
-It will start a tcp server on port 9999 that will contact the corporate proxy, negociate a tls connection with the remote host and forward traffic to the ssh daemon on the remote host.
+It will start a tcp server on port 9999 that will contact the corporate proxy, negotiate a tls connection with the remote host and forward traffic to the ssh daemon on the remote host.
 
-You can now access your server from your local machine on ssh by using
+You may now access your server from your local machine on ssh by using
 ```
 ssh -p 9999 login@127.0.0.1
 ```
