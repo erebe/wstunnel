@@ -17,7 +17,7 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 * Static tunneling (TCP and UDP)
 * Dynamic tunneling (socks5 proxy)
 * Support for http proxy (when behind one)
-* Support for tls/https server (with embeded self signed certificate, see comment in the example section)
+* Support for tls/https server (with embedded self signed certificate, see comment in the example section)
 * **Standalone binary for linux x86_64** (so just cp it where you want)
 * Standalone archive for windows
 
@@ -61,7 +61,7 @@ On your remote host, start the wstunnel's server by typing this command in your 
 ```
 wstunnel --server ws://0.0.0.0:8080
 ```
-This will create a websocket server listenning on any interface on port 8080.
+This will create a websocket server listening on any interface on port 8080.
 On the client side use this command to forward traffic through the websocket tunnel
 ```
 wstunnel -D 8888 ws://myRemoteHost:8080
