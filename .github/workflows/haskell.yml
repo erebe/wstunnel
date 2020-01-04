@@ -1,6 +1,6 @@
 name: Haskell CI
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
   build:
@@ -13,13 +13,14 @@ jobs:
       with:
         ghc-version: '8.6.5'
         cabal-version: '3.0'
-    - name: Install dependencies
+    - name: Install stack
       run: |
-        cabal update
-        cabal install --only-dependencies --enable-tests
+        curl -sSL https://get.haskellstack.org/ | sh
+       
     - name: Build
       run: |
-        cabal configure --enable-tests
-        cabal build
+        stack init
+        stack build
+        
     - name: Run tests
-      run: cabal test
+      run: stack test
