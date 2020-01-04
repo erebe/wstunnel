@@ -17,7 +17,7 @@ jobs:
     - name: Build
       run: |
         docker build -t wstunnel -f Dockerfile.old .
-        docker run --rm -v $(pwd):/data wstunnel -- cp wstunnel /data
+        docker run --rm -v $(pwd):/data wstunnel /bin/sh cp wstunnel /data
         ./wstunnel
 
     - uses: actions/upload-artifact@v1
