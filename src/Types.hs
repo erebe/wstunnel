@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StrictData         #-}
 
 module Types where
 
