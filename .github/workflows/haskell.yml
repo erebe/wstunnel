@@ -19,3 +19,8 @@ jobs:
         docker build -t wstunnel -f Dockerfile.old .
         docker run --rm -v $(pwd):/data wstunnel -- cp wstunnel /data
         ./wstunnel
+
+    - uses: actions/upload-artifact@v1
+      with:
+        name: wstunnel
+        path: wstunnel
