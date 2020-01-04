@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
-
 module Types where
 
 import           ClassyPrelude
@@ -19,12 +18,20 @@ import qualified Network.Socket                as N hiding (recv, recvFrom,
 import qualified Network.Socket.ByteString     as N
 
 import qualified Network.WebSockets.Connection as WS
+import                  System.IO.Unsafe (unsafeDupablePerformIO)
 
 deriving instance Generic PortNumber
 deriving instance Hashable PortNumber
 deriving instance Generic N.SockAddr
 deriving instance Hashable N.SockAddr
 
+
+defaultRecvBufferSize ::  Int
+defaultRecvBufferSize = unsafeDupablePerformIO $
+  bracket (N.socket N.AF_INET N.Stream 0) N.close (\sock -> N.getSocketOption  sock N.RecvBuffer)
+
+defaultSendBufferSize :: Int
+defaultSendBufferSize = defaultRecvBufferSize
 
 data Protocol = UDP | TCP | STDIO | SOCKS5 deriving (Show, Read, Eq)
 
