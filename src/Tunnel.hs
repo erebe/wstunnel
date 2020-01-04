@@ -40,10 +40,15 @@ import qualified Credentials
 
 rrunTCPClient :: N.ClientSettings -> (Connection -> IO a) -> IO a
 rrunTCPClient cfg app = bracket
-    (N.getSocketFamilyTCP (N.getHost cfg) (N.getPort cfg) (N.getAddrFamily cfg))
+    (do
+      (s,addr) <- N.getSocketFamilyTCP (N.getHost cfg) (N.getPort cfg) (N.getAddrFamily cfg)
+      N.setSocketOption s N.RecvBuffer defaultRecvBufferSize
+      N.setSocketOption s N.SendBuffer defaultSendBufferSize
+      return (s,addr)
+    )
     (\r -> catch (N.close $ fst r) (\(_ :: SomeException) -> return ()))
     (\(s, _) -> app Connection
-        { read = Just <$> N.safeRecv s (N.getReadBufferSize cfg)
+        { read = Just <$> N.safeRecv s defaultRecvBufferSize
         , write = N.sendAll s
         , close = N.close s
         , rawConnection = Just s
@@ -198,14 +203,16 @@ runTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> I
 runTunnelingServer endPoint@(host, port) isAllowed = do
   info $ "WAIT for connection on " <> toStr endPoint
 
-  void $ N.runTCPServer (N.serverSettingsTCP (fromIntegral port) (fromString host)) $ \sClient ->
-    runApp (fromJust $ N.appRawSocket sClient) WS.defaultConnectionOptions (serverEventLoop isAllowed)
+  let srvSet = N.setReadBufferSize defaultRecvBufferSize $ N.serverSettingsTCP (fromIntegral port) (fromString host)
+  void $ N.runTCPServer (srvSet) $ \sClient -> do
+    stream <- WS.makeStream (Just <$> N.appRead sClient) (N.appWrite sClient . toStrict . fromJust)
+    runApp stream WS.defaultConnectionOptions (serverEventLoop isAllowed)
 
   info "CLOSE server"
 
   where
-    runApp :: N.Socket -> WS.ConnectionOptions -> WS.ServerApp -> IO ()
-    runApp socket opts = bracket (WS.makePendingConnection socket opts)
+    runApp :: WS.Stream -> WS.ConnectionOptions -> WS.ServerApp -> IO ()
+    runApp socket opts = bracket (WS.makePendingConnectionFromStream socket opts)
                          (\conn -> catch (WS.close $ WS.pendingStream conn) (\(_ :: SomeException) -> return ()))
 
 serverEventLoop :: ((ByteString, Int) -> Bool) -> WS.PendingConnection -> IO ()

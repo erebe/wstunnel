@@ -41,13 +41,15 @@ runSTDIOServer app = do
 runTCPServer :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
 runTCPServer endPoint@(host, port) app = do
   info $ "WAIT for tcp connection on " <> toStr endPoint
-  void $ N.runTCPServer (N.serverSettingsTCP (fromIntegral port) (fromString host)) app
+  let srvSet = N.setReadBufferSize defaultRecvBufferSize $ N.serverSettingsTCP (fromIntegral port) (fromString host)
+  void $ N.runTCPServer srvSet app
   info $ "CLOSE tcp server on " <> toStr endPoint
 
 runTCPClient :: (HostName, PortNumber) -> (N.AppData -> IO ()) -> IO ()
 runTCPClient endPoint@(host, port) app = do
   info $ "CONNECTING to " <> toStr endPoint
-  void $ N.runTCPClient (N.clientSettingsTCP (fromIntegral port) (BC.pack host)) app
+  let srvSet = N.setReadBufferSize defaultRecvBufferSize $ N.clientSettingsTCP (fromIntegral port) (BC.pack host)
+  void $ N.runTCPClient srvSet app
   info $ "CLOSE connection to " <> toStr endPoint
 
 
