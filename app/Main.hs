@@ -88,27 +88,56 @@ parseServerInfo server []                           = server
 parseServerInfo server ('w':'s':':':'/':'/':xs)     = parseServerInfo (server {Main.useTls = False, Main.port = 80}) xs
 parseServerInfo server ('w':'s':'s':':':'/':'/':xs) = parseServerInfo (server {Main.useTls = True, Main.port = 443}) xs
 parseServerInfo server (':':prt)                    = server {Main.port = toPort prt}
+parseServerInfo server ('[':xs)                     = parseServerInfo (server {Main.host = BC.unpack . BC.init . fst $ BC.spanEnd (/= ']') (BC.pack xs)}) (BC.unpack . snd $ BC.spanEnd (/= ']') (BC.pack xs))
 parseServerInfo server hostPath                     = parseServerInfo (server {Main.host = takeWhile (/= ':') hostPath}) (dropWhile (/= ':') hostPath)
 
 
 parseTunnelInfo :: String -> TunnelInfo
-parseTunnelInfo str = mk $ BC.unpack <$> BC.split ':' (BC.pack str)
+parseTunnelInfo strr = do
+  let str = BC.pack strr
+  if BC.count ']' str <= 0 then
+    mkIPv4 $ BC.unpack <$> BC.split ':' str
+  else
+    mkIPv6 $ str
+
   where
-    mk [lPort, host, rPort]     = TunnelInfo {localHost = "127.0.0.1", Main.localPort = toPort lPort, remoteHost = host, remotePort = toPort rPort}
-    mk [bind,lPort, host,rPort] = TunnelInfo {localHost = bind, Main.localPort = toPort lPort, remoteHost = host, remotePort = toPort rPort}
-    mk _                        = error $  "Invalid tunneling information `" ++ str ++ "`, please use format [BIND:]PORT:HOST:PORT"
+    mkIPv4 [lPort, host, rPort]     = TunnelInfo {localHost = "127.0.0.1", Main.localPort = toPort lPort, remoteHost = host, remotePort = toPort rPort}
+    mkIPv4 [bind,lPort, host,rPort] = TunnelInfo {localHost = bind, Main.localPort = toPort lPort, remoteHost = host, remotePort = toPort rPort}
+    mkIPv4 _                        = error $  "Invalid tunneling information `" ++ strr ++ "`, please use format [BIND:]PORT:HOST:PORT"
+
+    mkIPv6 str = do
+     let !(localHost, remain) = if BC.head str == '[' then
+           BC.drop 2 <$> BC.span (/= ']') (BC.drop 1 str)
+         else if BC.head str < '0' || BC.head str > '9' then
+           BC.drop 1 <$> BC.span (/= ':') str
+         else
+           ("", str)
+
+     let (remain, rPort) = first BC.init . BC.spanEnd (/= ':') $ str
+     let (remain2, remoteHost) = if BC.last remain == ']' then
+           first (BC.init . BC.init) $ BC.spanEnd (/= '[') (BC.init remain)
+         else
+           first BC.init $ BC.spanEnd (/= ':') remain
+
+     let (remain3, lPort) = BC.spanEnd (/= ':') $ remain2
+     if remain3 == mempty then
+       TunnelInfo {localHost = "::1", Main.localPort = toPort (BC.unpack lPort), remoteHost = (BC.unpack remoteHost), remotePort = toPort (BC.unpack rPort)}
+     else
+       let localHost = BC.filter (\c -> c /= '[' && c /= ']') (BC.init remain3) in
+       TunnelInfo {localHost = BC.unpack localHost, Main.localPort = toPort (BC.unpack lPort), remoteHost = (BC.unpack remoteHost), remotePort = toPort (BC.unpack rPort)}
+
 
 
 parseRestrictTo :: String -> ((ByteString, Int) -> Bool)
 parseRestrictTo "" = const True
-parseRestrictTo str = let (!h, !p) = fromMaybe (error "Invalid Parameter restart") parse
+parseRestrictTo str = let !(!h, !p) = fromMaybe (error "Invalid Parameter restart") parse
   in (\(!hst, !port) -> hst == h && port == p)
   where
     parse = do
-              let ret = BC.unpack <$> BC.split ':' (BC.pack str)
-              guard (length ret == 2)
-              portNumber <- readMay $ ret !! 1 :: Maybe Int
-              return (BC.pack (head ret), portNumber)
+              let (host, port) = BC.spanEnd (/= ':') (BC.pack str)
+              guard (host /= mempty)
+              portNumber <- readMay . BC.unpack $ port :: Maybe Int
+              return $! (BC.filter (\c -> c /= '[' && c /= ']') (BC.init host), portNumber)
 
 parseProxyInfo :: String -> Maybe ProxySettings
 parseProxyInfo str = do
