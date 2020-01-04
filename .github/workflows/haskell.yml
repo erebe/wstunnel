@@ -17,6 +17,5 @@ jobs:
     - name: Build
       run: |
         docker build -t wstunnel -f Dockerfile.old .
-        
-    - name: Run tests
-      run: stack test
+        docker run --rm -v $(pwd):/data wstunnel -- cp wstunnel /data
+        ./wstunnel
