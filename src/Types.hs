@@ -4,6 +4,7 @@
 
 module Types where
 
+
 import           ClassyPrelude
 import           Data.Maybe
 import           System.IO (stdin, stdout)
@@ -25,7 +26,7 @@ deriving instance Hashable PortNumber
 deriving instance Generic N.SockAddr
 deriving instance Hashable N.SockAddr
 
-
+{-# NOINLINE defaultRecvBufferSize #-}   
 defaultRecvBufferSize ::  Int
 defaultRecvBufferSize = unsafeDupablePerformIO $
   bracket (N.socket N.AF_INET N.Stream 0) N.close (\sock -> N.getSocketOption  sock N.RecvBuffer)
