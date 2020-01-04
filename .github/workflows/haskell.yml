@@ -13,9 +13,6 @@ jobs:
       with:
         ghc-version: '8.6.5'
         cabal-version: '3.0'
-    - name: Install stack
-      run: |
-        curl -sSL https://get.haskellstack.org/ | sh
        
     - name: Build
       run: |
