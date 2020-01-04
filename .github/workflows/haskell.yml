@@ -16,7 +16,7 @@ jobs:
        
     - name: Build
       run: |
-        stack init
+        stack setup
         stack build
         
     - name: Run tests
