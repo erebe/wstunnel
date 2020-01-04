@@ -16,9 +16,7 @@ jobs:
        
     - name: Build
       run: |
-        stack config set system-ghc --global true
-        stack setup
-        stack build
+        docker build -t wstunnel -f Dockerfile.old .
         
     - name: Run tests
       run: stack test
