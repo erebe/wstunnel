@@ -16,7 +16,7 @@ jobs:
        
     - name: Build
       run: |
-        docker build -t wstunnel -f Dockerfile.old .
+        docker build -t wstunnel .
         docker run --rm -v $(pwd):/data wstunnel /bin/cp wstunnel /data
         ./wstunnel
 
