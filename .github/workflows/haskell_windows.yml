@@ -1,4 +1,4 @@
-name: Haskell CI
+name: Build for windows
 
 on: [push]
 
@@ -8,11 +8,6 @@ jobs:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v1
-    - uses: actions/setup-haskell@v1
-      with:
-        ghc-version: '8.6.5'
-        cabal-version: '3.0'
-    - name: Install dependencies
+    - name: Install stack
       run: |
-        stack setup
-        stack install
+        curl -sSL https://get.haskellstack.org/ | sh
