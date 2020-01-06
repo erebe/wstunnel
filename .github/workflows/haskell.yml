@@ -1,12 +1,10 @@
-name: Haskell CI
+name: Build bot
 
 on: [push, pull_request]
 
 jobs:
-  build:
-
+  build-linux:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v1
     - uses: actions/setup-haskell@v1
@@ -22,5 +20,27 @@ jobs:
 
     - uses: actions/upload-artifact@v1
       with:
-        name: wstunnel
+        name: wstunnel-linux-x64
         path: wstunnel
+        
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v1
+      
+    - name: Install stack
+      run: |
+        curl -sSL https://get.haskellstack.org/ | sh
+        
+    - name: Setup GHC
+      run: |
+        stack setup
+        
+    - name: Build
+      run: |
+        stack install
+        
+    - uses: actions/upload-artifact@v1
+      with:
+        name: wstunnel-windows-x64.exe
+        path: C:\Users\runneradmin\AppData\Roaming\local\bin\wstunnel.exe
