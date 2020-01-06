@@ -14,8 +14,8 @@ jobs:
 
     - name: Setup GHC
       run: |
-        /c/Users/runneradmin/.local/bin/stack setup
+        stack setup
 
     - name: Build
       run: |
-        /c/Users/runneradmin/.local/bin/stack install
+        stack install
