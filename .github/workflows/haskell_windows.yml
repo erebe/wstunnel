@@ -11,3 +11,12 @@ jobs:
     - name: Install stack
       run: |
         curl -sSL https://get.haskellstack.org/ | sh
+        export PATH="/c/Users/runneradmin/.local/bin":$PATH
+
+    - name: Setup GHC
+      run: |
+        stack setup
+
+    - name: Build
+      run: |
+        stack install
