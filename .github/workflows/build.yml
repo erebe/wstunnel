@@ -66,4 +66,4 @@ jobs:
     - uses: actions/upload-artifact@v1
       with:
         name: wstunnel-macos
-        path: ~/.local\bin\wstunnel
+        path: /Users/runner/.local/bin/wstunnel
