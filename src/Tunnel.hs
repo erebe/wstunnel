@@ -44,6 +44,7 @@ rrunTCPClient cfg app = bracket
       (s,addr) <- N.getSocketFamilyTCP (N.getHost cfg) (N.getPort cfg) (N.getAddrFamily cfg)
       N.setSocketOption s N.RecvBuffer defaultRecvBufferSize
       N.setSocketOption s N.SendBuffer defaultSendBufferSize
+      when (N.isSupportedSocketOption sO_MARK) (N.setSocketOption s sO_MARK 1)
       return (s,addr)
     )
     (\r -> catch (N.close $ fst r) (\(_ :: SomeException) -> return ()))
