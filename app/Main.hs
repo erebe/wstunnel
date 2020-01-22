@@ -25,6 +25,7 @@ data WsTunnel = WsTunnel
   , udpMode         :: Bool
   , udpTimeout      :: Int
   , proxy           :: String
+  , soMark          :: Int
   , serverMode      :: Bool
   , restrictTo      :: String
   , verbose         :: Bool
@@ -62,6 +63,8 @@ cmdLine = WsTunnel
                          &= typ "String" &= groupname "Client options"
   , proxy          = def &= explicit &= name "p" &= name "httpProxy"
                          &= help "If set, will use this proxy to connect to the server" &= typ "USER:PASS@HOST:PORT"
+  , soMark         = def &= explicit &= name "soMark"
+                         &= help "(linux only) Mark network packet with SO_MARK sockoption with the specified value" &= typ "int"
   , wsTunnelServer = def &= argPos 0 &= typ "ws[s]://wstunnelServer[:port]"
 
   , serverMode     = def &= explicit &= name "server"
@@ -173,6 +176,7 @@ main = do
                             then Logger.VERBOSE
                             else Logger.NORMAL)
 
+  _ <- writeIORef sO_MARK_Value (soMark cfg)
   runApp cfg serverInfo
   putStrLn "Goodbye !"
   return ()
