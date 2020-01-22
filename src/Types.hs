@@ -38,6 +38,10 @@ defaultSendBufferSize = defaultRecvBufferSize
 sO_MARK :: N.SocketOption
 sO_MARK = N.CustomSockOpt (fromIntegral 1, fromIntegral 36) -- https://elixir.bootlin.com/linux/latest/source/arch/alpha/include/uapi/asm/socket.h#L64
 
+{-# NOINLINE sO_MARK_Value #-}
+sO_MARK_Value :: IORef Int
+sO_MARK_Value = unsafeDupablePerformIO $ (newIORef 131072)
+
 data Protocol = UDP | TCP | STDIO | SOCKS5 deriving (Show, Read, Eq)
 
 data StdioAppData = StdioAppData
