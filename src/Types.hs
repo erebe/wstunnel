@@ -40,7 +40,7 @@ sO_MARK = N.CustomSockOpt (fromIntegral 1, fromIntegral 36) -- https://elixir.bo
 
 {-# NOINLINE sO_MARK_Value #-}
 sO_MARK_Value :: IORef Int
-sO_MARK_Value = unsafeDupablePerformIO $ (newIORef 131072)
+sO_MARK_Value = unsafeDupablePerformIO $ (newIORef 0)
 
 data Protocol = UDP | TCP | STDIO | SOCKS5 deriving (Show, Read, Eq)
 
