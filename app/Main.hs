@@ -64,7 +64,7 @@ cmdLine = WsTunnel
   , proxy          = def &= explicit &= name "p" &= name "httpProxy"
                          &= help "If set, will use this proxy to connect to the server" &= typ "USER:PASS@HOST:PORT"
   , soMark         = def &= explicit &= name "soMark"
-                         &= help "(linux only) Mark network packet with SO_MARK sockoption with the specified value" &= typ "int"
+                         &= help "(linux only) Mark network packet with SO_MARK sockoption with the specified value. You need to use {root, sudo, capabilities} to run wstunnel when using this option" &= typ "int"
   , wsTunnelServer = def &= argPos 0 &= typ "ws[s]://wstunnelServer[:port]"
 
   , serverMode     = def &= explicit &= name "server"
