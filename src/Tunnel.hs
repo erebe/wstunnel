@@ -45,7 +45,7 @@ rrunTCPClient cfg app = bracket
       N.setSocketOption s N.RecvBuffer defaultRecvBufferSize
       N.setSocketOption s N.SendBuffer defaultSendBufferSize
       so_mark_val <- readIORef sO_MARK_Value
-      when (N.isSupportedSocketOption sO_MARK) (N.setSocketOption s sO_MARK so_mark_val)
+      _ <- when (so_mark_val /= 0 && N.isSupportedSocketOption sO_MARK) (N.setSocketOption s sO_MARK so_mark_val)
       return (s,addr)
     )
     (\r -> catch (N.close $ fst r) (\(_ :: SomeException) -> return ()))
