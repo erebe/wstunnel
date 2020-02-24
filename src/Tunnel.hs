@@ -195,8 +195,8 @@ runTlsTunnelingServer endPoint@(bindTo, portNumber) isAllowed = do
 
   where
     runApp :: N.AppData -> WS.ConnectionOptions -> WS.ServerApp -> IO ()
-    runApp appData opts  app= do
-      stream <- WS.makeStream (Just <$> N.appRead appData) (N.appWrite appData . toStrict . fromJust)
+    runApp appData opts app = do
+      stream <- WS.makeStream (N.appRead appData <&> \payload -> if payload == mempty then Nothing else Just payload) (N.appWrite appData . toStrict . fromJust)
       bracket (WS.makePendingConnectionFromStream stream opts)
               (\conn -> catch (WS.close $ WS.pendingStream conn) (\(_ :: SomeException) -> return ()))
               app
@@ -206,8 +206,8 @@ runTunnelingServer endPoint@(host, port) isAllowed = do
   info $ "WAIT for connection on " <> toStr endPoint
 
   let srvSet = N.setReadBufferSize defaultRecvBufferSize $ N.serverSettingsTCP (fromIntegral port) (fromString host)
-  void $ N.runTCPServer (srvSet) $ \sClient -> do
-    stream <- WS.makeStream (Just <$> N.appRead sClient) (N.appWrite sClient . toStrict . fromJust)
+  void $ N.runTCPServer srvSet $ \sClient -> do
+    stream <- WS.makeStream (N.appRead sClient <&> \payload -> if payload == mempty then Nothing else Just payload) (N.appWrite sClient . toStrict . fromJust)
     runApp stream WS.defaultConnectionOptions (serverEventLoop isAllowed)
 
   info "CLOSE server"
