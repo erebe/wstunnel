@@ -117,7 +117,7 @@ runSocks5Server socksSettings@Socks5.ServerSettings{..} cfg inner = do
 
   N.runTCPServer (N.serverSettingsTCP (fromIntegral listenOn) (fromString bindOn)) $ \cnx -> do
     -- Get the auth request and response with a no Auth
-    authRequest <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.ResponseAuth
+    authRequest <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.RequestAuth
     debug $ "Socks5 authentification request " <> show authRequest
     let responseAuth = encode $ Socks5.ResponseAuth (fromIntegral Socks5.socksVersion) Socks5.NoAuth
     N.appWrite cnx (toStrict responseAuth)
