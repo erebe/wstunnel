@@ -5,6 +5,7 @@
 module Tunnel
     ( runClient
     , runServer
+    , rrunTCPClient
     ) where
 
 import           ClassyPrelude
