@@ -192,7 +192,10 @@ runApp cfg serverInfo
   -- -L localToRemote tunnels
   | not . null $ localToRemote cfg = do
       let tunnelInfos = parseTunnelInfo <$> localToRemote cfg
-      let tunnelSettings = tunnelInfos >>= \tunnelInfo -> [toTcpLocalToRemoteTunnelSetting cfg serverInfo tunnelInfo, toUdpLocalToRemoteTunnelSetting cfg serverInfo tunnelInfo]
+      let tunnelSettings = tunnelInfos >>= \tunnelInfo -> 
+                if Main.localPort tunnelInfo == 0 then [toStdioLocalToRemoteTunnelSetting cfg serverInfo tunnelInfo] 
+                else if udpMode cfg then [toUdpLocalToRemoteTunnelSetting cfg serverInfo tunnelInfo] 
+                else [toTcpLocalToRemoteTunnelSetting cfg serverInfo tunnelInfo]
       Async.mapConcurrently_ runClient tunnelSettings
 
   -- -D dynamicToRemote tunnels
@@ -204,6 +207,22 @@ runApp cfg serverInfo
       putStrLn "Cannot parse correctly the command line. Please fill an issue"
 
   where
+    toStdioLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort)  =
+      TunnelSettings {
+            localBind = lHost
+          , Types.localPort = fromIntegral lPort
+          , serverHost = Main.host serverInfo
+          , serverPort = fromIntegral $ Main.port serverInfo
+          , destHost = rHost
+          , destPort = fromIntegral rPort
+          , Types.useTls = Main.useTls serverInfo
+          , protocol = STDIO
+          , proxySetting = parseProxyInfo (proxy cfg)
+          , useSocks = False
+          , upgradePrefix = pathPrefix cfg
+          , udpTimeout = Main.udpTimeout cfg
+      }
+
     toTcpLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort)  =
       TunnelSettings {
             localBind = lHost
