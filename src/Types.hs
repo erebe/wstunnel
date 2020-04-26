@@ -36,7 +36,7 @@ defaultSendBufferSize :: Int
 defaultSendBufferSize = defaultRecvBufferSize
 
 sO_MARK :: N.SocketOption
-sO_MARK = N.CustomSockOpt (fromIntegral 1, fromIntegral 36) -- https://elixir.bootlin.com/linux/latest/source/arch/alpha/include/uapi/asm/socket.h#L64
+sO_MARK = N.CustomSockOpt (1, 36) -- https://elixir.bootlin.com/linux/latest/source/arch/alpha/include/uapi/asm/socket.h#L64
 
 {-# NOINLINE sO_MARK_Value #-}
 sO_MARK_Value :: IORef Int
