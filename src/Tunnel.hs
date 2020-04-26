@@ -46,7 +46,7 @@ rrunTCPClient cfg app = bracket
       N.setSocketOption s N.RecvBuffer defaultRecvBufferSize
       N.setSocketOption s N.SendBuffer defaultSendBufferSize
       so_mark_val <- readIORef sO_MARK_Value
-      _ <- when (so_mark_val /= 0 && N.isSupportedSocketOption sO_MARK) (N.setSocketOption s sO_MARK so_mark_val)
+      when (so_mark_val /= 0 && N.isSupportedSocketOption sO_MARK) (N.setSocketOption s sO_MARK so_mark_val)
       return (s,addr)
     )
     (\r -> catch (N.close $ fst r) (\(_ :: SomeException) -> return ()))
@@ -190,7 +190,7 @@ runTlsTunnelingServer endPoint@(bindTo, portNumber) isAllowed = do
   info $ "WAIT for TLS connection on " <> toStr endPoint
 
   N.runTCPServerTLS (N.tlsConfigBS (fromString bindTo) (fromIntegral portNumber) Credentials.certificate Credentials.key) $ \sClient ->
-    runApp sClient WS.defaultConnectionOptions (serverEventLoop isAllowed)
+    runApp sClient WS.defaultConnectionOptions (serverEventLoop (N.appSockAddr sClient) isAllowed)
 
   info "SHUTDOWN server"
 
@@ -209,7 +209,7 @@ runTunnelingServer endPoint@(host, port) isAllowed = do
   let srvSet = N.setReadBufferSize defaultRecvBufferSize $ N.serverSettingsTCP (fromIntegral port) (fromString host)
   void $ N.runTCPServer srvSet $ \sClient -> do
     stream <- WS.makeStream (N.appRead sClient <&> \payload -> if payload == mempty then Nothing else Just payload) (N.appWrite sClient . toStrict . fromJust)
-    runApp stream WS.defaultConnectionOptions (serverEventLoop isAllowed)
+    runApp stream WS.defaultConnectionOptions (serverEventLoop (N.appSockAddr sClient) isAllowed)
 
   info "CLOSE server"
 
@@ -218,9 +218,11 @@ runTunnelingServer endPoint@(host, port) isAllowed = do
     runApp socket opts = bracket (WS.makePendingConnectionFromStream socket opts)
                          (\conn -> catch (WS.close $ WS.pendingStream conn) (\(_ :: SomeException) -> return ()))
 
-serverEventLoop :: ((ByteString, Int) -> Bool) -> WS.PendingConnection -> IO ()
-serverEventLoop isAllowed pendingConn = do
+serverEventLoop :: N.SockAddr -> ((ByteString, Int) -> Bool) -> WS.PendingConnection -> IO ()
+serverEventLoop sClient isAllowed pendingConn = do
   let path =  fromPath . WS.requestPath $ WS.pendingRequest pendingConn
+  let forwardedFor = filter (\(header,val) -> header == "x-forwarded-for") $ WS.requestHeaders $ WS.pendingRequest pendingConn
+  info $ "NEW incoming connection from " <> show sClient <> " " <> show forwardedFor
   case path of
     Nothing -> info "Rejecting connection" >> WS.rejectRequest pendingConn "Invalid tunneling information"
     Just (!proto, !rhost, !rport) ->
