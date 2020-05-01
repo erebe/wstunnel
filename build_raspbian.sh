@@ -13,6 +13,7 @@ cd wstunnel
 
 stack config set system-ghc --global true 
 sed -i "s/resolver:.*/resolver: lts-12.26/g" stack.yaml
+sed -i 's/-rtsopts ".*//g' wstunnel.cabal
 
 stack setup
 stack build
