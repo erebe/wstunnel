@@ -21,7 +21,7 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 * **Standalone binary for linux x86_64** (so just cp it where you want)
 * Standalone archive for windows
 
-[Binaries](https://github.com/erebe/wstunnel/releases/tag/3.0)
+[Binaries](https://github.com/erebe/wstunnel/releases/tag/v3.0)
 
 P.S: Please do not pay attention to Main.hs because as I hate to write command line code this file is crappy
 
