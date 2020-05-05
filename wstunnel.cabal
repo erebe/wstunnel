@@ -26,7 +26,7 @@ library
                      , connection
                      , hslogger
                      , mtl
-                     , network
+                     , network < 3.0.0.0
                      , network-conduit-tls
                      , streaming-commons
                      , text >= 1.2.2.1
