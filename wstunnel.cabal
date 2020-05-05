@@ -1,7 +1,7 @@
 name:                wstunnel
-version:             0.1.0.0
+version:             0.3.0.0
 synopsis:            Initial project template from stack
-description:         Please see README.md
+description:         For more information regarding wstunnel, please refer to README.md
 homepage:            https://github.com/githubuser/wstunnel#readme
 license:             BSD3
 license-file:        LICENSE
@@ -18,7 +18,7 @@ library
   exposed-modules:     Tunnel, Protocols, Types, Logger, Socks5, Credentials, HttpProxy
   default-extensions:  NoImplicitPrelude, ScopedTypeVariables, BangPatterns, RecordWildCards
   build-depends:       async
-                     , base
+                     , base >= 4.5 && < 5
                      , base64-bytestring >= 1.0
                      , binary >= 0.7
                      , bytestring
@@ -41,11 +41,11 @@ test-suite wstunnel-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   default-extensions:  NoImplicitPrelude, ScopedTypeVariables, BangPatterns, RecordWildCards
-  build-depends:       base
+  build-depends:       base >= 4.5 && < 5
                      , async	
                      , text >= 1.2.2.1
                      , classy-prelude
-		     , bytestring
+                     , bytestring
                      , network
                      , network-conduit-tls
                      , streaming-commons
@@ -66,7 +66,7 @@ executable wstunnel
   ghc-options:         -threaded
                        -O3
                        -rtsopts "-with-rtsopts=-N -qb -qg"
-  build-depends:       base
+  build-depends:       base >= 4.5 && < 5
                      , bytestring
                      , classy-prelude
                      , cmdargs
