@@ -1,5 +1,5 @@
 name:                wstunnel
-version:             0.3.0.0
+version:             0.3.0.1
 synopsis:            Initial project template from stack
 description:         For more information regarding wstunnel, please refer to README.md
 homepage:            https://github.com/githubuser/wstunnel#readme
@@ -46,7 +46,7 @@ test-suite wstunnel-test
                      , text >= 1.2.2.1
                      , classy-prelude
                      , bytestring
-                     , network
+                     , network < 3.0.0.0
                      , network-conduit-tls
                      , streaming-commons
                      , wstunnel
