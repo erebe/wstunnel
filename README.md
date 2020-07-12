@@ -137,4 +137,4 @@ stack install
 - [x] Add better error handling
 - [x] Add httpProxy authentification
 - [ ] Add Reverse tunnel
-- [ ] Add more tests for socks5 proxy
+- [x] Add more tests for socks5 proxy
