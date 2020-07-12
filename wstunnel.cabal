@@ -26,7 +26,7 @@ library
                      , connection
                      , hslogger
                      , mtl
-                     , network < 3.0.0.0
+                     , network 
                      , network-conduit-tls
                      , streaming-commons
                      , text >= 1.2.2.1
@@ -46,7 +46,7 @@ test-suite wstunnel-test
                      , text >= 1.2.2.1
                      , classy-prelude
                      , bytestring
-                     , network < 3.0.0.0
+                     , network
                      , network-conduit-tls
                      , streaming-commons
                      , wstunnel
