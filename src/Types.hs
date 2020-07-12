@@ -13,8 +13,7 @@ import           Data.ByteString (hGetSome, hPutStr)
 
 import qualified Data.Streaming.Network        as N
 import qualified Network.Connection            as NC
-import           Network.Socket                (HostName, PortNumber(..))
-import           Network.Socket.Internal       (PortNumber(..))
+import           Network.Socket                (HostName, PortNumber)
 import qualified Network.Socket                as N hiding (recv, recvFrom,
                                                      send, sendTo)
 import qualified Network.Socket.ByteString     as N
@@ -22,10 +21,13 @@ import qualified Network.Socket.ByteString     as N
 import qualified Network.WebSockets.Connection as WS
 import                  System.IO.Unsafe (unsafeDupablePerformIO)
 
-deriving instance Generic PortNumber
-deriving instance Hashable PortNumber
+
+instance Hashable PortNumber where
+  hashWithSalt s p      = hashWithSalt s (fromEnum p)
+  
 deriving instance Generic N.SockAddr
 deriving instance Hashable N.SockAddr
+
 
 {-# NOINLINE defaultRecvBufferSize #-}   
 defaultRecvBufferSize ::  Int
