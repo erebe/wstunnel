@@ -28,9 +28,9 @@ jobs:
     steps:
     - uses: actions/checkout@v1
       
-    - name: Install stack
-      run: |
-        curl -sSL https://get.haskellstack.org/ | sh
+#    - name: Install stack
+#      run: |
+#        curl -sSL https://get.haskellstack.org/ | sh
         
     - name: Setup GHC
       run: |
@@ -51,9 +51,9 @@ jobs:
     steps:
     - uses: actions/checkout@v1
       
-    - name: Install stack
-      run: |
-        curl -sSL https://get.haskellstack.org/ | sh
+#    - name: Install stack
+#      run: |
+#        curl -sSL https://get.haskellstack.org/ | sh
         
     - name: Setup GHC
       run: |
