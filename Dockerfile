@@ -1,4 +1,4 @@
-FROM alpine:3.11 as builder
+FROM alpine:3.12 as builder
 MAINTAINER github@erebe.eu
 
 RUN apk --no-cache add ca-certificates git ghc curl musl-dev gmp-dev zlib-dev zlib-static pcre-dev xz make upx
