@@ -77,6 +77,8 @@ data TunnelSettings = TunnelSettings
   , useTls        :: Bool
   , useSocks      :: Bool
   , upgradePrefix :: String
+  , upgradeCredentials
+                  :: ByteString
   , udpTimeout    :: Int
   }
 
