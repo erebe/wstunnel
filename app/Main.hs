@@ -31,6 +31,8 @@ data WsTunnel = WsTunnel
   , verbose         :: Bool
   , quiet           :: Bool
   , pathPrefix      :: String
+  , wsTunnelCredentials
+                    :: String
   } deriving (Show, Data, Typeable)
 
 data WsServerInfo = WsServerInfo
@@ -61,6 +63,10 @@ cmdLine = WsTunnel
   , pathPrefix     = def &= explicit &= name "upgradePathPrefix"
                          &= help "Use a specific prefix that will show up in the http path in the upgrade request. Useful if you need to route requests server side but don't have vhosts"
                          &= typ "String" &= groupname "Client options"
+  , wsTunnelCredentials
+                   = def &= explicit &= name "upgradeCredentials"
+                         &= help "Credentials for the Basic HTTP authorization type sent with the upgrade request."
+                         &= typ "USER[:PASS]"
   , proxy          = def &= explicit &= name "p" &= name "httpProxy"
                          &= help "If set, will use this proxy to connect to the server" &= typ "USER:PASS@HOST:PORT"
   , soMark         = def &= explicit &= name "soMark"
@@ -220,6 +226,7 @@ runApp cfg serverInfo
           , proxySetting = parseProxyInfo (proxy cfg)
           , useSocks = False
           , upgradePrefix = pathPrefix cfg
+          , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
       }
 
@@ -236,6 +243,7 @@ runApp cfg serverInfo
           , proxySetting = parseProxyInfo (proxy cfg)
           , useSocks = False
           , upgradePrefix = pathPrefix cfg
+          , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
       }
 
@@ -252,6 +260,7 @@ runApp cfg serverInfo
           , proxySetting = parseProxyInfo (proxy cfg)
           , useSocks = False
           , upgradePrefix = pathPrefix cfg
+          , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
       }
 
@@ -268,5 +277,6 @@ runApp cfg serverInfo
           , proxySetting = parseProxyInfo (proxy cfg)
           , useSocks = True
           , upgradePrefix = pathPrefix cfg
+          , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
       }
