@@ -25,10 +25,11 @@ RUN echo '  ld-options: -static' >> wstunnel.cabal ; \
 FROM alpine:latest as runner
 MAINTAINER github@erebe.eu
 
-WORKDIR /root
 COPY --from=builder /root/.local/bin/wstunnel /
-RUN adduser -D abc && chmod +x ./wstunnel
+RUN adduser -D abc && chmod +x /wstunnel
+
 USER abc
+WORKDIR /
 
 CMD ["/wstunnel"]
 
