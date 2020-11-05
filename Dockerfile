@@ -26,8 +26,9 @@ FROM alpine:latest as runner
 MAINTAINER github@erebe.eu
 
 WORKDIR /root
-COPY --from=builder /root/.local/bin/wstunnel .
-RUN chmod +x ./wstunnel
+COPY --from=builder /root/.local/bin/wstunnel /
+RUN adduser -D abc && chmod +x ./wstunnel
+USER abc
 
-CMD ["./wstunnel"]
+CMD ["/wstunnel"]
 
