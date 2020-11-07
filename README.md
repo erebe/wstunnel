@@ -72,17 +72,24 @@ Common options:
 ## Examples
 ### Simplest one
 On your remote host, start the wstunnel's server by typing this command in your terminal
-```
+```bash
 wstunnel --server ws://0.0.0.0:8080
 ```
 This will create a websocket server listening on any interface on port 8080.
 On the client side use this command to forward traffic through the websocket tunnel
-```
+```bash
 wstunnel -D 8888 ws://myRemoteHost:8080
 ```
 This command will create a sock5 server listening on port 8888 of a loopback interface and will forward traffic.
 
-Ex: With firefox you can setup a proxy using this tunnel, by setting in networking preferences 127.0.0.1:8888 and selecting socks5 proxy
+With firefox you can setup a proxy using this tunnel, by setting in networking preferences 127.0.0.1:8888 and selecting socks5 proxy
+
+or with curl
+
+```bash
+curl -x socks5h://127.0.0.1:8888 http://google.com/
+#Please note h after the 5, it is to avoid curl resolving DNS name locally
+```
 
 ### As proxy command for SSH
 You can specify `stdio` as source port on the client side if you wish to use wstunnel as part of a proxy command for ssh
