@@ -1,5 +1,5 @@
-FROM alpine:3.12 as builder
-MAINTAINER github@erebe.eu
+# Build Cache image
+FROM alpine:3.12 as builder-cache
 
 RUN apk --no-cache add ca-certificates git ghc curl musl-dev gmp-dev zlib-dev zlib-static pcre-dev xz make upx
 RUN curl -sSL https://github.com/commercialhaskell/stack/releases/download/v2.1.3/stack-2.1.3-linux-x86_64-static.tar.gz | tar xvz && \
@@ -14,6 +14,11 @@ RUN rm -rf ~/.stack &&  \
     stack setup && \
     stack install --split-objs --ghc-options="-fPIC" --only-dependencies
 
+
+
+# Build phase
+#FROM builder-cache as builder
+FROM ghcr.io/erebe/wstunnel:build-cache as builder
 COPY . /mnt
 
 RUN echo '  ld-options: -static' >> wstunnel.cabal ; \
@@ -22,8 +27,11 @@ RUN echo '  ld-options: -static' >> wstunnel.cabal ; \
 
 
 
+# Final Image
 FROM alpine:latest as runner
 MAINTAINER github@erebe.eu
+
+LABEL org.opencontainers.image.source https://github.com/erebe/server
 
 COPY --from=builder /root/.local/bin/wstunnel /
 RUN adduser -D abc && chmod +x /wstunnel
