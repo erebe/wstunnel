@@ -17,13 +17,13 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
 
-      - name: wstunnel-builder-cache
-        id: docker_build_wstunnel-cache
-        uses: docker/build-push-action@v2
-        with:
-          push: true
-          tags: ghcr.io/erebe/wstunnel:builder-cache
-          target: builder-cache
+          #      - name: wstunnel-builder-cache
+          #        id: docker_build_wstunnel-cache
+          #        uses: docker/build-push-action@v2
+          #        with:
+          #          push: true
+          #          tags: ghcr.io/erebe/wstunnel:builder-cache
+          #          target: builder-cache
 
       - name: wstunnel
         id: docker_build_wstunnel
@@ -32,7 +32,7 @@ jobs:
           push: true
           tags: ghcr.io/erebe/wstunnel:latest
        
-      - name: Build
+      - name: extract Artifact
         run: |
           docker run --rm -v $(pwd):/data ghcr.io/erebe/wstunnel:latest /bin/cp /wstunnel /data/
           ./wstunnel
