@@ -32,15 +32,15 @@ jobs:
           push: true
           tags: ghcr.io/erebe/wstunnel:latest
        
-      - name: extract Artifact
-        run: |
-          docker run --rm -v $(pwd):/data ghcr.io/erebe/wstunnel:latest /bin/cp /wstunnel /data/
-          ./wstunnel
-  
-      - uses: actions/upload-artifact@v1
-        with:
-          name: wstunnel-linux-x64
-          path: wstunnel
+          #      - name: extract Artifact
+          #        run: |
+          #          docker run --rm -v $(pwd):/data ghcr.io/erebe/wstunnel:latest /bin/cp /wstunnel /data/
+          #          ./wstunnel
+          #  
+          #      - uses: actions/upload-artifact@v1
+          #        with:
+          #          name: wstunnel-linux-x64
+          #          path: wstunnel
           
   build-windows:
     runs-on: windows-latest
