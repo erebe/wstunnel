@@ -6,16 +6,35 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v1
-    - uses: actions/setup-haskell@v1
-      with:
-        ghc-version: '8.8.3'
-        cabal-version: '3.0'
+      - name: Check out the repo
+        uses: actions/checkout@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
+
+      - name: wstunnel-builder-cache
+        id: docker_build_wstunnel-cache
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          tags: ghcr.io/erebe/wstunnel:builder-cache
+          target: builder-cache
+
+      - name: wstunnel
+        id: docker_build_wstunnel
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          tags: ghcr.io/erebe/wstunnel:latest
        
     - name: Build
       run: |
-        docker build -t wstunnel:latest .
-        docker run --rm -v $(pwd):/data wstunnel:latest /bin/cp /wstunnel /data/
+        docker run --rm -v $(pwd):/data ghcr.io/erebe/wstunnel:latest /bin/cp /wstunnel /data/
         ./wstunnel
 
     - uses: actions/upload-artifact@v1
