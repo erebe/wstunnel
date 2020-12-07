@@ -47,6 +47,9 @@ testTCPLocalToRemote useTLS = do
           , useSocks = False
           , upgradePrefix = "wstunnel"
           , udpTimeout = 0
+          , upgradeCredentials = ""
+          , hostHeader = "toto.com"
+          , tlsSNI = "toto.com"
       }
   let client = runClient tunnelSetting
 
@@ -104,6 +107,9 @@ testUDPLocalToRemote useTLS = do
           , useSocks = False
           , upgradePrefix = "wstunnel"
           , udpTimeout = -1
+          , upgradeCredentials = ""
+          , hostHeader = "toto.com"
+          , tlsSNI = "toto.com"
       }
   let client = runClient tunnelSetting
 
@@ -160,6 +166,9 @@ testSocks5Tunneling useTLS = do
           , useSocks = False
           , upgradePrefix = "wstunnel"
           , udpTimeout = -1
+          , upgradeCredentials = ""
+          , hostHeader = "toto.com"
+          , tlsSNI = "toto.com"
       }
   let client = runClient tunnelSetting
 

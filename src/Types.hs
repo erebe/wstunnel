@@ -79,6 +79,8 @@ data TunnelSettings = TunnelSettings
   , upgradePrefix :: String
   , upgradeCredentials
                   :: ByteString
+  , tlsSNI        :: ByteString
+  , hostHeader    :: ByteString
   , udpTimeout    :: Int
   }
 
