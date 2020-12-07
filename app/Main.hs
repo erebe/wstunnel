@@ -31,6 +31,8 @@ data WsTunnel = WsTunnel
   , verbose         :: Bool
   , quiet           :: Bool
   , pathPrefix      :: String
+  , hostHeader      :: String
+  , tlsSNI          :: String
   , wsTunnelCredentials
                     :: String
   } deriving (Show, Data, Typeable)
@@ -69,6 +71,10 @@ cmdLine = WsTunnel
                          &= typ "USER[:PASS]"
   , proxy          = def &= explicit &= name "p" &= name "httpProxy"
                          &= help "If set, will use this proxy to connect to the server" &= typ "USER:PASS@HOST:PORT"
+  , hostHeader     = def &= explicit &= name "hostHeader" &= groupname "Client options"
+                         &= help "If set, add the custom string as host http header" &= typ "String" &= groupname "Client options"
+  , tlsSNI         = def &= explicit &= name "tlsSNI" &= groupname "Client options"
+                         &= help "If set, use custom string in the SNI during TLS handshake" &= typ "String" &= groupname "Client options"
   , soMark         = def &= explicit &= name "soMark"
                          &= help "(linux only) Mark network packet with SO_MARK sockoption with the specified value. You need to use {root, sudo, capabilities} to run wstunnel when using this option" &= typ "int"
   , wsTunnelServer = def &= argPos 0 &= typ "ws[s]://wstunnelServer[:port]"
@@ -228,6 +234,8 @@ runApp cfg serverInfo
           , upgradePrefix = pathPrefix cfg
           , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
+          , tlsSNI = BC.pack $ Main.tlsSNI cfg
+          , hostHeader = BC.pack $ Main.hostHeader cfg
       }
 
     toTcpLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort)  =
@@ -245,6 +253,8 @@ runApp cfg serverInfo
           , upgradePrefix = pathPrefix cfg
           , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
+          , tlsSNI = BC.pack $ Main.tlsSNI cfg
+          , hostHeader = BC.pack $ Main.hostHeader cfg
       }
 
     toUdpLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort) =
@@ -262,6 +272,8 @@ runApp cfg serverInfo
           , upgradePrefix = pathPrefix cfg
           , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
+          , tlsSNI = BC.pack $ Main.tlsSNI cfg
+          , hostHeader = BC.pack $ Main.hostHeader cfg
       }
 
     toDynamicTunnelSetting cfg serverInfo (TunnelInfo lHost lPort _ _) =
@@ -279,4 +291,6 @@ runApp cfg serverInfo
           , upgradePrefix = pathPrefix cfg
           , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
+          , tlsSNI = BC.pack $ Main.tlsSNI cfg
+          , hostHeader = BC.pack $ Main.hostHeader cfg
       }
