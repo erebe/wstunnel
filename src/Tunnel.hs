@@ -76,7 +76,7 @@ tunnelingClientP cfg@TunnelSettings{..} app conn = onError $ do
     connectionToStream Connection{..} =  WS.makeStream read (write . toStrict . fromJust)
     onError = flip catch (\(e :: SomeException) -> return . throwError . WebsocketError $ show e)
     run cnx = do
-      WS.forkPingThread cnx 30
+      WS.forkPingThread cnx websocketPingFrequencySec
       app (toConnection cnx)
 
 

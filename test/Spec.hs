@@ -50,6 +50,7 @@ testTCPLocalToRemote useTLS = do
           , upgradeCredentials = ""
           , hostHeader = "toto.com"
           , tlsSNI = "toto.com"
+          , websocketPingFrequencySec = 30
       }
   let client = runClient tunnelSetting
 
@@ -110,6 +111,7 @@ testUDPLocalToRemote useTLS = do
           , upgradeCredentials = ""
           , hostHeader = "toto.com"
           , tlsSNI = "toto.com"
+          , websocketPingFrequencySec = 30
       }
   let client = runClient tunnelSetting
 
@@ -169,6 +171,7 @@ testSocks5Tunneling useTLS = do
           , upgradeCredentials = ""
           , hostHeader = "toto.com"
           , tlsSNI = "toto.com"
+          , websocketPingFrequencySec = 30
       }
   let client = runClient tunnelSetting
 

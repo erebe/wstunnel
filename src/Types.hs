@@ -82,6 +82,7 @@ data TunnelSettings = TunnelSettings
   , tlsSNI        :: ByteString
   , hostHeader    :: ByteString
   , udpTimeout    :: Int
+  , websocketPingFrequencySec :: Int
   }
 
 instance Show TunnelSettings where
