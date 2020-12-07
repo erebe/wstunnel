@@ -33,8 +33,8 @@ data WsTunnel = WsTunnel
   , pathPrefix      :: String
   , hostHeader      :: String
   , tlsSNI          :: String
-  , wsTunnelCredentials
-                    :: String
+  , websocketPingFrequencySec :: Int
+  , wsTunnelCredentials :: String
   } deriving (Show, Data, Typeable)
 
 data WsServerInfo = WsServerInfo
@@ -77,6 +77,8 @@ cmdLine = WsTunnel
                          &= help "If set, use custom string in the SNI during TLS handshake" &= typ "String" &= groupname "Client options"
   , soMark         = def &= explicit &= name "soMark"
                          &= help "(linux only) Mark network packet with SO_MARK sockoption with the specified value. You need to use {root, sudo, capabilities} to run wstunnel when using this option" &= typ "int"
+  , websocketPingFrequencySec = def &= explicit &= name "websocketPingFrequencySec"
+                         &= help "do a hearthbeat ping every x seconds to maintain websocket connection" &= typ "int"
   , wsTunnelServer = def &= argPos 0 &= typ "ws[s]://wstunnelServer[:port]"
 
   , serverMode     = def &= explicit &= name "server"
@@ -180,6 +182,9 @@ main = do
                  , Main.udpTimeout = if Main.udpTimeout cfg' == 0 then 30 * 10^(6 :: Int)
                                      else if Main.udpTimeout cfg' == -1 then -1
                                      else Main.udpTimeout cfg' * 10^(6:: Int)
+                 , Main.websocketPingFrequencySec = if Main.websocketPingFrequencySec cfg' == 0
+                                                    then 30
+                                                    else Main.websocketPingFrequencySec cfg'
                  }
 
   let serverInfo = parseServerInfo (WsServerInfo False "" 0) (wsTunnelServer cfg)
@@ -236,6 +241,7 @@ runApp cfg serverInfo
           , udpTimeout = Main.udpTimeout cfg
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
+          , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
       }
 
     toTcpLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort)  =
@@ -255,6 +261,7 @@ runApp cfg serverInfo
           , udpTimeout = Main.udpTimeout cfg
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
+          , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
       }
 
     toUdpLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort) =
@@ -274,6 +281,7 @@ runApp cfg serverInfo
           , udpTimeout = Main.udpTimeout cfg
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
+          , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
       }
 
     toDynamicTunnelSetting cfg serverInfo (TunnelInfo lHost lPort _ _) =
@@ -293,4 +301,5 @@ runApp cfg serverInfo
           , udpTimeout = Main.udpTimeout cfg
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
+          , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
       }
