@@ -65,7 +65,8 @@ tunnelingClientP cfg@TunnelSettings{..} app conn = onError $ do
   debug "Oppening Websocket stream"
 
   stream <- connectionToStream conn
-  let headers = if not (null upgradeCredentials) then [("Authorization", "Basic " <> B64.encode upgradeCredentials)] else []
+  let headers = (if not (null upgradeCredentials) then [("Authorization", "Basic " <> B64.encode upgradeCredentials)] else [])
+                <> (if not (null hostHeader) then [("Host", hostHeader)] else [])
   ret <- WS.runClientWithStream stream serverHost (toPath cfg) WS.defaultConnectionOptions headers run
 
   debug "Closing Websocket stream"
@@ -99,7 +100,7 @@ tlsClientP TunnelSettings{..} app conn = onError $ do
                                        , NC.settingDisableSession = False
                                        , NC.settingUseServerName = False
                                        }
-    connectionParams = NC.ConnectionParams { NC.connectionHostname = serverHost
+    connectionParams = NC.ConnectionParams { NC.connectionHostname = if tlsSNI == mempty then serverHost else BC.unpack tlsSNI
                                            , NC.connectionPort = serverPort
                                            , NC.connectionUseSecure = Just tlsSettings
                                            , NC.connectionUseSocks = Nothing
