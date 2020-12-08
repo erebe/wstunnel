@@ -9,7 +9,8 @@ RUN curl -sSL https://github.com/commercialhaskell/stack/releases/download/v2.1.
 COPY stack.yaml /mnt
 COPY *.cabal /mnt
 WORKDIR /mnt
-RUN rm -rf ~/.stack &&  \
+RUN sed -i 's/lts-16.25/lts-16.4/' stack.yaml && \
+    rm -rf ~/.stack &&  \
     stack config set system-ghc --global true && \
     stack setup && \
     stack install --split-objs --ghc-options="-fPIC" --only-dependencies
@@ -21,6 +22,7 @@ RUN rm -rf ~/.stack &&  \
 FROM ghcr.io/erebe/wstunnel:build-cache as builder
 COPY . /mnt
 
+RUN sed -i 's/lts-16.25/lts-16.4/' stack.yaml 
 RUN echo '  ld-options: -static' >> wstunnel.cabal ; \
     stack install --split-objs --ghc-options="-fPIC"
 #RUN upx /root/.local/bin/wstunnel
@@ -29,7 +31,6 @@ RUN echo '  ld-options: -static' >> wstunnel.cabal ; \
 
 # Final Image
 FROM alpine:latest as runner
-MAINTAINER github@erebe.eu
 
 LABEL org.opencontainers.image.source https://github.com/erebe/server
 
