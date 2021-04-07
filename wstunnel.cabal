@@ -1,13 +1,13 @@
 name:                wstunnel
 version:             0.3.0.1
-synopsis:            Initial project template from stack
+synopsis:            Tunneling program over websocket protocol
 description:         For more information regarding wstunnel, please refer to README.md
 homepage:            https://github.com/githubuser/wstunnel#readme
 license:             BSD3
 license-file:        LICENSE
-author:              Author name here
-maintainer:          example@example.com
-copyright:           2016 Author name here
+author:              Erèbe
+maintainer:          github@erebe.eu
+copyright:           2021 Erèbe
 category:            Web
 build-type:          Simple
 -- extra-source-files:
