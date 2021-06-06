@@ -34,9 +34,6 @@ defaultRecvBufferSize ::  Int
 defaultRecvBufferSize = unsafeDupablePerformIO $
   bracket (N.socket N.AF_INET N.Stream 0) N.close (\sock -> N.getSocketOption  sock N.RecvBuffer)
 
-defaultSendBufferSize :: Int
-defaultSendBufferSize = defaultRecvBufferSize
-
 sO_MARK :: N.SocketOption
 sO_MARK = N.CustomSockOpt (1, 36) -- https://elixir.bootlin.com/linux/latest/source/arch/alpha/include/uapi/asm/socket.h#L64
 
