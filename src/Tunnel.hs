@@ -60,7 +60,7 @@ rrunTCPClient cfg app = bracket
 --
 tunnelingClientP :: MonadError Error m => TunnelSettings -> (Connection -> IO (m ())) -> (Connection -> IO (m ()))
 tunnelingClientP cfg@TunnelSettings{..} app conn = onError $ do
-  debug "Oppening Websocket stream"
+  debug "Opening Websocket stream"
 
   stream <- connectionToStream conn
   let headers = if not (null upgradeCredentials) then [("Authorization", "Basic " <> B64.encode upgradeCredentials)] else []
@@ -111,7 +111,7 @@ tlsClientP TunnelSettings{..} app conn = onError $ do
 --
 tcpConnection :: MonadError Error m => TunnelSettings -> (Connection -> IO (m ())) -> IO (m ())
 tcpConnection TunnelSettings{..} app = onError $ do
-  debug $ "Oppening tcp connection to " <> fromString serverHost <> ":" <> show (fromIntegral serverPort :: Int)
+  debug $ "Opening tcp connection to " <> fromString serverHost <> ":" <> show (fromIntegral serverPort :: Int)
 
   ret <- rrunTCPClient (N.clientSettingsTCP (fromIntegral serverPort) (fromString serverHost)) app
 
@@ -126,7 +126,7 @@ tcpConnection TunnelSettings{..} app = onError $ do
 httpProxyConnection :: MonadError Error m => TunnelSettings -> (Connection -> IO (m ())) -> IO (m ())
 httpProxyConnection TunnelSettings{..} app = onError $ do
   let settings = fromJust proxySetting
-  debug $ "Oppening tcp connection to proxy " <> show settings
+  debug $ "Opening tcp connection to proxy " <> show settings
 
   ret <- rrunTCPClient (N.clientSettingsTCP (fromIntegral (port settings)) (BC.pack $ host settings)) $ \conn -> do
     _ <- sendConnectRequest settings conn
