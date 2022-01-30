@@ -63,7 +63,8 @@ tunnelingClientP cfg@TunnelSettings{..} app conn = onError $ do
   debug "Opening Websocket stream"
 
   stream <- connectionToStream conn
-  let headers = if not (null upgradeCredentials) then [("Authorization", "Basic " <> B64.encode upgradeCredentials)] else []
+  let authorization = if not (null upgradeCredentials) then [("Authorization", "Basic " <> B64.encode upgradeCredentials)] else []
+  let headers = authorization <> customHeaders
   let hostname = if not (null hostHeader) then (BC.unpack hostHeader) else serverHost
 
   ret <- WS.runClientWithStream stream hostname (toPath cfg) WS.defaultConnectionOptions headers run

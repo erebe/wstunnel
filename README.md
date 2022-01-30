@@ -33,40 +33,58 @@ wsTunnelClient <---> wsTunnelServer <---> RemoteHost
 Use secure connection (wss://) to bypass proxies
 
 wstunnel [OPTIONS] ws[s]://wstunnelServer[:port]
+
 Client options:
-  -L --localToRemote=[BIND:]PORT:HOST:PORT  Listen on local and forwards
-                                            traffic from remote
-  -D --dynamicToRemote=[BIND:]PORT          Listen on local and dynamically
-                                            (with socks5 proxy) forwards
-                                            traffic from remote
-  -u --udp                                  forward UDP traffic instead of
-                                            TCP
-     --udpTimeoutSec=INT                    When using udp forwarding,
-                                            timeout in seconds after when the
-                                            tunnel connection is closed.
-                                            Default 30sec, -1 means no timeout
-  -p --httpProxy=USER:PASS@HOST:PORT        If set, will use this proxy to
-                                            connect to the server
-     --soMark=int                           (linux only) Mark network packet
-                                            with SO_MARK sockoption with the
-                                            specified value. You need to use
-                                            {root, sudo, capabilities} to run
-                                            wstunnel when using this option
-     --upgradePathPrefix=String             Use a specific prefix that will
-                                            show up in the http path in the
-                                            upgrade request. Useful if you need
-                                            to route requests server side but
-                                            don't have vhosts
+  -L --localToRemote=[BIND:]PORT:HOST:PORT      Listen on local and forwards
+                                                traffic from remote. Can be
+                                                used multiple time
+  -D --dynamicToRemote=[BIND:]PORT              Listen on local and
+                                                dynamically (with socks5 proxy)
+                                                forwards traffic from remote
+  -u --udp                                      forward UDP traffic instead
+                                                of TCP
+     --udpTimeoutSec=INT                        When using udp forwarding,
+                                                timeout in seconds after when
+                                                the tunnel connection is
+                                                closed. Default 30sec, -1 means
+                                                no timeout
+  -p --httpProxy=USER:PASS@HOST:PORT            If set, will use this proxy
+                                                to connect to the server
+     --soMark=int                               (linux only) Mark network
+                                                packet with SO_MARK sockoption
+                                                with the specified value. You
+                                                need to use {root, sudo,
+                                                capabilities} to run wstunnel
+                                                when using this option
+     --upgradePathPrefix=String                 Use a specific prefix that
+                                                will show up in the http path
+                                                in the upgrade request. Useful
+                                                if you need to route requests
+                                                server side but don't have
+                                                vhosts
+     --hostHeader=String                        If set, add the custom string
+                                                as host http header
+     --tlsSNI=String                            If set, use custom string in
+                                                the SNI during TLS handshake
+     --websocketPingFrequencySec=int            do a hearthbeat ping every x
+                                                seconds to maintain websocket
+                                                connection
+     --upgradeCredentials=USER[:PASS]           Credentials for the Basic
+                                                HTTP authorization type sent
+                                                with the upgrade request.
+  -H --customHeaders="HeaderName: HeaderValue"  Send custom headers in the
+                                                upgrade request. Can be used
+                                                multiple time
+  -h --help                                     Display help message
+  -V --version                                  Print version information
 Server options:
-     --server                               Start a server that will forward
-                                            traffic for you
-  -r --restrictTo=HOST:PORT                 Accept traffic to be forwarded
-                                            only to this service
+     --server                                   Start a server that will
+                                                forward traffic for you
+  -r --restrictTo=HOST:PORT                     Accept traffic to be
+                                                forwarded only to this service
 Common options:
-  -v --verbose                              Print debug information
-  -q --quiet                                Print only errors
-  -h --help                                 Display help message
-  -V --version                              Print version information
+  -v --verbose                                  Print debug information
+  -q --quiet                                    Print only errors
 ```
 
 ## Examples
