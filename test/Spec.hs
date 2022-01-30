@@ -9,6 +9,8 @@ import qualified Network.Socket.ByteString     as N
 import qualified Data.Conduit.Network.TLS      as N
 import qualified Data.Streaming.Network        as N
 
+import           Data.CaseInsensitive  ( CI )
+import qualified Data.CaseInsensitive as CI
 import           Control.Concurrent.Async as Async
 import 		 Data.ByteString (hPutStr)
 import 		 Control.Concurrent (threadDelay)
@@ -51,6 +53,7 @@ testTCPLocalToRemote useTLS = do
           , hostHeader = "toto.com"
           , tlsSNI = "toto.com"
           , websocketPingFrequencySec = 30
+          , customHeaders = [(CI.mk "toto", "tata"), (CI.mk "titi", "tutu")]
       }
   let client = runClient tunnelSetting
 
@@ -112,6 +115,7 @@ testUDPLocalToRemote useTLS = do
           , hostHeader = "toto.com"
           , tlsSNI = "toto.com"
           , websocketPingFrequencySec = 30
+          , customHeaders = [(CI.mk "toto", "tata"), (CI.mk "titi", "tutu")]
       }
   let client = runClient tunnelSetting
 
@@ -172,6 +176,7 @@ testSocks5Tunneling useTLS = do
           , hostHeader = "toto.com"
           , tlsSNI = "toto.com"
           , websocketPingFrequencySec = 30
+          , customHeaders = [(CI.mk "toto", "tata"), (CI.mk "titi", "tutu")]
       }
   let client = runClient tunnelSetting
 
