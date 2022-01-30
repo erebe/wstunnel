@@ -11,6 +11,7 @@ import           Data.Maybe
 import           System.IO (stdin, stdout)
 import           Data.ByteString (hGetSome, hPutStr)
 
+import           Data.CaseInsensitive  ( CI )
 import qualified Data.Streaming.Network        as N
 import qualified Network.Connection            as NC
 import           Network.Socket                (HostName, PortNumber)
@@ -80,6 +81,7 @@ data TunnelSettings = TunnelSettings
   , hostHeader    :: ByteString
   , udpTimeout    :: Int
   , websocketPingFrequencySec :: Int
+  , customHeaders :: [(CI ByteString, ByteString)]
   }
 
 instance Show TunnelSettings where
