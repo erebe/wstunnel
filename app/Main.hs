@@ -6,6 +6,8 @@
 module Main where
 
 import           ClassyPrelude          hiding (getArgs, head)
+import           Data.CaseInsensitive  ( CI )
+import qualified Data.CaseInsensitive as CI
 import qualified Data.ByteString.Char8  as BC
 import           Data.List              (head, (!!))
 import           Data.Maybe             (fromMaybe)
@@ -35,6 +37,7 @@ data WsTunnel = WsTunnel
   , tlsSNI          :: String
   , websocketPingFrequencySec :: Int
   , wsTunnelCredentials :: String
+  , customHeaders   :: [String]
   } deriving (Show, Data, Typeable)
 
 data WsServerInfo = WsServerInfo
@@ -62,6 +65,8 @@ cmdLine = WsTunnel
   , udpMode        = def &= explicit &= name "u" &= name "udp" &= help "forward UDP traffic instead of TCP" &= groupname "Client options"
   , udpTimeout     = def &= explicit &= name "udpTimeoutSec" &= help "When using udp forwarding, timeout in seconds after when the tunnel connection is closed. Default 30sec, -1 means no timeout"
                          &= groupname "Client options"
+  , customHeaders  = def &= explicit &= name "H" &= name "customHeaders" &= help "Send custom headers in the upgrade request. Can be used multiple time"
+                         &= typ "\"HeaderName: HeaderValue\"" &= groupname "Client options"
   , pathPrefix     = def &= explicit &= name "upgradePathPrefix"
                          &= help "Use a specific prefix that will show up in the http path in the upgrade request. Useful if you need to route requests server side but don't have vhosts"
                          &= typ "String" &= groupname "Client options"
@@ -173,6 +178,9 @@ parseProxyInfo str = do
     return $ ProxySettings (BC.unpack $ head ret) (fromIntegral portNumber) Nothing
     else Nothing
 
+parseCustomHeader :: String -> (CI ByteString, ByteString)
+parseCustomHeader header = (CI.mk . BC.pack $ takeWhile (/= ':') header, BC.pack . dropWhile (\c -> c == ' ' || c == ':') $ (dropWhile (/= ':') header))
+
 
 main :: IO ()
 main = do
@@ -242,6 +250,7 @@ runApp cfg serverInfo
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
           , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
+          , customHeaders = parseCustomHeader <$> Main.customHeaders cfg
       }
 
     toTcpLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort)  =
@@ -262,6 +271,7 @@ runApp cfg serverInfo
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
           , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
+          , customHeaders = parseCustomHeader <$> Main.customHeaders cfg
       }
 
     toUdpLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort) =
@@ -282,6 +292,7 @@ runApp cfg serverInfo
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
           , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
+          , customHeaders = parseCustomHeader <$> Main.customHeaders cfg
       }
 
     toDynamicTunnelSetting cfg serverInfo (TunnelInfo lHost lPort _ _) =
@@ -302,4 +313,5 @@ runApp cfg serverInfo
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
           , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
+          , customHeaders = parseCustomHeader <$> Main.customHeaders cfg
       }
