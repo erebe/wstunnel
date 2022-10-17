@@ -18,6 +18,7 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 * Dynamic tunneling (socks5 proxy)
 * Support for http proxy (when behind one)
 * Support for tls/https server (with embedded self signed certificate, see comment in the example section)
+* Support IPv6
 * **Standalone binary for linux x86_64** (so just cp it where you want)
 * Standalone archive for windows
 
