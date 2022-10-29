@@ -58,7 +58,7 @@ httpProxyConnection HttpProxySettings{..} (host, port) app = onError $ do
 
     sendConnectRequest :: Connection -> IO ()
     sendConnectRequest h = write h $ "CONNECT " <> fromString host <> ":" <> fromString (show port) <> " HTTP/1.0\r\n"
-                                  <> "Host: " <> fromString host <> ":" <> (fromString $ show port) <> "\r\n"
+                                  <> "Host: " <> fromString host <> ":" <> fromString (show port) <> "\r\n"
                                   <> maybe mempty credentialsToHeader credentials
                                   <> "\r\n"
 
@@ -75,6 +75,6 @@ httpProxyConnection HttpProxySettings{..} (host, port) app = onError $ do
     isAuthorized response = " 200 " `isInfixOf` response
 
     onError f = catch f $ \(e :: SomeException) -> return $
-      if (take 10 (show e) == "user error")
+      if take 10 (show e) == "user error"
         then throwError $ ProxyConnectionError (show e)
         else throwError $ ProxyConnectionError ("Unknown Error :: " <> show e)
