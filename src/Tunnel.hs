@@ -64,9 +64,9 @@ tunnelingClientP cfg@TunnelSettings{..} app conn = onError $ do
   debug "Opening Websocket stream"
 
   stream <- connectionToStream conn
-  let authorization = if not (null upgradeCredentials) then [("Authorization", "Basic " <> B64.encode upgradeCredentials)] else []
+  let authorization = ([("Authorization", "Basic " <> B64.encode upgradeCredentials) | not (null upgradeCredentials)])
   let headers = authorization <> customHeaders
-  let hostname = if not (null hostHeader) then (BC.unpack hostHeader) else serverHost
+  let hostname = if not (null hostHeader) then BC.unpack hostHeader else serverHost
 
   ret <- WS.runClientWithStream stream hostname (toPath cfg) WS.defaultConnectionOptions headers run
 
@@ -240,6 +240,8 @@ serverEventLoop sClient isAllowed pendingConn = do
         case proto of
           UDP -> runUDPClient (BC.unpack rhost, fromIntegral rport) (\cnx -> void $ toConnection conn <==> toConnection cnx)
           TCP -> runTCPClient (BC.unpack rhost, fromIntegral rport) (\cnx -> void $ toConnection conn <==> toConnection cnx)
+          STDIO -> mempty
+          SOCKS5 -> mempty
 
 
 runServer :: Bool -> (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
