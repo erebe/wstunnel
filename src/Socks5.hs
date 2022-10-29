@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveAnyClass            #-}
 {-# LANGUAGE DuplicateRecordFields     #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
@@ -73,7 +72,7 @@ instance Binary RequestAuth where
   put RequestAuth{..} = do
     putWord8 (fromIntegral version)
     putWord8 (fromIntegral $ length methods)
-    sequence_ (put <$> methods)
+    mapM_ put methods
     -- Check length <= 255
 
   get = do
@@ -134,8 +133,7 @@ instance Binary Request where
     host <- if opCode == 0x03
             then do
               length <- fromIntegral <$> getWord8
-              host <- either (const T.empty) id . E.decodeUtf8' <$> replicateM length getWord8
-              return host
+              fromRight T.empty . E.decodeUtf8' <$> replicateM length getWord8
             else do
               ipv4 <- replicateM 4 getWord8 :: Get [Word8]
               let ipv4Str = T.intercalate "." $ fmap (tshow . fromEnum) ipv4
@@ -200,7 +198,7 @@ instance Binary Response where
     opCode <- fromIntegral <$> getWord8 -- Type
     guard(opCode == 0x03)
     length <- fromIntegral <$> getWord8
-    host <- either (const T.empty) id . E.decodeUtf8' <$> replicateM length getWord8
+    host <- fromRight T.empty . E.decodeUtf8' <$> replicateM length getWord8
     guard (not $ null host)
 
     port <- getWord16be
@@ -220,11 +218,3 @@ data ServerSettings = ServerSettings
   -- , onAuthentification :: (MonadIO m, MonadError IOException m) => RequestAuth -> m ResponseAuth
   -- , onRequest          :: (MonadIO m, MonadError IOException m) => Request -> m Response
   } deriving (Show)
-
-
-
-
-
-
-
-  --
