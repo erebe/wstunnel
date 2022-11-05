@@ -20,6 +20,7 @@ import           Network.Socket                (HostName, PortNumber)
 import qualified Network.Socket                as N hiding (recv, recvFrom,
                                                      send, sendTo)
 import qualified Network.Socket.ByteString     as N
+import qualified Network.Socket.ByteString.Lazy     as NL
 
 import qualified Network.WebSockets            as WS
 import qualified Network.WebSockets.Connection as WS
@@ -210,7 +211,8 @@ runTunnelingServer endPoint@(host, port) isAllowed = do
 
   let srvSet = N.setReadBufferSize defaultRecvBufferSize $ N.serverSettingsTCP (fromIntegral port) (fromString host)
   void $ N.runTCPServer srvSet $ \sClient -> do
-    stream <- WS.makeStream (N.appRead sClient <&> \payload -> if payload == mempty then Nothing else Just payload) (N.appWrite sClient . toStrict . fromJust)
+    let socket = fromJust $ N.appRawSocket sClient
+    stream <- WS.makeStream (N.recv socket defaultRecvBufferSize <&> \payload -> if payload == mempty then Nothing else Just payload) (NL.sendAll socket . fromJust)
     runApp stream WS.defaultConnectionOptions (serverEventLoop (N.appSockAddr sClient) isAllowed)
 
   info "CLOSE server"
