@@ -33,7 +33,7 @@ deriving instance Hashable N.SockAddr
 {-# NOINLINE defaultRecvBufferSize #-}   
 defaultRecvBufferSize ::  Int
 defaultRecvBufferSize = unsafeDupablePerformIO $
-  bracket (N.socket N.AF_INET N.Stream 0) N.close (\sock -> N.getSocketOption  sock N.RecvBuffer)
+  bracket (N.socket N.AF_INET N.Stream 0) N.close (\sock -> N.getSocketOption sock N.RecvBuffer)
 
 sO_MARK :: N.SocketOption
 sO_MARK = N.SockOpt 1 36 -- https://elixir.bootlin.com/linux/latest/source/arch/alpha/include/uapi/asm/socket.h#L64
