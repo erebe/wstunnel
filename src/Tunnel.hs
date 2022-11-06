@@ -188,11 +188,11 @@ runClient cfg@TunnelSettings{..} = do
 --
 --  Server
 --
-runTlsTunnelingServer :: (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
-runTlsTunnelingServer endPoint@(bindTo, portNumber) isAllowed = do
+runTlsTunnelingServer :: (ByteString, ByteString) -> (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
+runTlsTunnelingServer (tlsCert, tlsKey) endPoint@(bindTo, portNumber) isAllowed = do
   info $ "WAIT for TLS connection on " <> toStr endPoint
 
-  N.runTCPServerTLS (N.tlsConfigBS (fromString bindTo) (fromIntegral portNumber) Credentials.certificate Credentials.key) $ \sClient ->
+  N.runTCPServerTLS (N.tlsConfigBS (fromString bindTo) (fromIntegral portNumber) tlsCert tlsKey) $ \sClient ->
     runApp sClient WS.defaultConnectionOptions (serverEventLoop (N.appSockAddr sClient) isAllowed)
 
   info "SHUTDOWN server"
@@ -244,8 +244,9 @@ serverEventLoop sClient isAllowed pendingConn = do
           SOCKS5 -> mempty
 
 
-runServer :: Bool -> (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
-runServer useTLS = if useTLS then runTlsTunnelingServer else runTunnelingServer
+runServer :: Maybe (ByteString, ByteString) -> (HostName, PortNumber) -> ((ByteString, Int) -> Bool) -> IO ()
+runServer Nothing = runTunnelingServer
+runServer (Just (tlsCert, tlsKey)) = runTlsTunnelingServer (tlsCert, tlsKey)
 
 
 
