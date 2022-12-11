@@ -4,7 +4,7 @@
 module Protocols where
 
 import           ClassyPrelude
-import           Control.Concurrent        (forkIO)
+import           Control.Concurrent        (forkIO, forkFinally, threadDelay)
 import qualified Data.HashMap.Strict       as H
 import           System.IO                 hiding (hSetBuffering, hGetBuffering)
 
@@ -71,7 +71,7 @@ runUDPServer :: (HostName, PortNumber) ->  Int -> (UdpAppData -> IO ()) -> IO ()
 runUDPServer endPoint@(host, port) cnxTimeout app = do
   info $ "WAIT for datagrames on " <> toStr endPoint
   clientsCtx <- newIORef mempty
-  void $ bracket (N.bindPortUDP (fromIntegral port) (fromString host)) N.close (runEventLoop clientsCtx)
+  void $ bracket (N.bindPortUDP (fromIntegral port) (fromString host)) N.close (forever . run clientsCtx)
   info $ "CLOSE udp server" <> toStr endPoint
 
   where
@@ -98,6 +98,14 @@ runUDPServer endPoint@(host, port) cnxTimeout app = do
      -- and will leave us waiting forever for the mutex to empty. So catch the exeception and drop the message.
      -- Udp is not a reliable protocol so transmission failure should be handled by the application layer
 
+    -- We run the server inside another thread in order to avoid Haskell runtime sending to the main thread 
+    -- the exception  BlockedIndefinitelyOnMVar
+    -- We dont use also MVar to wait for the end of the thread to avoid also receiving this exception
+    run ::  IORef (H.HashMap N.SockAddr UdpAppData) -> N.Socket -> IO () 
+    run clientsCtx socket = do
+      _ <- forkFinally (runEventLoop clientsCtx socket) (\_ -> debug "UdpServer died")
+      threadDelay (maxBound :: Int)     
+          
     runEventLoop :: IORef (H.HashMap N.SockAddr UdpAppData) -> N.Socket -> IO ()
     runEventLoop clientsCtx socket = forever $ do
       (payload, addr) <- N.recvFrom socket 4096
@@ -105,10 +113,10 @@ runUDPServer endPoint@(host, port) cnxTimeout app = do
 
       case clientCtx of
         Just clientCtx' -> pushDataToClient clientCtx' payload
-        _               -> void . forkIO $ bracket
-                              (addNewClient clientsCtx socket addr payload)
-                              (removeClient clientsCtx)
-                              (void . timeout cnxTimeout . app)
+        _               -> do
+          clientCtx <- addNewClient clientsCtx socket addr payload
+          _ <- forkFinally (void . timeout cnxTimeout $ app clientCtx) (\_ -> removeClient clientsCtx clientCtx)
+          return ()
 
 
 runSocks5Server :: Socks5.ServerSettings -> TunnelSettings -> (TunnelSettings -> N.AppData -> IO()) -> IO ()
