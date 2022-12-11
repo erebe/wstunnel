@@ -4,7 +4,7 @@
 module Protocols where
 
 import           ClassyPrelude
-import           Control.Concurrent        (forkIO, forkFinally, threadDelay)
+import           Control.Concurrent        (forkFinally, threadDelay)
 import qualified Data.HashMap.Strict       as H
 import           System.IO                 hiding (hSetBuffering, hGetBuffering)
 
