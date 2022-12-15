@@ -10,7 +10,6 @@ import           Data.CaseInsensitive  ( CI )
 import qualified Data.CaseInsensitive as CI
 import qualified Data.ByteString.Char8  as BC
 import           Data.List              (head, (!!))
-import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs
 import           System.Environment     (getArgs, withArgs)
 
@@ -34,6 +33,7 @@ data WsTunnel = WsTunnel
   , pathPrefix      :: String
   , hostHeader      :: String
   , tlsSNI          :: String
+  , tlsVerifyCertificate  :: Bool
   , websocketPingFrequencySec :: Int
   , wsTunnelCredentials :: String
   , customHeaders   :: [String]
@@ -83,6 +83,8 @@ cmdLine = WsTunnel
                          &= help "If set, add the custom string as host http header" &= typ "String" &= groupname "Client options"
   , tlsSNI         = def &= explicit &= name "tlsSNI" &= groupname "Client options"
                          &= help "If set, use custom string in the SNI during TLS handshake" &= typ "String" &= groupname "Client options"
+  , tlsVerifyCertificate = def &= explicit &= name "tlsVerifyCertificate" &= groupname "Client options"
+                         &= help "Verify tls server certificate. Default to false"
   , soMark         = def &= explicit &= name "soMark"
                          &= help "(linux only) Mark network packet with SO_MARK sockoption with the specified value. You need to use {root, sudo, capabilities} to run wstunnel when using this option" &= typ "int"
   , websocketPingFrequencySec = def &= explicit &= name "websocketPingFrequencySec"
@@ -166,7 +168,7 @@ parseRestrictTo str = let !(!h, !p) = fromMaybe (error "Invalid Parameter restar
               let (host, port) = BC.spanEnd (/= ':') (BC.pack str)
               guard (host /= mempty)
               portNumber <- readMay . BC.unpack $ port :: Maybe Int
-              return $! (BC.filter (\c -> c /= '[' && c /= ']') (BC.init host), portNumber)
+              return (BC.filter (\c -> c /= '[' && c /= ']') (BC.init host), portNumber)
 
 parseProxyInfo :: String -> Maybe ProxySettings
 parseProxyInfo str = do
@@ -219,8 +221,8 @@ runApp cfg serverInfo
   -- server mode
   | serverMode cfg = do
       putStrLn $ "Starting server with opts " <> tshow serverInfo
-      key <- if (Main.tlsKey cfg) /= mempty then readFile (Main.tlsKey cfg) else return Credentials.key
-      certificate <- if (Main.tlsCertificate cfg) /= mempty then readFile (Main.tlsCertificate cfg) else return Credentials.certificate
+      key <- if Main.tlsKey cfg /= mempty then readFile (Main.tlsKey cfg) else return Credentials.key
+      certificate <- if Main.tlsCertificate cfg /= mempty then readFile (Main.tlsCertificate cfg) else return Credentials.certificate
       let tls = if Main.useTls serverInfo then Just (certificate, key) else Nothing
       runServer tls (Main.host serverInfo, fromIntegral $ Main.port serverInfo) (parseRestrictTo $ restrictTo cfg)
 
@@ -235,7 +237,7 @@ runApp cfg serverInfo
 
   -- -D dynamicToRemote tunnels
   | not . null $ dynamicToRemote cfg = do
-      let tunnelSetting = toDynamicTunnelSetting cfg serverInfo . parseTunnelInfo $ (dynamicToRemote cfg) ++ ":127.0.0.1:1212"
+      let tunnelSetting = toDynamicTunnelSetting cfg serverInfo . parseTunnelInfo $ dynamicToRemote cfg ++ ":127.0.0.1:1212"
       runClient tunnelSetting
 
   | otherwise = do
@@ -258,6 +260,7 @@ runApp cfg serverInfo
           , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
+          , tlsVerifyCertificate = Main.tlsVerifyCertificate cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
           , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
           , customHeaders = parseCustomHeader <$> Main.customHeaders cfg
@@ -279,6 +282,7 @@ runApp cfg serverInfo
           , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
+          , tlsVerifyCertificate = Main.tlsVerifyCertificate cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
           , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
           , customHeaders = parseCustomHeader <$> Main.customHeaders cfg
@@ -300,6 +304,7 @@ runApp cfg serverInfo
           , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
+          , tlsVerifyCertificate = Main.tlsVerifyCertificate cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
           , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
           , customHeaders = parseCustomHeader <$> Main.customHeaders cfg
@@ -321,6 +326,7 @@ runApp cfg serverInfo
           , upgradeCredentials = BC.pack $ wsTunnelCredentials cfg
           , udpTimeout = Main.udpTimeout cfg
           , tlsSNI = BC.pack $ Main.tlsSNI cfg
+          , tlsVerifyCertificate = Main.tlsVerifyCertificate cfg
           , hostHeader = BC.pack $ Main.hostHeader cfg
           , websocketPingFrequencySec = Main.websocketPingFrequencySec cfg
           , customHeaders = parseCustomHeader <$> Main.customHeaders cfg
