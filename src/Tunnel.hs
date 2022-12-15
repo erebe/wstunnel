@@ -97,7 +97,7 @@ tlsClientP TunnelSettings{..} app conn = onError $ do
 
   where
     onError = flip catch (\(e :: SomeException) -> return . throwError . TlsError $ show e)
-    tlsSettings = NC.TLSSettingsSimple { NC.settingDisableCertificateValidation = True
+    tlsSettings = NC.TLSSettingsSimple { NC.settingDisableCertificateValidation = not tlsVerifyCertificate
                                        , NC.settingDisableSession = False
                                        , NC.settingUseServerName = False
                                        }
