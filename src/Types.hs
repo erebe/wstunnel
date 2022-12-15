@@ -15,10 +15,7 @@ import           Data.CaseInsensitive  ( CI )
 import qualified Data.Streaming.Network        as N
 import qualified Network.Connection            as NC
 import           Network.Socket                (HostName, PortNumber)
-import qualified Network.Socket                as N hiding (recv, recvFrom,
-                                                     send, sendTo)
-import qualified Network.Socket.ByteString     as N
-
+import qualified Network.Socket                as N hiding (recv, recvFrom, send, sendTo)
 import qualified Network.WebSockets.Connection as WS
 import                  System.IO.Unsafe (unsafeDupablePerformIO)
 
@@ -78,6 +75,7 @@ data TunnelSettings = TunnelSettings
   , upgradeCredentials
                   :: ByteString
   , tlsSNI        :: ByteString
+  , tlsVerifyCertificate :: Bool
   , hostHeader    :: ByteString
   , udpTimeout    :: Int
   , websocketPingFrequencySec :: Int
