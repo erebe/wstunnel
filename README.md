@@ -144,7 +144,7 @@ ssh -p 9999 login@127.0.0.1
 https://kirill888.github.io/notes/wireguard-via-websocket/
 
 - If you see some throughput issue, be sure to lower the MTU of your wireguard interface (you can do it via config file) to something like 1300 or you will endup fragmenting udp packet (due to overhead of other layer) which is always causing issues
-- If wstunnel cannot connect to server while wstunnel is on, be sure you have added a static route via your main gateway for the ip of wstunnel server.
+- If wstunnel cannot connect to server while wireguard is on, be sure you have added a static route via your main gateway for the ip of wstunnel server.
 Else if you forward all the traffic without putting a static route, you will endup looping your traffic wireguard interface -> wstunnel client -> wireguard interface
 
 
