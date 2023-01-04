@@ -81,6 +81,14 @@ Server options:
                                                 forward traffic for you
   -r --restrictTo=HOST:PORT                     Accept traffic to be
                                                 forwarded only to this service
+     --tlsCertificate=FILE                      [optional] provide a custom
+                                                tls certificate (.crt) that the
+                                                server will use instead of the
+                                                embeded one
+     --tlsKey=FILE                              [optional] provide a custom
+                                                tls key (.key) that the server
+                                                will use instead of the embeded
+                                                one
 Common options:
   -v --verbose                                  Print debug information
   -q --quiet                                    Print only errors
