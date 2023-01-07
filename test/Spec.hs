@@ -21,6 +21,7 @@ import           Data.Binary (decode, encode)
 import Tunnel
 import Types
 import Protocols
+import Credentials
 import qualified Socks5 as Socks5
 
 testTCPLocalToRemote :: Bool -> IO ()
@@ -33,7 +34,8 @@ testTCPLocalToRemote useTLS = do
 
   -- SERVER
   let serverPort = 8080
-  let serverWithoutTLS = runServer useTLS ("0.0.0.0", serverPort) (const True)
+  let tls = if useTLS then Just (Credentials.certificate, Credentials.key) else Nothing
+  let serverWithoutTLS = runServer tls ("0.0.0.0", serverPort) (const True)
 
   -- CLIENT
   let tunnelSetting = TunnelSettings {
@@ -54,6 +56,7 @@ testTCPLocalToRemote useTLS = do
           , tlsSNI = "toto.com"
           , websocketPingFrequencySec = 30
           , customHeaders = [(CI.mk "toto", "tata"), (CI.mk "titi", "tutu")]
+          , tlsVerifyCertificate = False
       }
   let client = runClient tunnelSetting
 
@@ -95,7 +98,8 @@ testUDPLocalToRemote useTLS = do
 
   -- SERVER
   let serverPort = 8080
-  let serverWithoutTLS = runServer useTLS ("0.0.0.0", serverPort) (const True)
+  let tls = if useTLS then Just (Credentials.certificate, Credentials.key) else Nothing
+  let serverWithoutTLS = runServer tls ("0.0.0.0", serverPort) (const True)
 
   -- CLIENT
   let tunnelSetting = TunnelSettings {
@@ -116,6 +120,7 @@ testUDPLocalToRemote useTLS = do
           , tlsSNI = "toto.com"
           , websocketPingFrequencySec = 30
           , customHeaders = [(CI.mk "toto", "tata"), (CI.mk "titi", "tutu")]
+          , tlsVerifyCertificate = False
       }
   let client = runClient tunnelSetting
 
@@ -156,7 +161,8 @@ testSocks5Tunneling useTLS = do
 
   -- SERVER
   let serverPort = 8080
-  let serverWithoutTLS = runServer useTLS ("0.0.0.0", serverPort) (const True)
+  let tls = if useTLS then Just (Credentials.certificate, Credentials.key) else Nothing
+  let serverWithoutTLS = runServer tls ("0.0.0.0", serverPort) (const True)
 
   -- CLIENT
   let tunnelSetting = TunnelSettings {
@@ -177,6 +183,7 @@ testSocks5Tunneling useTLS = do
           , tlsSNI = "toto.com"
           , websocketPingFrequencySec = 30
           , customHeaders = [(CI.mk "toto", "tata"), (CI.mk "titi", "tutu")]
+          , tlsVerifyCertificate = False
       }
   let client = runClient tunnelSetting
 

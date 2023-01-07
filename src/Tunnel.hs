@@ -200,8 +200,9 @@ runTlsTunnelingServer (tlsCert, tlsKey) endPoint@(bindTo, portNumber) isAllowed 
   where
     runApp :: N.AppData -> WS.ConnectionOptions -> WS.ServerApp -> IO ()
     runApp appData opts app = do
-      let socket = fromJust $ N.appRawSocket appData
-      stream <- WS.makeStream (N.recv socket defaultRecvBufferSize <&> \payload -> if payload == mempty then Nothing else Just payload) (NL.sendAll socket . fromJust)
+      stream <- WS.makeStream (N.appRead appData <&> \payload -> if payload == mempty then Nothing else Just payload) (N.appWrite appData . toStrict . fromJust)
+      --let socket = fromJust $ N.appRawSocket appData
+      --stream <- WS.makeStream (N.recv socket defaultRecvBufferSize <&> \payload -> if payload == mempty then Nothing else Just payload) (NL.sendAll socket . fromJust)
       bracket (WS.makePendingConnectionFromStream stream opts)
               (\conn -> catch (WS.close $ WS.pendingStream conn) (\(_ :: SomeException) -> return ()))
               app
