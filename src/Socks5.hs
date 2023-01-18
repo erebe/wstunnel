@@ -16,8 +16,9 @@ import qualified Data.ByteString        as BC
 import qualified Data.ByteString.Char8  as BC8
 import           Data.Either
 import qualified Data.Text              as T
+import qualified Data.Text.Read         as T
 import qualified Data.Text.Encoding     as E
-import           Network.Socket         (HostAddress, HostName, PortNumber)
+import           Network.Socket         (HostName, PortNumber)
 import           Numeric                (showHex)
 
 import           Control.Monad.Except   (MonadError)
@@ -33,6 +34,10 @@ data AuthMethod = NoAuth
                 | Reserved
                 | NotAllowed
                 deriving (Show, Read)
+
+data AddressType = DOMAIN_NAME
+                | IPv4
+                deriving (Show, Read, Eq)
 
 data RequestAuth = RequestAuth
   { version :: Int
@@ -90,6 +95,7 @@ data Request = Request
   , command :: Command
   , addr    :: HostName
   , port    :: PortNumber
+  , addrType :: AddressType
   } deriving (Show)
 
 data Command = Connect
@@ -113,10 +119,17 @@ instance Binary Request where
     putWord8 (fromIntegral version)
     put command
     putWord8 0x00 -- RESERVED
-    putWord8 0x03 -- DOMAINNAME
-    let host = BC8.pack addr
-    putWord8 (fromIntegral . length $ host)
-    traverse_ put host
+    _ <- if addrType == DOMAIN_NAME 
+    then do 
+      putWord8 0x03
+      let host = BC8.pack addr
+      putWord8 (fromIntegral . length $ host)
+      traverse_ put host
+    else do
+      putWord8 0x01
+      let ipv4 = fst . Data.Either.fromRight (0, mempty) . T.decimal . T.pack <$> splitElem '.' addr
+      traverse_ putWord8 ipv4
+      
     putWord16be (fromIntegral port)
 
 
@@ -147,6 +160,7 @@ instance Binary Request where
       , command = cmd
       , addr = unpack host
       , port = port
+      , addrType = if opCode == 0x03 then DOMAIN_NAME else IPv4
       }
 
 
@@ -159,6 +173,7 @@ data Response = Response
   , returnCode :: RetCode
   , serverAddr :: HostName
   , serverPort :: PortNumber
+  , serverAddrType   :: AddressType
   } deriving (Show)
 
 data RetCode = SUCCEEDED
@@ -183,10 +198,17 @@ instance Binary Response where
     putWord8 socksVersion
     put returnCode
     putWord8 0x00 -- Reserved
-    putWord8 0x03 -- DOMAINNAME
-    let host = BC8.pack serverAddr
-    putWord8 (fromIntegral . length $ host)
-    traverse_ put host
+    _ <- if serverAddrType == DOMAIN_NAME
+    then do
+      putWord8 0x03
+      let host = BC8.pack serverAddr
+      putWord8 (fromIntegral . length $ host)
+      traverse_ put host
+    else do
+      putWord8 0x01
+      let ipv4 = fst . Data.Either.fromRight (0, mempty) . T.decimal . T.pack <$> splitElem '.' serverAddr
+      traverse_ putWord8 ipv4
+
     putWord16be (fromIntegral serverPort)
 
 
@@ -196,11 +218,16 @@ instance Binary Response where
     ret <- toEnum . min maxBound . fromIntegral <$> getWord8
     getWord8 -- RESERVED
     opCode <- fromIntegral <$> getWord8 -- Type
-    guard(opCode == 0x03)
-    length <- fromIntegral <$> getWord8
-    host <- fromRight T.empty . E.decodeUtf8' <$> replicateM length getWord8
+    guard(opCode == 0x03 || opCode == 0x01)
+    host <- if opCode == 0x03
+            then do
+              length <- fromIntegral <$> getWord8
+              fromRight T.empty . E.decodeUtf8' <$> replicateM length getWord8
+            else do
+              ipv4 <- replicateM 4 getWord8 :: Get [Word8]
+              let ipv4Str = T.intercalate "." $ fmap (tshow . fromEnum) ipv4
+              return ipv4Str
     guard (not $ null host)
-
     port <- getWord16be
 
     return Response
@@ -208,6 +235,7 @@ instance Binary Response where
       , returnCode = ret
       , serverAddr = unpack host
       , serverPort = fromIntegral port
+      , serverAddrType = if opCode == 0x03 then DOMAIN_NAME else IPv4
       }
 
 

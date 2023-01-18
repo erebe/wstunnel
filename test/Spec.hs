@@ -208,7 +208,7 @@ testSocks5Tunneling useTLS = do
   rrunTCPClient (N.clientSettingsTCP (fromIntegral 8081) "localhost") $ \cnx -> do 
     write cnx (toStrict . encode $ Socks5.RequestAuth (fromIntegral Socks5.socksVersion) (fromList [Socks5.NoAuth]))
     _ <- read cnx 
-    write cnx (toStrict . encode $ Socks5.Request (fromIntegral Socks5.socksVersion) Socks5.Connect "localhost" 8082)
+    write cnx (toStrict . encode $ Socks5.Request (fromIntegral Socks5.socksVersion) Socks5.Connect "localhost" 8082 Socks5.DOMAIN_NAME)
     _ <- read cnx 
     write cnx needle
 
