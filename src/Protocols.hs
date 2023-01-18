@@ -133,7 +133,7 @@ runSocks5Server socksSettings@Socks5.ServerSettings{..} cfg inner = do
     -- Get the request and update dynamically the tunnel config
     request <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.Request
     debug $ "Socks5 forward request " <> show request
-    let responseRequest =  encode $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED (Socks5.addr request) (Socks5.port request)
+    let responseRequest =  encode $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED (Socks5.addr request) (Socks5.port request) (Socks5.addrType request)
     let cfg' = cfg { destHost = Socks5.addr request, destPort = Socks5.port request }
     N.appWrite cnx (toStrict responseRequest)
 
