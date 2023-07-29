@@ -12,7 +12,6 @@ import           ClassyPrelude
 import           Data.Binary
 import           Data.Binary.Get
 import           Data.Binary.Put
-import qualified Data.ByteString        as BC
 import qualified Data.ByteString.Char8  as BC8
 import           Data.Either
 import qualified Data.Text              as T
@@ -20,10 +19,6 @@ import qualified Data.Text.Read         as T
 import qualified Data.Text.Encoding     as E
 import           Network.Socket         (HostName, PortNumber)
 import           Numeric                (showHex)
-
-import           Control.Monad.Except   (MonadError)
-import qualified Data.Streaming.Network as N
-
 
 socksVersion :: Word8
 socksVersion = 0x05
@@ -145,8 +140,8 @@ instance Binary Request where
 
     host <- if opCode == 0x03
             then do
-              length <- fromIntegral <$> getWord8
-              fromRight T.empty . E.decodeUtf8' <$> replicateM length getWord8
+              nbWords <- fromIntegral <$> getWord8
+              fromRight T.empty . E.decodeUtf8' <$> replicateM nbWords getWord8
             else do
               ipv4 <- replicateM 4 getWord8 :: Get [Word8]
               let ipv4Str = T.intercalate "." $ fmap (tshow . fromEnum) ipv4
@@ -216,13 +211,13 @@ instance Binary Response where
     version <- fromIntegral <$> getWord8
     guard(version == fromIntegral socksVersion)
     ret <- toEnum . min maxBound . fromIntegral <$> getWord8
-    getWord8 -- RESERVED
+    _ <- getWord8 -- RESERVED
     opCode <- fromIntegral <$> getWord8 -- Type
     guard(opCode == 0x03 || opCode == 0x01)
     host <- if opCode == 0x03
             then do
-              length <- fromIntegral <$> getWord8
-              fromRight T.empty . E.decodeUtf8' <$> replicateM length getWord8
+              nbWords <- fromIntegral <$> getWord8
+              fromRight T.empty . E.decodeUtf8' <$> replicateM nbWords getWord8
             else do
               ipv4 <- replicateM 4 getWord8 :: Get [Word8]
               let ipv4Str = T.intercalate "." $ fmap (tshow . fromEnum) ipv4

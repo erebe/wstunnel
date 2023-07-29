@@ -11,14 +11,10 @@ import           ClassyPrelude
 import qualified Data.ByteString.Char8     as BC
 
 import           Control.Monad.Except
-import qualified Data.Conduit.Network.TLS  as N
 import qualified Data.Streaming.Network    as N
 
 import qualified Data.ByteString.Base64    as B64
 import           Network.Socket            (HostName, PortNumber)
-import qualified Network.Socket            as N hiding (recv, recvFrom, send,
-                                                 sendTo)
-import qualified Network.Socket.ByteString as N
 
 import           Logger
 import           Types
