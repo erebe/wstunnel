@@ -17,8 +17,7 @@ import qualified Data.Conduit.Network.TLS      as N
 import qualified Data.Streaming.Network        as N
 
 import           Network.Socket                (HostName, PortNumber)
-import qualified Network.Socket                as N hiding (recv, recvFrom,
-                                                     send, sendTo)
+import qualified Network.Socket                as N 
 import qualified Network.Socket.ByteString     as N
 import qualified Network.Socket.ByteString.Lazy     as NL
 
@@ -28,7 +27,6 @@ import qualified Network.WebSockets.Stream     as WS
 
 import           Control.Monad.Except
 import qualified Network.Connection            as NC
-import           System.IO                     (IOMode (ReadWriteMode))
 
 import qualified Data.ByteString.Base64        as B64
 
@@ -36,7 +34,6 @@ import           Types
 import           Protocols
 import qualified Socks5
 import           Logger
-import qualified Credentials
 
 
 
@@ -227,7 +224,7 @@ runTunnelingServer endPoint@(host, port) isAllowed = do
 serverEventLoop :: N.SockAddr -> ((ByteString, Int) -> Bool) -> WS.PendingConnection -> IO ()
 serverEventLoop sClient isAllowed pendingConn = do
   let path =  fromPath . WS.requestPath $ WS.pendingRequest pendingConn
-  let forwardedFor = filter (\(header,val) -> header == "x-forwarded-for") $ WS.requestHeaders $ WS.pendingRequest pendingConn
+  let forwardedFor = filter (\(header, _) -> header == "x-forwarded-for") $ WS.requestHeaders $ WS.pendingRequest pendingConn
   info $ "NEW incoming connection from " <> show sClient <> " " <> show forwardedFor
   case path of
     Nothing -> info "Rejecting connection" >> WS.rejectRequest pendingConn "Invalid tunneling information"
