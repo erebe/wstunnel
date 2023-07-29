@@ -6,15 +6,13 @@ module Protocols where
 import           ClassyPrelude
 import           Control.Concurrent        (forkFinally, threadDelay)
 import qualified Data.HashMap.Strict       as H
-import           System.IO                 hiding (hSetBuffering, hGetBuffering)
 
 import qualified Data.ByteString.Char8     as BC
 
 import qualified Data.Streaming.Network    as N
 
 import           Network.Socket            (HostName, PortNumber)
-import qualified Network.Socket            as N hiding (recv, recvFrom, send,
-                                                 sendTo)
+import qualified Network.Socket            as N 
 import qualified Network.Socket.ByteString as N
 
 import           Data.Binary               (decode, encode)
@@ -123,7 +121,7 @@ runSocks5Server :: Socks5.ServerSettings -> TunnelSettings -> (TunnelSettings ->
 runSocks5Server socksSettings@Socks5.ServerSettings{..} cfg inner = do
   info $ "Starting socks5 proxy " <> show socksSettings
 
-  N.runTCPServer (N.serverSettingsTCP (fromIntegral listenOn) (fromString bindOn)) $ \cnx -> do
+  _ <- N.runTCPServer (N.serverSettingsTCP (fromIntegral listenOn) (fromString bindOn)) $ \cnx -> do
     -- Get the auth request and response with a no Auth
     authRequest <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.RequestAuth
     debug $ "Socks5 authentification request " <> show authRequest
