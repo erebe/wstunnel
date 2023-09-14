@@ -14,3 +14,8 @@ tags
 bin/
 *~
 .stack-work
+
+
+# Added by cargo
+
+/target
