@@ -30,7 +30,7 @@ runSTDIOServer app = do
   hSetBuffering stdin (BlockBuffering (Just 512))
   hSetBuffering stdout NoBuffering
 
-  void $ forever $ app StdioAppData
+  void $ app StdioAppData
 
   hSetBuffering stdin stdin_old_buffering
   hSetBuffering stdout stdout_old_buffering
