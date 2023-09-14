@@ -104,7 +104,7 @@ class ToConnection a where
   toConnection :: a -> Connection
 
 instance ToConnection StdioAppData where
-  toConnection conn = Connection { read = Just <$> hGetSome stdin 512
+  toConnection conn = Connection { read = (\bytes -> if bytes == mempty then Nothing else Just bytes) <$> hGetSome stdin 512
                                  , write = hPutStr stdout
                                  , close = return ()
                                  , rawConnection = Nothing
