@@ -35,7 +35,7 @@ jobs:
        
       - name: extract Artifact
         run: |
-          docker run --rm -ti -v $(pwd):/data ghcr.io/erebe/wstunnel:latest
+          docker run --rm -v $(pwd):/data ghcr.io/erebe/wstunnel:latest
           ./wstunnel
             
       - uses: actions/upload-artifact@v1
