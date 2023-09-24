@@ -103,7 +103,8 @@ cmdLine = WsTunnel
   , quiet          = def &= help "Print only errors" &= groupname "Common options"
   } &= summary (   "Use the websockets protocol to tunnel {TCP,UDP} traffic\n"
                 ++ "wsTunnelClient <---> wsTunnelServer <---> RemoteHost\n"
-                ++ "Use secure connection (wss://) to bypass proxies"
+                ++ "Use secure connection (wss://) to bypass proxies\n"
+                ++ "Version: 6.0"
                )
     &= helpArg [explicit, name "help", name "h", groupname "Common options"]
 
