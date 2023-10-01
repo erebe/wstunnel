@@ -1,0 +1,125 @@
+use crate::{TlsClientConfig, TlsServerConfig, WsClientConfig};
+use anyhow::{anyhow, Context};
+use std::fs::File;
+
+use std::io::BufReader;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::SystemTime;
+use tokio::net::TcpStream;
+use tokio_rustls::client::TlsStream;
+use tokio_rustls::rustls::client::{ServerCertVerified, ServerCertVerifier};
+
+use tokio_rustls::rustls::{Certificate, ClientConfig, PrivateKey, ServerName};
+use tokio_rustls::{rustls, TlsAcceptor, TlsConnector};
+use tracing::info;
+
+pub struct NullVerifier;
+impl ServerCertVerifier for NullVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &Certificate,
+        _intermediates: &[Certificate],
+        _server_name: &ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: SystemTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+}
+
+pub fn load_certificates_from_pem(path: &Path) -> anyhow::Result<Vec<Certificate>> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let certs = rustls_pemfile::certs(&mut reader)?;
+
+    Ok(certs.into_iter().map(Certificate).collect())
+}
+
+pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKey> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut keys = rustls_pemfile::pkcs8_private_keys(&mut reader)?;
+
+    match keys.len() {
+        0 => Err(anyhow!("No PKCS8-encoded private key found in {path:?}")),
+        1 => Ok(PrivateKey(keys.remove(0))),
+        _ => Err(anyhow!(
+            "More than one PKCS8-encoded private key found in {path:?}"
+        )),
+    }
+}
+
+pub fn tls_connector(
+    tls_cfg: &TlsClientConfig,
+    alpn_protocols: Option<Vec<Vec<u8>>>,
+) -> anyhow::Result<TlsConnector> {
+    let mut root_store = rustls::RootCertStore::empty();
+
+    // Load system certificates and add them to the root store
+    let certs = rustls_native_certs::load_native_certs()
+        .with_context(|| "Cannot load system certificates")?;
+    for cert in certs {
+        root_store.add(&Certificate(cert.0)).unwrap();
+    }
+
+    let mut config = ClientConfig::builder()
+        .with_safe_defaults()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    // To bypass certificate verification
+    if !tls_cfg.tls_verify_certificate {
+        config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NullVerifier));
+    }
+
+    if let Some(alpn_protocols) = alpn_protocols {
+        config.alpn_protocols = alpn_protocols;
+    }
+    let tls_connector = TlsConnector::from(Arc::new(config));
+    Ok(tls_connector)
+}
+
+pub fn tls_acceptor(
+    tls_cfg: &TlsServerConfig,
+    alpn_protocols: Option<Vec<Vec<u8>>>,
+) -> anyhow::Result<TlsAcceptor> {
+    let mut config = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(tls_cfg.tls_certificate.clone(), tls_cfg.tls_key.clone())
+        .with_context(|| "invalid tls certificate or private key")?;
+
+    if let Some(alpn_protocols) = alpn_protocols {
+        config.alpn_protocols = alpn_protocols;
+    }
+    Ok(TlsAcceptor::from(Arc::new(config)))
+}
+
+pub async fn connect(
+    server_cfg: &WsClientConfig,
+    tls_cfg: &TlsClientConfig,
+    tcp_stream: TcpStream,
+) -> anyhow::Result<TlsStream<TcpStream>> {
+    let sni = server_cfg.tls_server_name();
+    info!(
+        "Doing TLS handshake using sni {sni:?} with the server {}:{}",
+        server_cfg.remote_addr.0, server_cfg.remote_addr.1
+    );
+
+    let tls_connector = tls_connector(tls_cfg, Some(vec![b"http/1.1".to_vec()]))?;
+    let tls_stream = tls_connector
+        .connect(sni, tcp_stream)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to do TLS handshake with the server {:?}",
+                server_cfg.remote_addr
+            )
+        })?;
+
+    Ok(tls_stream)
+}
