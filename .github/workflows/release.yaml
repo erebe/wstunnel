@@ -51,10 +51,9 @@ jobs:
 
 
           # Windows
-          # - name: Windows x86_64
-          #   # Use another GitHub action OS
-          #   os: windows-latest
-          #   target: x86_64-pc-windows-msvc
+          - name: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
 
     steps:
     - name: Create annotation for build error
