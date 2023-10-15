@@ -44,7 +44,7 @@ jobs:
 
     steps:
     - name: Create annotation for build error
-      run: apt install musl-tools
+      run: sudo apt install musl-tools
 
     - name: Checkout Git repo
       uses: actions/checkout@v3
