@@ -44,6 +44,7 @@ jobs:
 
     steps:
     - name: Create annotation for build error
+      if: contains(matrix.platform.target, 'linux')
       run: sudo apt install musl-tools
 
     - name: Checkout Git repo
