@@ -31,10 +31,10 @@ jobs:
             target: armv7-unknown-linux-musleabihf
 
           # Mac OS
-          - name: MacOS x86_64
-            target: x86_64-apple-darwin
-          - name: MacOS aarch64
-            target: aarch64-apple-darwin
+          # - name: MacOS x86_64
+          #   target: x86_64-apple-darwin
+          # - name: MacOS aarch64
+          #   target: aarch64-apple-darwin
 
           # Windows
           - name: Windows x86_64
