@@ -1,8 +1,5 @@
-#![allow(unused_imports)]
-
 use std::collections::HashSet;
 use std::future::Future;
-use std::net::Ipv4Addr;
 use std::ops::{Deref, Not};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -10,12 +7,11 @@ use std::time::Duration;
 
 use crate::{tcp, tls, L4Protocol, LocalToRemote, WsClientConfig, WsServerConfig};
 use anyhow::Context;
-use fastwebsockets::upgrade::UpgradeFut;
 use fastwebsockets::{
     Frame, OpCode, Payload, WebSocket, WebSocketError, WebSocketRead, WebSocketWrite,
 };
-use futures_util::{pin_mut, StreamExt};
-use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_VERSION, UPGRADE, X_FRAME_OPTIONS};
+use futures_util::{pin_mut};
+use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::server::conn::Http;
 use hyper::service::service_fn;
@@ -23,21 +19,16 @@ use hyper::upgrade::Upgraded;
 use hyper::{http, Body, Request, Response, StatusCode};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation};
 use once_cell::sync::Lazy;
-use tokio::io::{
-    AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, Interest, ReadHalf, WriteHalf,
-};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::net::{TcpListener, UdpSocket};
 use tokio::select;
 use tokio::sync::oneshot;
-use tokio::time::error::Elapsed;
 use tokio::time::timeout;
 
-use crate::udp::{MyUdpSocket, UdpStream};
+use crate::udp::MyUdpSocket;
 use serde::{Deserialize, Serialize};
-use tokio_rustls::TlsAcceptor;
 use tracing::log::debug;
-use tracing::{error, field, info, instrument, trace, warn, Instrument, Span};
-use url::quirks::host;
+use tracing::{error, info, instrument, trace, warn, Instrument, Span};
 use url::Host;
 use uuid::Uuid;
 
@@ -318,7 +309,7 @@ async fn server_upgrade(
     Ok(response)
 }
 
-#[instrument(name="tunnel", level="info", skip_all, fields(id=field::Empty, remote=field::Empty, peer=field::Empty, forwarded_for=field::Empty))]
+#[instrument(name="tunnel", level="info", skip_all, fields(id=tracing::field::Empty, remote=tracing::field::Empty, peer=tracing::field::Empty, forwarded_for=tracing::field::Empty))]
 pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()> {
     info!(
         "Starting wstunnel server listening on {}",

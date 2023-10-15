@@ -1,21 +1,16 @@
-#![allow(unused_imports)]
-
 use anyhow::Context;
-use futures_util::future::join;
-use futures_util::{stream, FutureExt, Stream};
-use hyper::server;
-use libc::poll;
+use futures_util::{stream, Stream};
 use pin_project::{pin_project, pinned_drop};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io;
-use std::io::{Error, ErrorKind, IoSlice};
+use std::io::{Error, ErrorKind};
 use std::net::SocketAddr;
 use std::pin::{pin, Pin};
 use std::sync::{Arc, RwLock, Weak};
 use std::task::Poll;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::time::Sleep;
