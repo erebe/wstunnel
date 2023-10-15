@@ -26,7 +26,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::rustls::server::DnsName;
 use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
 
-use tracing::{debug, error, field, instrument, Instrument, Span};
+use tracing::{debug, error, instrument, Instrument, Span};
 
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
@@ -572,7 +572,7 @@ async fn main() {
     tokio::signal::ctrl_c().await.unwrap();
 }
 
-#[instrument(name="tunnel", level="info", skip_all, fields(id=field::Empty, remote=field::Empty))]
+#[instrument(name="tunnel", level="info", skip_all, fields(id=tracing::field::Empty, remote=tracing::field::Empty))]
 async fn run_tunnel<T, R, W>(
     server_config: Arc<WsClientConfig>,
     tunnel: LocalToRemote,
