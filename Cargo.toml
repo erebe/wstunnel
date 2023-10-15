@@ -26,7 +26,6 @@ rustls-native-certs = { version = "0.6.3", features = [] }
 tokio = { version = "1.32.0", features = ["full"] }
 tokio-rustls = { version = "0.24.1", features = ["tls12", "dangerous_configuration", "early-data"] }
 tokio-stream = { version = "0.1.14", features = ["net"] }
-tokio-fd = "0.3.0"
 futures-util = { version = "0.3.28" }
 
 tracing = { version = "0.1.37", features = ["log"] }
@@ -34,6 +33,8 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt", "loc
 base64 = "0.21.4"
 serde = { version = "1.0.188", features = ["derive"] }
 
+[target.'cfg(target_family = "unix")'.dependencies]
+tokio-fd = "0.3.0"
 
 
 [profile.release]
