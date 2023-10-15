@@ -31,10 +31,10 @@ jobs:
             target: armv7-unknown-linux-musleabihf
 
           # Mac OS
-          # - name: MacOS x86_64
-          #   target: x86_64-apple-darwin
-          # - name: MacOS aarch64
-          #   target: aarch64-apple-darwin
+          - name: MacOS x86_64
+            target: x86_64-apple-darwin
+          - name: MacOS aarch64
+            target: aarch64-apple-darwin
 
           # Windows
           # - name: Windows x86_64
@@ -71,13 +71,6 @@ jobs:
         args: ${{ env.BUILD_ARGS }} --target ${{ matrix.platform.target }}
 
     # Mac OS
-    - name: Login to DockerHub
-      if: contains(matrix.platform.target, 'apple')
-      # We log on DockerHub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ env.DOCKER_LOGIN }}
-        password: ${{ env.DOCKER_TOKEN }}
     - name: Build ${{ matrix.platform.name }} binary
       if: contains(matrix.platform.target, 'apple')
       # We use a dedicated Rust image containing required Apple libraries to cross-compile on multiple archs
