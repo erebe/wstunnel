@@ -19,6 +19,7 @@ fn configure_socket(socket: &mut TcpSocket, so_mark: &Option<i32>) -> Result<(),
         )
     })?;
 
+    #[cfg(target_os = "linux")]
     if let Some(so_mark) = so_mark {
         unsafe {
             let optval: libc::c_int = *so_mark;
