@@ -1,4 +1,5 @@
 mod embedded_certificate;
+#[cfg(target_family = "unix")]
 mod stdio;
 mod tcp;
 mod tls;
@@ -502,20 +503,27 @@ async fn main() {
                         });
                     }
                     L4Protocol::Stdio => {
-                        let server = stdio::run_server().await.unwrap_or_else(|err| {
-                            panic!("Cannot start STDIO server: {}", err);
-                        });
-                        tokio::spawn(async move {
-                            if let Err(err) = run_tunnel(
-                                server_config,
-                                tunnel,
-                                stream::once(async move { Ok(server) }),
-                            )
-                            .await
-                            {
-                                error!("{:?}", err);
-                            }
-                        });
+                        #[cfg(target_family = "unix")]
+                        {
+                            let server = stdio::run_server().await.unwrap_or_else(|err| {
+                                panic!("Cannot start STDIO server: {}", err);
+                            });
+                            tokio::spawn(async move {
+                                if let Err(err) = run_tunnel(
+                                    server_config,
+                                    tunnel,
+                                    stream::once(async move { Ok(server) }),
+                                )
+                                .await
+                                {
+                                    error!("{:?}", err);
+                                }
+                            });
+                        }
+                        #[cfg(not(target_family = "unix"))]
+                        {
+                            panic!("stdio is not implemented for non unix platform")
+                        }
                     }
                 }
             }
