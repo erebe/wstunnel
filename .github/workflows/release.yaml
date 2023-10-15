@@ -30,11 +30,25 @@ jobs:
           - name: Linux armv7hf
             target: armv7-unknown-linux-musleabihf
 
+          - name: Linux mips
+            target: mips-unknown-linux-musl
+
+          - name: Linux mips64
+            target: mips64-unknown-linux-muslabi64
+
           # Mac OS
           - name: MacOS x86_64
             target: x86_64-apple-darwin
+
+          - name: iOS x86_64
+            target: x86_64-apple-ios
+
           - name: MacOS aarch64
             target: aarch64-apple-darwin
+
+          - name: iOS aarch64
+            target: aarch64-apple-ios
+
 
           # Windows
           # - name: Windows x86_64
