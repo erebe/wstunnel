@@ -2,7 +2,6 @@ use anyhow::{anyhow, Context};
 use std::{io, vec};
 
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::os::fd::AsRawFd;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::time::timeout;
@@ -21,6 +20,7 @@ fn configure_socket(socket: &mut TcpSocket, so_mark: &Option<i32>) -> Result<(),
 
     #[cfg(target_os = "linux")]
     if let Some(so_mark) = so_mark {
+        use std::os::fd::AsRawFd;
         unsafe {
             let optval: libc::c_int = *so_mark;
             let ret = libc::setsockopt(
