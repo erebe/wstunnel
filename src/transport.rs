@@ -10,7 +10,7 @@ use anyhow::Context;
 use fastwebsockets::{
     Frame, OpCode, Payload, WebSocket, WebSocketError, WebSocketRead, WebSocketWrite,
 };
-use futures_util::{pin_mut};
+use futures_util::pin_mut;
 use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::server::conn::Http;

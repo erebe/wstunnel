@@ -1,4 +1,5 @@
 mod embedded_certificate;
+mod socks5;
 #[cfg(target_family = "unix")]
 mod stdio;
 mod tcp;
