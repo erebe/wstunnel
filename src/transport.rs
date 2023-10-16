@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{tcp, tls, L4Protocol, LocalToRemote, WsClientConfig, WsServerConfig};
+use crate::{tcp, tls, LocalProtocol, LocalToRemote, WsClientConfig, WsServerConfig};
 use anyhow::Context;
 use fastwebsockets::{
     Frame, OpCode, Payload, WebSocket, WebSocketError, WebSocketRead, WebSocketWrite,
@@ -28,7 +28,7 @@ use tokio::time::timeout;
 use crate::udp::MyUdpSocket;
 use serde::{Deserialize, Serialize};
 use tracing::log::debug;
-use tracing::{error, info, instrument, trace, warn, Instrument, Span};
+use tracing::{error, info, instrument, span, trace, warn, Instrument, Level, Span};
 use url::Host;
 use uuid::Uuid;
 
@@ -47,7 +47,7 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct JwtTunnelConfig {
     pub id: String,
-    pub p: L4Protocol,
+    pub p: LocalProtocol,
     pub r: String,
     pub rp: u16,
 }
@@ -81,7 +81,12 @@ pub async fn connect(
 
     let data = JwtTunnelConfig {
         id: request_id.to_string(),
-        p: tunnel_cfg.protocol,
+        p: match tunnel_cfg.local_protocol {
+            LocalProtocol::Tcp => LocalProtocol::Tcp,
+            LocalProtocol::Udp { .. } => tunnel_cfg.local_protocol,
+            LocalProtocol::Stdio => LocalProtocol::Tcp,
+            LocalProtocol::Socks5 => LocalProtocol::Tcp,
+        },
         r: tunnel_cfg.remote.0.to_string(),
         rp: tunnel_cfg.remote.1,
     };
@@ -166,7 +171,7 @@ async fn from_query(
     server_config: &WsServerConfig,
     query: &str,
 ) -> anyhow::Result<(
-    L4Protocol,
+    LocalProtocol,
     Host,
     u16,
     Pin<Box<dyn AsyncRead + Send>>,
@@ -204,19 +209,19 @@ async fn from_query(
     }
 
     match jwt.claims.p {
-        L4Protocol::Udp { .. } => {
+        LocalProtocol::Udp { .. } => {
             let host = Host::parse(&jwt.claims.r)?;
             let cnx = Arc::new(UdpSocket::bind("[::]:0").await?);
             cnx.connect((host.to_string(), jwt.claims.rp)).await?;
             Ok((
-                L4Protocol::Udp { timeout: None },
+                LocalProtocol::Udp { timeout: None },
                 host,
                 jwt.claims.rp,
                 Box::pin(MyUdpSocket::new(cnx.clone())),
                 Box::pin(MyUdpSocket::new(cnx)),
             ))
         }
-        L4Protocol::Tcp { .. } => {
+        LocalProtocol::Tcp { .. } => {
             let host = Host::parse(&jwt.claims.r)?;
             let port = jwt.claims.rp;
             let (rx, tx) = tcp::connect(
@@ -330,7 +335,15 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
         let (stream, peer_addr) = listener.accept().await?;
         let _ = stream.set_nodelay(true);
 
-        Span::current().record("peer", peer_addr.to_string());
+        let span = span!(
+            Level::INFO,
+            "tunnel",
+            id = tracing::field::Empty,
+            remote = tracing::field::Empty,
+            peer = peer_addr.to_string(),
+            forwarded_for = tracing::field::Empty
+        );
+
         info!("Accepting connection");
         let upgrade_fn = upgrade_fn.clone();
         // TLS
@@ -354,7 +367,7 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
                     error!("Error while upgrading cnx to websocket: {:?}", e);
                 }
             }
-            .instrument(Span::current());
+            .instrument(span);
 
             tokio::spawn(fut);
         // Normal
@@ -369,7 +382,7 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
                     error!("Error while upgrading cnx to weboscket: {:?}", e);
                 }
             }
-            .instrument(Span::current());
+            .instrument(span);
 
             tokio::spawn(fut);
         };
