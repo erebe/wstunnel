@@ -1,22 +1,22 @@
 use anyhow::Context;
 use fast_socks5::server::{Config, DenyAuthentication, Socks5Server};
 use fast_socks5::util::target_addr::TargetAddr;
+use fast_socks5::{consts, ReplyError};
 use futures_util::{stream, Stream, StreamExt};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::task::Poll;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-
-use log::warn;
 use tracing::{info, warn};
 use url::Host;
 
 pub struct Socks5Listener {
-    stream: Pin<Box<dyn Stream<Item = anyhow::Result<(TcpStream, Host, u16)>>>>,
+    stream: Pin<Box<dyn Stream<Item = anyhow::Result<(TcpStream, (Host, u16))>> + Send>>,
 }
 
 impl Stream for Socks5Listener {
-    type Item = anyhow::Result<(TcpStream, Host, u16)>;
+    type Item = anyhow::Result<(TcpStream, (Host, u16))>;
 
     fn poll_next(
         self: Pin<&mut Self>,
@@ -27,7 +27,7 @@ impl Stream for Socks5Listener {
 }
 
 pub async fn run_server(bind: SocketAddr) -> Result<Socks5Listener, anyhow::Error> {
-    info!("Starting TCP server listening cnx on {}", bind);
+    info!("Starting SOCKS5 server listening cnx on {}", bind);
 
     let server = Socks5Server::<DenyAuthentication>::bind(bind)
         .await
@@ -69,8 +69,22 @@ pub async fn run_server(bind: SocketAddr) -> Result<Socks5Listener, anyhow::Erro
                 TargetAddr::Ip(SocketAddr::V6(ip)) => (Host::Ipv6(*ip.ip()), ip.port()),
                 TargetAddr::Domain(host, port) => (Host::Domain(host.clone()), *port),
             };
+
+            let mut cnx = cnx.into_inner();
+            let ret = cnx
+                .write_all(&new_reply(
+                    &ReplyError::Succeeded,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+                ))
+                .await;
+
+            if let Err(err) = ret {
+                warn!("Cannot reply to socks5 client: {}", err);
+                continue;
+            }
+
             drop(acceptor);
-            return Some((Ok((cnx.into_inner(), host, port)), server));
+            return Some((Ok((cnx, (host, port))), server));
         }
     });
 
@@ -79,6 +93,32 @@ pub async fn run_server(bind: SocketAddr) -> Result<Socks5Listener, anyhow::Erro
     };
 
     Ok(listener)
+}
+
+pub fn new_reply(error: &ReplyError, sock_addr: SocketAddr) -> Vec<u8> {
+    let (addr_type, mut ip_oct, mut port) = match sock_addr {
+        SocketAddr::V4(sock) => (
+            consts::SOCKS5_ADDR_TYPE_IPV4,
+            sock.ip().octets().to_vec(),
+            sock.port().to_be_bytes().to_vec(),
+        ),
+        SocketAddr::V6(sock) => (
+            consts::SOCKS5_ADDR_TYPE_IPV6,
+            sock.ip().octets().to_vec(),
+            sock.port().to_be_bytes().to_vec(),
+        ),
+    };
+
+    let mut reply = vec![
+        consts::SOCKS5_VERSION,
+        error.as_u8(), // transform the error into byte code
+        0x00,          // reserved
+        addr_type,     // address type (ipv4, v6, domain)
+    ];
+    reply.append(&mut ip_oct);
+    reply.append(&mut port);
+
+    reply
 }
 
 #[cfg(test)]
