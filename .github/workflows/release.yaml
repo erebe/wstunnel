@@ -115,7 +115,7 @@ jobs:
         path: artifacts
 
     - name: list artifacts
-      run: ls * ; ls artifacts/*
+      run: ls artifacts/*
 
     # Goreleaser  
     - name: Set up Go
