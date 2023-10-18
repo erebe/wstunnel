@@ -124,3 +124,5 @@ jobs:
         version: latest
         # Run goreleaser and ignore non-committed files (downloaded artifacts)
         args: release --clean --skip=validate
+      env:
+        GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
