@@ -53,14 +53,9 @@ struct Client {
     #[arg(short='L', long, value_name = "{tcp,udp,socks5}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg)]
     local_to_remote: Vec<LocalToRemote>,
 
-    /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
-    /// You need to use {root, sudo, capabilities} to run wstunnel when using this option
-    #[arg(long, value_name = "INT", verbatim_doc_comment)]
-    socket_so_mark: Option<u32>,
-
     /// Domain name that will be use as SNI during TLS handshake
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
-    ///          or it will be flag as fishy as your request rejected
+    ///          or it will be flagged as fishy and your request rejected
     #[arg(long, value_name = "DOMAIN_NAME", value_parser = parse_sni_override, verbatim_doc_comment)]
     tls_sni_override: Option<DnsName>,
 
