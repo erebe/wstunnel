@@ -7,6 +7,8 @@ go_arch=$1
 go_os=$2
 project_name=$3
 
+rm -rf dist/*
+
 case $go_arch in
     amd64) rust_arch='x86_64' ;;
     arm64) rust_arch='aarch64' ;;
@@ -21,5 +23,5 @@ case $go_os in
 esac
 
 # Find artifacts and uncompress in the corresponding directory
-find artifacts -type f -name "*${rust_arch}*${rust_os}*" -exec unzip -d dist/${project_name}_${go_os}_${go_arch} {} \;
+find artifacts -type f -wholename "*${rust_arch}*${rust_os}*" -exec cp {} dist/${project_name}_${go_os}_${go_arch} \;
 
