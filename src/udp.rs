@@ -19,8 +19,7 @@ use tracing::{debug, error, info};
 const DEFAULT_UDP_BUFFER_SIZE: usize = 8 * 1024;
 
 struct UdpServer {
-    listener: UdpSocket,
-    std_socket: std::net::UdpSocket,
+    listener: Arc<UdpSocket>,
     buffer: Vec<u8>,
     peers: HashMap<SocketAddr, DuplexStream, ahash::RandomState>,
     keys_to_delete: Arc<RwLock<Vec<SocketAddr>>>,
@@ -28,12 +27,9 @@ struct UdpServer {
 }
 
 impl UdpServer {
-    pub fn new(listener: UdpSocket, timeout: Option<Duration>) -> Self {
-        let socket = listener.into_std().unwrap();
-        let listener = UdpSocket::from_std(socket.try_clone().unwrap()).unwrap();
+    pub fn new(listener: Arc<UdpSocket>, timeout: Option<Duration>) -> Self {
         Self {
             listener,
-            std_socket: socket,
             peers: HashMap::with_hasher(ahash::RandomState::new()),
             buffer: vec![0u8; DEFAULT_UDP_BUFFER_SIZE],
             keys_to_delete: Default::default(),
@@ -55,14 +51,14 @@ impl UdpServer {
         keys_to_delete.clear();
     }
 
-    fn clone_socket(&self) -> UdpSocket {
-        UdpSocket::from_std(self.std_socket.try_clone().unwrap()).unwrap()
+    fn clone_socket(&self) -> Arc<UdpSocket> {
+        self.listener.clone()
     }
 }
 
 #[pin_project(PinnedDrop)]
 pub struct UdpStream {
-    socket: UdpSocket,
+    socket: Arc<UdpSocket>,
     peer: SocketAddr,
     #[pin]
     deadline: Option<Sleep>,
@@ -144,7 +140,7 @@ pub async fn run_server(
         .await
         .with_context(|| format!("Cannot create UDP server {:?}", bind))?;
 
-    let udp_server = UdpServer::new(listener, timeout);
+    let udp_server = UdpServer::new(Arc::new(listener), timeout);
     let stream = stream::unfold(udp_server, |mut server| async {
         loop {
             server.clean_dead_keys();

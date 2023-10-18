@@ -293,7 +293,13 @@ async fn server_upgrade(
 
     tokio::spawn(
         async move {
-            let (ws_rx, mut ws_tx) = fut.await.unwrap().split(tokio::io::split);
+            let (ws_rx, mut ws_tx) = match fut.await {
+                Ok(ws) => ws.split(tokio::io::split),
+                Err(err) => {
+                    error!("Error during http upgrade request: {:?}", err);
+                    return;
+                }
+            };
             let (close_tx, close_rx) = oneshot::channel::<()>();
             let connect_timeout = server_config.timeout_connect;
             let ping_frequency = server_config
@@ -477,8 +483,7 @@ async fn propagate_write(
                 error!("error while reading from websocket rx {}", err);
                 break;
             }
-            Err(err) => {
-                trace!("frame {:?}", err);
+            Err(_) => {
                 // TODO: Check that the connection is not closed (no easy method to know if a tx is closed ...)
                 continue;
             }

@@ -61,7 +61,7 @@ pub fn tls_connector(
     let certs = rustls_native_certs::load_native_certs()
         .with_context(|| "Cannot load system certificates")?;
     for cert in certs {
-        root_store.add(&Certificate(cert.0)).unwrap();
+        root_store.add(&Certificate(cert.0))?;
     }
 
     let mut config = ClientConfig::builder()
