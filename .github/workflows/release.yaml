@@ -113,3 +113,14 @@ jobs:
     - uses: actions/download-artifact@v3
       with:
         path: artifacts
+
+    # Goreleaser  
+    - name: Set up Go
+      uses: actions/setup-go@v4
+    - name: Run GoReleaser
+      uses: goreleaser/goreleaser-action@v5
+      with:
+        distribution: goreleaser
+        version: latest
+        # Run goreleaser and ignore non-committed files (downloaded artifacts)
+        args: release --clean --skip=validate
