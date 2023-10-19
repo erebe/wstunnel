@@ -51,11 +51,11 @@ struct Client {
     /// Listen on local and forwards traffic from remote
     /// Can be specified multiple times
     /// examples:
-    /// 'tcp://1212:google.com:443' => listen locally on tcp on port 1212 and forward to google.com on port 443
-    /// 'udp://1212:1.1.1.1:53' => listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
-    /// 'udp://1212:1.1.1.1:53?timeout_sec=10' => timeout_sec force timeout the tunnel after 10sec. Set it to 0 to disable the timeout
-    /// 'socks5://1212' => listen locally with socks5 on port 1212 and forward dynamically requested tunnel
-    /// 'socks5://1212?socket_so_mark=2' => each tunnel can have the socket_so_mark option, cf explanation on server command
+    /// 'tcp://1212:google.com:443'      =>     listen locally on tcp on port 1212 and forward to google.com on port 443
+    /// 'udp://1212:1.1.1.1:53'          =>     listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
+    /// 'udp://1212:1.1.1.1:53?timeout_sec=10'  timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
+    /// 'socks5://1212'                  =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
+    /// 'socks5://1212?socket_so_mark=2' =>     each tunnel can have the socket_so_mark option, cf explanation on server command
     #[arg(short='L', long, value_name = "{tcp,udp,socks5}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
     local_to_remote: Vec<LocalToRemote>,
 
