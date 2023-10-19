@@ -95,7 +95,7 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         # Finally, we store the binary as GitHub artifact for later usage
-        name: ${{ matrix.platform.target }}-${{ env.BIN_NAME }}
+        name: ${{ env.BIN_NAME }}-${{ matrix.platform.target }}
         path: target/${{ matrix.platform.target }}/release/${{ env.BIN_NAME }}${{ contains(matrix.platform.target, 'windows') && '.exe' || '' }}
         retention-days: 1
 
