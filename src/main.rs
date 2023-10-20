@@ -470,7 +470,11 @@ async fn main() {
         _ => {
             tracing_subscriber::fmt()
                 .with_ansi(true)
-                .with_env_filter(EnvFilter::from_default_env())
+                .with_env_filter(
+                    EnvFilter::builder()
+                        .with_default_directive(Level::INFO.into())
+                        .from_env_lossy(),
+                )
                 .init();
         }
     }
