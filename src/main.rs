@@ -56,7 +56,8 @@ struct Client {
     /// 'udp://1212:1.1.1.1:53?timeout_sec=10'  timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
     /// 'socks5://1212'                  =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
     /// 'socks5://1212?socket_so_mark=2' =>     each tunnel can have the socket_so_mark option, cf explanation on server command
-    #[arg(short='L', long, value_name = "{tcp,udp,socks5}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
+    /// 'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
+    #[arg(short='L', long, value_name = "{tcp,udp,socks5,stdio}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
     local_to_remote: Vec<LocalToRemote>,
 
     /// Domain name that will be use as SNI during TLS handshake
