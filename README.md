@@ -147,7 +147,7 @@ On the client side use this command to forward traffic through the websocket tun
 ```bash
 wstunnel client -L socks5://8888 ws://myRemoteHost:8080
 ```
-This command will create a sock5 server listening on port 8888 of a loopback interface and will forward traffic.
+This command will create a socks5 server listening on port 8888 of a loopback interface and will forward traffic.
 
 With firefox you can setup a proxy using this tunnel, by setting in networking preferences 127.0.0.1:8888 and selecting socks5 proxy
 
@@ -210,7 +210,7 @@ target/debug/wstunnel ...
 ```
 
 ## TODO
-- [x] Add sock5 proxy
+- [x] Add socks5 proxy
 - [x] Add better logging
 - [x] Add better error handling
 - [x] Add httpProxy authentification
