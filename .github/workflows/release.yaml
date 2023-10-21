@@ -110,37 +110,22 @@ jobs:
     - name: Checkout Git repo
       uses: actions/checkout@v3
 
-    # Download all artifacts in zip format
-    # https://github.com/actions/download-artifact/issues/143
-    - name: Download artifacts
-      uses: actions/github-script@v6
+    # Download all artifacts
+    - uses: actions/download-artifact@v3
       with:
-        script: |
-          let allArtifacts = await github.rest.actions.listWorkflowRunArtifacts({
-             owner: context.repo.owner,
-             repo: context.repo.repo,
-             run_id: context.payload.workflow_run.id,
-          });
-          for (const artifact of allArtifacts.data.artifacts)
-          {
-            let download = await github.rest.actions.downloadArtifact({
-               owner: context.repo.owner,
-               repo: context.repo.repo,
-               artifact_id: artifact.id,
-               archive_format: 'zip',
-            });
-            
-             let fs = require('fs');
-             fs.mkdirSync('artifacts');
-             fs.writeFileSync(`${process.env.GITHUB_WORKSPACE}/artifacts/${artifact.name}.zip`, Buffer.from(download.data));
-          }
+        path: artifacts
 
     - name: list artifacts
       run: find artifacts/
-    
-    - uses: "marvinpinto/action-automatic-releases@latest"
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+
+    - name: Run GoReleaser
+      uses: goreleaser/goreleaser-action@v5
       with:
-        repo_token: "${{ secrets.RELEASE_TOKEN }}"
-        prerelease: true
-        files: |
-          artifacts/*
+        distribution: goreleaser
+        version: latest
+        args: release --clean --skip=validate
+      env:
+        GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
