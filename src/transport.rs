@@ -71,13 +71,24 @@ pub async fn connect(
     tunnel_cfg: &LocalToRemote,
 ) -> anyhow::Result<WebSocket<Upgraded>> {
     let (host, port) = &server_cfg.remote_addr;
-    let tcp_stream = tcp::connect(
-        host,
-        *port,
-        &tunnel_cfg.socket_so_mark,
-        server_cfg.timeout_connect,
-    )
-    .await?;
+    let tcp_stream = if let Some(http_proxy) = &server_cfg.http_proxy {
+        tcp::connect_with_http_proxy(
+            http_proxy,
+            host,
+            *port,
+            &tunnel_cfg.socket_so_mark,
+            server_cfg.timeout_connect,
+        )
+        .await?
+    } else {
+        tcp::connect(
+            host,
+            *port,
+            &tunnel_cfg.socket_so_mark,
+            server_cfg.timeout_connect,
+        )
+        .await?
+    };
 
     let data = JwtTunnelConfig {
         id: request_id.to_string(),
