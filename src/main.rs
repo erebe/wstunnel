@@ -49,8 +49,7 @@ enum Commands {
 }
 #[derive(clap::Args, Debug)]
 struct Client {
-    /// Listen on local and forwards traffic from remote
-    /// Can be specified multiple times
+    /// Listen on local and forwards traffic from remote. Can be specified multiple times
     /// examples:
     /// 'tcp://1212:google.com:443'      =>     listen locally on tcp on port 1212 and forward to google.com on port 443
     /// 'udp://1212:1.1.1.1:53'          =>     listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
