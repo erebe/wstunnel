@@ -21,7 +21,7 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 * Support for http proxy (when behind one)
 * Support for tls/https server (with embedded self signed certificate, see comment in the example section)
 * Support IPv6
-* **Standalone binary for linux x86_64** (so just cp it where you want)
+* **Standalone binary for linux x86_64** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
 * Standalone archive for windows
 
 P.S: Please do not pay attention to Main.hs because as I hate to write command line code this file is crappy
@@ -121,6 +121,16 @@ Options:
           [Optional] Use a custom tls key (.key) that the server will use instead of the default embedded one
   -h, --help
           Print help
+```
+
+## Release:
+
+Static binaries are available in [release section](https://github.com/erebe/wstunnel/releases)
+
+docker image are available at https://github.com/erebe/wstunnel/pkgs/container/wstunnel
+
+```bash
+docker pull ghcr.io/erebe/wstunnel:latest
 ```
 
 ## Examples
