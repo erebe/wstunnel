@@ -1,7 +1,7 @@
 on:
   # Indicates I want to run this workflow on all branches, PR, and tags
   push:
-    branches: ["neo"]
+    branches: ["main"]
     tags: ["*"]
   pull_request:
     branches: [ "main" ]
