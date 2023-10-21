@@ -462,6 +462,8 @@ async fn propagate_read(
         }
     }
 
+    let _ = ws_tx.write_frame(Frame::close(1000, &[])).await;
+
     Ok(())
 }
 
