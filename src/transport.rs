@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::collections::HashSet;
 use std::future::Future;
 use std::ops::{Deref, Not};
@@ -151,7 +152,7 @@ pub async fn connect(
 
 pub async fn connect_to_server<R, W>(
     request_id: Uuid,
-    server_config: &WsClientConfig,
+    client_cfg: &WsClientConfig,
     remote_cfg: &LocalToRemote,
     duplex_stream: (R, W),
 ) -> anyhow::Result<()>
@@ -159,15 +160,15 @@ where
     R: AsyncRead + Send + 'static,
     W: AsyncWrite + Send + 'static,
 {
-    let mut ws = connect(request_id, server_config, remote_cfg).await?;
-    ws.set_auto_apply_mask(server_config.websocket_mask_frame);
+    let mut ws = connect(request_id, client_cfg, remote_cfg).await?;
+    ws.set_auto_apply_mask(client_cfg.websocket_mask_frame);
 
     let (ws_rx, ws_tx) = ws.split(tokio::io::split);
     let (local_rx, local_tx) = duplex_stream;
     let (close_tx, close_rx) = oneshot::channel::<()>();
 
     // Forward local tx to websocket tx
-    let ping_frequency = server_config.websocket_ping_frequency;
+    let ping_frequency = client_cfg.websocket_ping_frequency;
     tokio::spawn(
         propagate_read(local_rx, ws_tx, close_tx, ping_frequency).instrument(Span::current()),
     );
@@ -266,8 +267,27 @@ async fn server_upgrade(
         );
         return Ok(http::Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .body(Body::from("Invalid upgrade request".to_string()))
+            .body(Body::from("Invalid upgrade request"))
             .unwrap_or_default());
+    }
+
+    if let Some(path_prefix) = &server_config.restrict_http_upgrade_path_prefix {
+        let path = req.uri().path();
+        let min_len = min(path.len(), 1);
+        let max_len = min(path.len(), path_prefix.len() + 1);
+        if &path[0..min_len] != "/"
+            || &path[min_len..max_len] != path_prefix.as_str()
+            || !path[max_len..].starts_with('/')
+        {
+            warn!(
+                "Rejecting connection with bad path prefix in upgrade request: {}",
+                req.uri()
+            );
+            return Ok(http::Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("Invalid upgrade request"))
+                .unwrap_or_default());
+        }
     }
 
     let (protocol, dest, port, local_rx, local_tx) =
