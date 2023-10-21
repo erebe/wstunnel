@@ -123,7 +123,7 @@ Options:
           Print help
 ```
 
-## Release:
+## Release
 
 Static binaries are available in [release section](https://github.com/erebe/wstunnel/releases)
 
