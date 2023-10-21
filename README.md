@@ -31,79 +31,92 @@ Use the websockets protocol to tunnel {TCP,UDP} traffic
 wsTunnelClient <---> wsTunnelServer <---> RemoteHost
 Use secure connection (wss://) to bypass proxies
 
-wstunnel [OPTIONS] ws[s]://wstunnelServer[:port]
+Client:
+Usage: wstunnel client [OPTIONS] <ws[s]://wstunnel.server.com[:port]>
 
-Client options:
-  -L --localToRemote=[BIND:]PORT:HOST:PORT      Listen on local and forwards
-                                                traffic from remote. Can be
-                                                used multiple time
-  -D --dynamicToRemote=[BIND:]PORT              Listen on local and
-                                                dynamically (with socks5 proxy)
-                                                forwards traffic from remote
-  -u --udp                                      forward UDP traffic instead
-                                                of TCP
-     --udpTimeoutSec=INT                        When using udp forwarding,
-                                                timeout in seconds after when
-                                                the tunnel connection is
-                                                closed. Default 30sec, -1 means
-                                                no timeout
-  -p --httpProxy=USER:PASS@HOST:PORT            If set, will use this proxy
-                                                to connect to the server
-     --soMark=int                               (linux only) Mark network
-                                                packet with SO_MARK sockoption
-                                                with the specified value. You
-                                                need to use {root, sudo,
-                                                capabilities} to run wstunnel
-                                                when using this option
-     --upgradePathPrefix=String                 Use a specific prefix that
-                                                will show up in the http path
-                                                in the upgrade request. Useful
-                                                if you need to route requests
-                                                server side but don't have
-                                                vhosts
-     --hostHeader=String                        If set, add the custom string
-                                                as host http header
-     --tlsSNI=String                            If set, use custom string in
-                                                the SNI during TLS handshake
-     --websocketPingFrequencySec=int            do a hearthbeat ping every x
-                                                seconds to maintain websocket
-                                                connection
-     --upgradeCredentials=USER[:PASS]           Credentials for the Basic
-                                                HTTP authorization type sent
-                                                with the upgrade request.
-  -H --customHeaders="HeaderName: HeaderValue"  Send custom headers in the
-                                                upgrade request. Can be used
-                                                multiple time
-  -h --help                                     Display help message
-  -V --version                                  Print version information
-Server options:
-     --server                                   Start a server that will
-                                                forward traffic for you
-  -r --restrictTo=HOST:PORT                     Accept traffic to be
-                                                forwarded only to this service
-     --tlsCertificate=FILE                      [optional] provide a custom
-                                                tls certificate (.crt) that the
-                                                server will use instead of the
-                                                embeded one
-     --tlsKey=FILE                              [optional] provide a custom
-                                                tls key (.key) that the server
-                                                will use instead of the embeded
-                                                one
-Common options:
-  -v --verbose                                  Print debug information
-  -q --quiet                                    Print only errors
+Arguments:
+  <ws[s]://wstunnel.server.com[:port]>  Address of the wstunnel server
+                                        Example: With TLS wss://wstunnel.example.com or without ws://wstunnel.example.com
+
+Options:
+  -L, --local-to-remote <{tcp,udp,socks5,stdio}://[BIND:]PORT:HOST:PORT>
+          Listen on local and forwards traffic from remote. Can be specified multiple times
+          examples:
+          'tcp://1212:google.com:443'      =>     listen locally on tcp on port 1212 and forward to google.com on port 443
+          'udp://1212:1.1.1.1:53'          =>     listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
+          'udp://1212:1.1.1.1:53?timeout_sec=10'  timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
+          'socks5://1212'                  =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
+          'socks5://1212?socket_so_mark=2' =>     each tunnel can have the socket_so_mark option, cf explanation on server command
+          'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
+      --tls-sni-override <DOMAIN_NAME>
+          Domain name that will be use as SNI during TLS handshake
+          Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
+                   or it will be flagged as fishy and your request rejected
+      --tls-verify-certificate
+          Enable TLS certificate verification.
+          Disabled by default. The client will happily connect to any server with self signed certificate.
+  -p, --http-proxy <http://USER:PASS@HOST:PORT>
+          If set, will use this http proxy to connect to the server
+      --http-upgrade-path-prefix <HTTP_UPGRADE_PATH_PREFIX>
+          Use a specific prefix that will show up in the http path during the upgrade request.
+          Useful if you need to route requests server side but don't have vhosts [default: morille]
+      --http-upgrade-credentials <USER[:PASS]>
+          Pass authorization header with basic auth credentials during the upgrade request.
+          If you need more customization, you can use the http_headers option.
+      --websocket-ping-frequency-sec <seconds>
+          Frequency at which the client will send websocket ping to the server. [default: 30]
+      --websocket-mask-frame
+          Enable the masking of websocket frames. Default is false
+          Enable this option only if you use unsecure (non TLS) websocket server and you see some issues. Otherwise, it is just overhead.
+  -H, --http-headers <HEADER_NAME: HEADER_VALUE>
+          Send custom headers in the upgrade request
+          Can be specified multiple time
+  -h, --help
+          Print help
+
+Server:
+Usage: wstunnel server [OPTIONS] <ws[s]://0.0.0.0[:port]>
+
+Arguments:
+  <ws[s]://0.0.0.0[:port]>  Address of the wstunnel server to bind to
+                            Example: With TLS wss://0.0.0.0:8080 or without ws://[::]:8080
+
+Options:
+      --socket-so-mark <INT>
+          (linux only) Mark network packet with SO_MARK sockoption with the specified value.
+          You need to use {root, sudo, capabilities} to run wstunnel when using this option
+      --websocket-ping-frequency-sec <seconds>
+          Frequency at which the server will send websocket ping to client.
+      --websocket-mask-frame
+          Enable the masking of websocket frames. Default is false
+          Enable this option only if you use unsecure (non TLS) websocket server and you see some issues. Otherwise, it is just overhead.
+      --restrict-to <DEST:PORT>
+          Server will only accept connection from the specified tunnel information.
+          Can be specified multiple time
+          Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
+      --restrict-http-upgrade-path-prefix <RESTRICT_HTTP_UPGRADE_PATH_PREFIX>
+          Server will only accept connection from if this specific path prefix is used during websocket upgrade.
+          Useful if you specify in the client a custom path prefix and you want the server to only allow this one.
+          The path prefix act as a secret to authenticate clients
+          Disabled by default. Accept all path prefix
+      --tls-certificate <FILE_PATH>
+          [Optional] Use custom certificate (.crt) instead of the default embedded self signed certificate.
+      --tls-private-key <FILE_PATH>
+          [Optional] Use a custom tls key (.key) that the server will use instead of the default embedded one
+  -h, --help
+          Print help
 ```
 
 ## Examples
 ### Simplest one
 On your remote host, start the wstunnel's server by typing this command in your terminal
 ```bash
-wstunnel --server ws://0.0.0.0:8080
+wstunnel server ws://[::]:8080
 ```
 This will create a websocket server listening on any interface on port 8080.
 On the client side use this command to forward traffic through the websocket tunnel
 ```bash
-wstunnel -D 8888 ws://myRemoteHost:8080
+wstunnel client -L socks5://8888 ws://myRemoteHost:8080
 ```
 This command will create a sock5 server listening on port 8888 of a loopback interface and will forward traffic.
 
@@ -119,7 +132,7 @@ curl -x socks5h://127.0.0.1:8888 http://google.com/
 ### As proxy command for SSH
 You can specify `stdio` as source port on the client side if you wish to use wstunnel as part of a proxy command for ssh
 ```
-ssh -o ProxyCommand="wstunnel -L stdio:%h:%p ws://localhost:8080" my-server
+ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server
 ```
 
 ### When behind a corporate proxy
@@ -128,7 +141,7 @@ The most reliable way to do it is to use wstunnel as described below
 
 Start your wstunnel server with tls activated
 ```
-wstunnel --server wss://0.0.0.0:443 -r 127.0.0.1:22
+wstunnel server wss://[::]:443 --restrict-to 127.0.0.1:22
 ```
 The server will listen on any interface using port 443 (https) and restrict traffic to be forwarded only to the ssh daemon.
 
@@ -139,7 +152,7 @@ It was made in order to add the least possible overhead while still being compli
 
 Now on the client side start the client with
 ```
-wstunnel -L 9999:127.0.0.1:22 -p mycorporateproxy:8080 wss://myRemoteHost:443
+wstunnel client -L tcp://9999:127.0.0.1:22 -p mycorporateproxy:8080 wss://myRemoteHost:443
 ```
 It will start a tcp server on port 9999 that will contact the corporate proxy, negotiate a tls connection with the remote host and forward traffic to the ssh daemon on the remote host.
 
@@ -157,14 +170,14 @@ Else if you forward all the traffic without putting a static route, you will end
 
 
 ## How to Build
-Install the stack tool https://docs.haskellstack.org/en/stable/README/ or if you are a believer
+Install the Rust https://www.rust-lang.org/tools/install or if you are a believer
 ```
-curl -sSL https://get.haskellstack.org/ | sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ``` 
 and run those commands at the root of the project
 ```
-stack init
-stack install
+cargo build
+target/debug/wstunnel ...
 ```
 
 ## TODO
