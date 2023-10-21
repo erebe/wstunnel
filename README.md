@@ -3,6 +3,8 @@
   <img src="https://github.com/erebe/wstunnel/raw/main/logo_wstunnel.png" alt="wstunnel logo"/>
 </p>
 
+
+
 ## Description
 
 Most of the time when you are using a public network, you are behind some kind of firewall or proxy. One of their purpose is to constrain you to only use certain kind of protocols. Nowadays, the most widespread protocol is http and is de facto allowed by third party equipment.
@@ -23,6 +25,19 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 * Standalone archive for windows
 
 P.S: Please do not pay attention to Main.hs because as I hate to write command line code this file is crappy
+
+## Note
+
+V7.0.0 is a complete rewrite of wstunnel in Rust.
+Previous code in Haskell can be found on branch https://github.com/erebe/wstunnel/tree/haskell
+
+What to expect from previous version:
+* More throughput and less jitter due to Haskell GC. Most of you will not care, as it was performant enough already. But you can now saturate a gigabit ethernet card with a single connection
+* Command line is more homogeneous/has better UX. All tunnel can be specified multiple times
+* New bug, it is a rewrite (╯'□')╯︵ ┻━┻ ¯\\_(ツ)_/¯ 
+* Mainly for me to ease the maintenance of the project. I don't do a lot of haskell nowadays and it was harder for me to keep maintening the project over time, as I get lost in touch of the Haskell ecosystem and new release.
+* Armv7 build (aka raspberry pi), as new version of GHC (Haskell compiler) dropped its support
+
 
 ## Command line
 
