@@ -137,6 +137,13 @@ struct Server {
     #[arg(long, value_name = "DEST:PORT", verbatim_doc_comment)]
     restrict_to: Option<Vec<String>>,
 
+    /// Server will only accept connection from if this specific path prefix is used during websocket upgrade.
+    /// Useful if you specify in the client a custom path prefix and you want the server to only allow this one.
+    /// The path prefix act as a secret to authenticate clients
+    /// Disabled by default. Accept all path prefix
+    #[arg(long, verbatim_doc_comment)]
+    restrict_http_upgrade_path_prefix: Option<String>,
+
     /// [Optional] Use custom certificate (.crt) instead of the default embedded self signed certificate.
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
     tls_certificate: Option<PathBuf>,
@@ -414,6 +421,7 @@ pub struct WsServerConfig {
     pub socket_so_mark: Option<i32>,
     pub bind: SocketAddr,
     pub restrict_to: Option<Vec<String>>,
+    pub restrict_http_upgrade_path_prefix: Option<String>,
     pub websocket_ping_frequency: Option<Duration>,
     pub timeout_connect: Duration,
     pub websocket_mask_frame: bool,
@@ -634,6 +642,7 @@ async fn main() {
                 socket_so_mark: args.socket_so_mark,
                 bind: args.remote_addr.socket_addrs(|| Some(8080)).unwrap()[0],
                 restrict_to: args.restrict_to,
+                restrict_http_upgrade_path_prefix: args.restrict_http_upgrade_path_prefix,
                 websocket_ping_frequency: args.websocket_ping_frequency_sec,
                 timeout_connect: Duration::from_secs(10),
                 websocket_mask_frame: args.websocket_mask_frame,
