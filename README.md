@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="https://github.com/erebe/wstunnel/raw/master/logo_wstunnel.png" alt="wstunnel logo"/>
+  <img src="https://github.com/erebe/wstunnel/raw/main/logo_wstunnel.png" alt="wstunnel logo"/>
 </p>
 
 ## Description
