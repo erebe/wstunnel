@@ -1,0 +1,102 @@
+on:
+  # Indicates I want to run this workflow on all branches, PR, and tags
+  push:
+    branches: ["main"]
+    tags: ["*"]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  RUST_VERSION: 1.73.0
+  BUILD_ARGS: "--release"
+  BIN_NAME: "wstunnel"
+
+jobs:
+  build:
+    name: Build - ${{ matrix.platform.name }}
+    # By default, runs on Ubuntu, otherwise, override with the desired os
+    runs-on: ${{ matrix.platform.os || 'ubuntu-22.04' }}
+    strategy:
+      matrix:
+        # Set platforms you want to build your binaries on
+        platform:
+          # Linux
+          - name: Linux x86_64
+            target: x86_64-unknown-linux-musl
+
+          - name: Linux aarch64
+            target: aarch64-unknown-linux-musl
+
+          - name: Linux armv7hf
+            target: armv7-unknown-linux-musleabihf
+
+          #- name: Linux mips
+          #  target: mips-unknown-linux-musl
+
+          #- name: Linux mips64
+          #  target: mips64-unknown-linux-muslabi64
+
+          # Mac OS
+          - name: MacOS x86_64
+            target: x86_64-apple-darwin
+
+              # - name: iOS x86_64
+              #   target: x86_64-apple-ios
+
+              #- name: MacOS aarch64
+              #  target: aarch64-apple-darwin
+
+              #- name: iOS aarch64
+              #  target: aarch64-apple-ios
+
+
+          # Windows
+          - name: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+    - name: Create annotation for build error
+      if: contains(matrix.platform.target, 'linux')
+      run: sudo apt install musl-tools
+
+    - name: Checkout Git repo
+      uses: actions/checkout@v3
+
+    # Linux & Windows
+    - name: Install rust toolchain
+      if: ${{ !contains(matrix.platform.target, 'apple') }}
+      uses: actions-rs/toolchain@v1
+      with:
+        # We setup Rust toolchain and the desired target
+        profile: minimal
+        toolchain: "${{ env.RUST_VERSION }}"
+        override: true
+        target: ${{ matrix.platform.target }}
+        components: rustfmt, clippy
+
+    - name: Build ${{ matrix.platform.name }} binary
+      if: ${{ !contains(matrix.platform.target, 'apple') }}
+      uses: actions-rs/cargo@v1
+      # We use cross-rs if not running on x86_64 architecture on Linux
+      with:
+        command: build
+        use-cross: ${{ !contains(matrix.platform.target, 'x86_64') }}
+        args: ${{ env.BUILD_ARGS }} --target ${{ matrix.platform.target }}
+
+    # Mac OS
+    - name: Build ${{ matrix.platform.name }} binary
+      if: contains(matrix.platform.target, 'apple')
+      # We use a dedicated Rust image containing required Apple libraries to cross-compile on multiple archs
+      run: |
+        docker run --rm --volume "${PWD}":/root/src --workdir /root/src joseluisq/rust-linux-darwin-builder:$RUST_VERSION \
+        sh -c "CC=o64-clang CXX=o64-clang++ cargo build $BUILD_ARGS --target ${{ matrix.platform.target }}"
+    
+    - name: Store artifact
+      uses: actions/upload-artifact@v3
+      with:
+        # Finally, we store the binary as GitHub artifact for later usage
+        name: ${{ env.BIN_NAME }}-${{ matrix.platform.target }}
+        path: target/${{ matrix.platform.target }}/release/${{ env.BIN_NAME }}${{ contains(matrix.platform.target, 'windows') && '.exe' || '' }}
+        retention-days: 1
+
