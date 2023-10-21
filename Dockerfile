@@ -1,11 +1,9 @@
 ARG BUILDER_IMAGE=builder_cache
-ARG ALPINE_IMAGE_TAG=3.18
 
 ############################################################
 # Cache image with all the deps
-FROM rust:1.73-alpine${ALPINE_IMAGE_TAG} AS builder_cache
+FROM rust:1.73-bookworm AS builder_cache
 
-RUN apk add musl-dev
 RUN rustup component add rustfmt clippy
 
 WORKDIR /build
@@ -39,10 +37,14 @@ RUN cargo build --profile=${PROFILE} ${BIN_TARGET}
 
 ############################################################
 # Final image
-FROM alpine:${ALPINE_IMAGE_TAG} as final-image
+FROM debian:bookworm-slim as final-image
 
-RUN apk add dumb-init && \
-  adduser -Ds /bin/sh app
+RUN useradd -ms /bin/bash app && \
+        apt-get update && \
+        apt-get -y upgrade && \
+        apt install -y --no-install-recommends ca-certificates dumb-init && \
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists
 
 WORKDIR /home/app
 
