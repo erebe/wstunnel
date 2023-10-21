@@ -74,6 +74,7 @@ jobs:
         override: true
         target: ${{ matrix.platform.target }}
         components: rustfmt, clippy
+
     - name: Build ${{ matrix.platform.name }} binary
       if: ${{ !contains(matrix.platform.target, 'apple') }}
       uses: actions-rs/cargo@v1
@@ -113,10 +114,13 @@ jobs:
     - uses: actions/download-artifact@v3
       with:
         path: artifacts
+
+    - name: list artifacts
+      run: find artifacts/
     
     - uses: "marvinpinto/action-automatic-releases@latest"
       with:
         repo_token: "${{ secrets.RELEASE_TOKEN }}"
         prerelease: true
         files: |
-          artifacts/wstunnel-*
+          artifacts/wstunnel-*/wstunnel
