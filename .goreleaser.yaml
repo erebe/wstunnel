@@ -21,8 +21,8 @@ builds:
         goarch: arm
     main: goreleaser.go
     hooks:
-      pre:
-        - /bin/sh -c "if [ ! -e ./goreleaser.go ]; then echo -e 'package main\\\nfunc main() { }' > ./goreleaser.go ; fi"
+      #pre:
+      #  - /bin/sh -c "if [ ! -e ./goreleaser.go ]; then echo -e 'package main\\\nfunc main() { }' > ./goreleaser.go ; fi"
       post:
         - ./.goreleaser_hook.sh {{ .Arch }} {{ .Os }} {{ .ProjectName }}
 checksum:
