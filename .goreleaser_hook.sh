@@ -21,7 +21,7 @@ esac
 # Find artifacts and uncompress in the coresponding directory
 DIST_DIR=$(find dist -type d -name "*${go_os}_${go_arch}*")
 echo "DIST_DIR: $DIST_DIR"
-rm -rf ${DIST_DIR}/*
+rm -f ${DIST_DIR}/${project_name}*
 
-find artifacts -type f -wholename "*${rust_arch}*${rust_os}*" -exec cp {} ${DIST_DIR} \;
+find artifacts -type f -wholename "*${rust_arch}*${rust_os}*/${project_name}*" -exec cp {} ${DIST_DIR}/ \;
 
