@@ -11,6 +11,7 @@ use tokio::net::TcpStream;
 use tracing::{info, warn};
 use url::Host;
 
+#[allow(clippy::type_complexity)]
 pub struct Socks5Listener {
     stream: Pin<Box<dyn Stream<Item = anyhow::Result<(TcpStream, (Host, u16))>> + Send>>,
 }
