@@ -13,13 +13,14 @@ use futures_util::{pin_mut, stream, Stream, StreamExt, TryStreamExt};
 use hyper::http::HeaderValue;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-use std::io;
+use std::fmt::{Debug, Formatter};
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{fmt, io};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use tokio_rustls::rustls::server::DnsName;
@@ -70,6 +71,15 @@ struct Client {
     /// Disabled by default. The client will happily connect to any server with self signed certificate.
     #[arg(long, verbatim_doc_comment)]
     tls_verify_certificate: bool,
+
+    /// If set, will use this http proxy to connect to the server
+    #[arg(
+        short = 'p',
+        long,
+        value_name = "http://USER:PASS@HOST:PORT",
+        verbatim_doc_comment
+    )]
+    http_proxy: Option<Url>,
 
     /// Use a specific prefix that will show up in the http path during the upgrade request.
     /// Useful if you need to route requests server side but don't have vhosts
@@ -400,7 +410,7 @@ pub struct TlsServerConfig {
     pub tls_key: PrivateKey,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WsServerConfig {
     pub socket_so_mark: Option<i32>,
     pub bind: SocketAddr,
@@ -409,6 +419,20 @@ pub struct WsServerConfig {
     pub timeout_connect: Duration,
     pub websocket_mask_frame: bool,
     pub tls: Option<TlsServerConfig>,
+}
+
+impl Debug for WsServerConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WsServerConfig")
+            .field("socket_so_mark", &self.socket_so_mark)
+            .field("bind", &self.bind)
+            .field("restrict_to", &self.restrict_to)
+            .field("websocket_ping_frequency", &self.websocket_ping_frequency)
+            .field("timeout_connect", &self.timeout_connect)
+            .field("websocket_mask_frame", &self.websocket_mask_frame)
+            .field("tls", &self.tls.is_some())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -421,6 +445,7 @@ pub struct WsClientConfig {
     pub timeout_connect: Duration,
     pub websocket_ping_frequency: Duration,
     pub websocket_mask_frame: bool,
+    pub http_proxy: Option<Url>,
 }
 
 impl WsClientConfig {
@@ -490,7 +515,7 @@ async fn main() {
                 _ => panic!("invalid scheme in server url {}", args.remote_addr.scheme()),
             };
 
-            let server_config = Arc::new(WsClientConfig {
+            let client_config = Arc::new(WsClientConfig {
                 remote_addr: (
                     args.remote_addr.host().unwrap().to_owned(),
                     args.remote_addr.port_or_known_default().unwrap(),
@@ -504,11 +529,12 @@ async fn main() {
                     .websocket_ping_frequency_sec
                     .unwrap_or(Duration::from_secs(30)),
                 websocket_mask_frame: args.websocket_mask_frame,
+                http_proxy: args.http_proxy,
             });
 
             // Start tunnels
             for tunnel in args.local_to_remote.into_iter() {
-                let server_config = server_config.clone();
+                let server_config = client_config.clone();
 
                 match &tunnel.local_protocol {
                     LocalProtocol::Tcp => {
