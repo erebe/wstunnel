@@ -44,8 +44,8 @@ struct Wstunnel {
 
 #[derive(clap::Subcommand, Debug)]
 enum Commands {
-    Client(Client),
-    Server(Server),
+    Client(Box<Client>),
+    Server(Box<Server>),
 }
 #[derive(clap::Args, Debug)]
 struct Client {
