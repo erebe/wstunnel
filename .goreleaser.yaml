@@ -1,0 +1,35 @@
+builds:
+  - goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    binary: wstunnel
+    ignore:
+      - goos: windows
+        goarch: arm64
+      - goos: windows
+        goarch: arm
+      - goos: darwin
+        goarch: arm64
+      - goos: darwin
+        goarch: arm
+    main: goreleaser.go
+    hooks:
+      pre:
+        - /bin/sh -c "if [ ! -e ./goreleaser.go ]; then echo -e 'package main\\\nfunc main() { }' > ./goreleaser.go ; fi"
+      post:
+        - ./.goreleaser_hook.sh {{ .Arch }} {{ .Os }} {{ .ProjectName }}
+checksum:
+  name_template: "checksums.txt"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
