@@ -225,6 +225,7 @@ fn parse_local_bind(arg: &str) -> Result<(SocketAddr, &str), io::Error> {
     Ok((SocketAddr::new(bind, bind_port), remaining))
 }
 
+#[allow(clippy::type_complexity)]
 fn parse_tunnel_dest(
     remaining: &str,
 ) -> Result<(Host<String>, u16, BTreeMap<String, String>), io::Error> {
