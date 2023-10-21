@@ -26,7 +26,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::rustls::server::DnsName;
 use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
 
-use tracing::{debug, error, span, Instrument, Level};
+use tracing::{error, info, span, Instrument, Level};
 
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
@@ -645,7 +645,7 @@ async fn main() {
                 tls: tls_config,
             };
 
-            debug!("{:?}", server_config);
+            info!("{:?}", server_config);
             transport::run_server(Arc::new(server_config))
                 .await
                 .unwrap_or_else(|err| {
