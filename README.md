@@ -28,13 +28,14 @@ P.S: Please do not pay attention to Main.hs because as I hate to write command l
 
 ## Note
 
-v7.0.0 is a complete rewrite of wstunnel in Rust.
+v7.0.0 is a complete rewrite of wstunnel in Rust and is not compatible with previous version.
 Previous code in Haskell can be found on branch https://github.com/erebe/wstunnel/tree/haskell
 
 What to expect from previous version:
 * More throughput and less jitter due to Haskell GC. Most of you will not care, as it was performant enough already. But you can now saturate a gigabit ethernet card with a single connection
 * Command line is more homogeneous/has better UX. All tunnel can be specified multiple times
-* New bug, it is a rewrite (╯'□')╯︵ ┻━┻ ¯\\_(ツ)_/¯ 
+* Tunnel protocol tries to look like normal traffic, to avoid being flagged
+* New bug, it is a rewrite (╯'□')╯︵ ┻━┻ ¯\\_(ツ)_/¯
 * Mainly for me to ease the maintenance of the project. I don't do a lot of haskell nowadays and it was harder for me to keep maintening the project over time, as I get lost in touch of the Haskell ecosystem and new release.
 * Armv7 build (aka raspberry pi), as new version of GHC (Haskell compiler) dropped its support
 
