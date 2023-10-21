@@ -110,10 +110,30 @@ jobs:
     - name: Checkout Git repo
       uses: actions/checkout@v3
 
-    # Download all artifacts
-    - uses: actions/download-artifact@v3
+    # Download all artifacts in zip format
+    # https://github.com/actions/download-artifact/issues/143
+    - name: Download artifacts
+      uses: actions/github-script@v6
       with:
-        path: artifacts
+        script: |
+          let allArtifacts = await github.rest.actions.listWorkflowRunArtifacts({
+             owner: context.repo.owner,
+             repo: context.repo.repo,
+             run_id: context.payload.workflow_run.id,
+          });
+          for (const artifact of allArtifacts.data.artifacts)
+          {
+            let download = await github.rest.actions.downloadArtifact({
+               owner: context.repo.owner,
+               repo: context.repo.repo,
+               artifact_id: artifact.id,
+               archive_format: 'zip',
+            });
+            
+             let fs = require('fs');
+             fs.mkdirSync('artifacts');
+             fs.writeFileSync(`${process.env.GITHUB_WORKSPACE}/artifacts/${artifact.name}.zip`, Buffer.from(download.data));
+          }
 
     - name: list artifacts
       run: find artifacts/
@@ -123,4 +143,4 @@ jobs:
         repo_token: "${{ secrets.RELEASE_TOKEN }}"
         prerelease: true
         files: |
-          artifacts/wstunnel-*/wstunnel
+          artifacts/*
