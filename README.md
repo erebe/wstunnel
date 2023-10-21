@@ -28,7 +28,7 @@ P.S: Please do not pay attention to Main.hs because as I hate to write command l
 
 ## Note
 
-V7.0.0 is a complete rewrite of wstunnel in Rust.
+v7.0.0 is a complete rewrite of wstunnel in Rust.
 Previous code in Haskell can be found on branch https://github.com/erebe/wstunnel/tree/haskell
 
 What to expect from previous version:
