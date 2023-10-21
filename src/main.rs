@@ -203,16 +203,11 @@ fn parse_local_bind(arg: &str) -> Result<(SocketAddr, &str), io::Error> {
         (IpAddr::V6(ipv6_addr), remaining)
     } else {
         // Maybe ipv4 addr
-        let Some((ipv4_str, remaining)) = arg.split_once(':') else {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                format!("cannot parse IPv4 bind from {}", arg),
-            ));
-        };
+        let (ipv4_str, remaining) = arg.split_once(':').unwrap_or((arg, ""));
 
         match Ipv4Addr::from_str(ipv4_str) {
             Ok(ip4_addr) => (IpAddr::V4(ip4_addr), remaining),
-            // Must be the port, so we default to ipv6 bind
+            // Must be the port, so we default to ipv4 bind
             Err(_) => (IpAddr::V4(Ipv4Addr::from_str("127.0.0.1").unwrap()), arg),
         }
     };
