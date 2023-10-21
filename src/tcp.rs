@@ -110,10 +110,10 @@ pub async fn connect_with_http_proxy(
     so_mark: &Option<i32>,
     connect_timeout: Duration,
 ) -> Result<TcpStream, anyhow::Error> {
-    let proxy_host = proxy.host().context("Cannot parse proxy host")?;
+    let proxy_host = proxy.host().context("Cannot parse proxy host")?.to_owned();
     let proxy_port = proxy.port_or_known_default().unwrap_or(80);
 
-    let mut socket = connect(&host.to_owned(), proxy_port, so_mark, connect_timeout).await?;
+    let mut socket = connect(&proxy_host, proxy_port, so_mark, connect_timeout).await?;
     info!("Connected to http proxy {}:{}", proxy_host, proxy_port);
 
     let authorization =
