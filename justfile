@@ -11,7 +11,7 @@ make_release $VERSION:
    git commit -m 'Bump version v'$VERSION
    git tag v$VERSION -m 'version v'$VERSION
    git push
-   git push --tags
+   git push origin v$VERSION
    @just docker_release v$VERSION
 
 docker_release $TAG:
