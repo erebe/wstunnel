@@ -22,7 +22,7 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 * Static tunneling (TCP and UDP)
 * Dynamic tunneling (socks5 proxy)
 * Support for http proxy (when behind one)
-* Support for tls/https server (with embedded self signed certificate, see comment in the example section)
+* Support for tls/https server (with embedded self-signed certificate, see comment in the example section)
 * Support IPv6
 * **Standalone binary for linux x86_64** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
 * Standalone archive for windows
@@ -64,9 +64,16 @@ Options:
           'tcp://1212:google.com:443'      =>     listen locally on tcp on port 1212 and forward to google.com on port 443
           'udp://1212:1.1.1.1:53'          =>     listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
           'udp://1212:1.1.1.1:53?timeout_sec=10'  timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
-          'socks5://1212'                  =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
-          'socks5://1212?socket_so_mark=2' =>     each tunnel can have the socket_so_mark option, cf explanation on server command
+          'socks5://[::1]:1212'            =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
           'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
+      --socket-so-mark <INT>
+          (linux only) Mark network packet with SO_MARK sockoption with the specified value.
+          You need to use {root, sudo, capabilities} to run wstunnel when using this option
+     -c, --connection-min-idle <INT>
+          Client will maintain a pool of open connection to the server, in order to speed up the connection process.
+          This option set the maximum number of connection that will be kept open.
+          This is useful if you plan to create/destroy a lot of tunnel (i.e: with socks5 to navigate with a browser)
+          It will avoid the latency of doing tcp + tls handshake with the server [default: 0] 
       --tls-sni-override <DOMAIN_NAME>
           Domain name that will be use as SNI during TLS handshake
           Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
@@ -145,11 +152,12 @@ wstunnel server ws://[::]:8080
 This will create a websocket server listening on any interface on port 8080.
 On the client side use this command to forward traffic through the websocket tunnel
 ```bash
-wstunnel client -L socks5://8888 ws://myRemoteHost:8080
+wstunnel client -L socks5://127.0.0.1:8888 --connection-min-idle 10 ws://myRemoteHost:8080
 ```
 This command will create a socks5 server listening on port 8888 of a loopback interface and will forward traffic.
 
 With firefox you can setup a proxy using this tunnel, by setting in networking preferences 127.0.0.1:8888 and selecting socks5 proxy
+Be sure to check the option `Proxy DNS when using SOCKS v5` for the server to resolve DNS name and not your local machine.
 
 or with curl
 
@@ -160,7 +168,7 @@ curl -x socks5h://127.0.0.1:8888 http://google.com/
 
 ### As proxy command for SSH
 You can specify `stdio` as source port on the client side if you wish to use wstunnel as part of a proxy command for ssh
-```
+```bash
 ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server
 ```
 
@@ -169,7 +177,7 @@ An other useful example is when you want to bypass an http proxy (a corporate pr
 The most reliable way to do it is to use wstunnel as described below
 
 Start your wstunnel server with tls activated
-```
+```bash
 wstunnel server wss://[::]:443 --restrict-to 127.0.0.1:22
 ```
 The server will listen on any interface using port 443 (https) and restrict traffic to be forwarded only to the ssh daemon.
@@ -180,15 +188,31 @@ It was made in order to add the least possible overhead while still being compli
 **Do not rely on wstunnel to protect your privacy, as it only forwards traffic that is already secure by design (ex: https)**
 
 Now on the client side start the client with
-```
-wstunnel client -L tcp://9999:127.0.0.1:22 -p mycorporateproxy:8080 wss://myRemoteHost:443
+```bash
+wstunnel client -L tcp://9999:127.0.0.1:22 -p http://mycorporateproxy:8080 wss://myRemoteHost:443
 ```
 It will start a tcp server on port 9999 that will contact the corporate proxy, negotiate a tls connection with the remote host and forward traffic to the ssh daemon on the remote host.
 
 You may now access your server from your local machine on ssh by using
-```
+```bash
 ssh -p 9999 login@127.0.0.1
 ```
+
+### How to secure the access of your wstunnel server
+
+Generate a secret, let's say `h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd`
+
+Now start you server with the following command
+```bash
+wstunnel server --restrict-http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd  wss://[::]:443 
+```
+
+And start your client with
+```bash
+wstunnel client --http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd ... wss://myRemoteHost
+```
+
+Now your wstunnel server, will only accept connection if the client specify the correct path prefix during the upgrade request.
 
 ### Wireguard and wstunnel
 https://kirill888.github.io/notes/wireguard-via-websocket/

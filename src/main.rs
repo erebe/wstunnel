@@ -4,7 +4,7 @@ mod socks5;
 mod stdio;
 mod tcp;
 mod tls;
-mod transport;
+mod tunnel;
 mod udp;
 
 use base64::Engine;
@@ -54,11 +54,28 @@ struct Client {
     /// 'tcp://1212:google.com:443'      =>     listen locally on tcp on port 1212 and forward to google.com on port 443
     /// 'udp://1212:1.1.1.1:53'          =>     listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
     /// 'udp://1212:1.1.1.1:53?timeout_sec=10'  timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
-    /// 'socks5://1212'                  =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
-    /// 'socks5://1212?socket_so_mark=2' =>     each tunnel can have the socket_so_mark option, cf explanation on server command
+    /// 'socks5://[::1]:1212'            =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
     /// 'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
     #[arg(short='L', long, value_name = "{tcp,udp,socks5,stdio}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
     local_to_remote: Vec<LocalToRemote>,
+
+    /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
+    /// You need to use {root, sudo, capabilities} to run wstunnel when using this option
+    #[arg(long, value_name = "INT", verbatim_doc_comment)]
+    socket_so_mark: Option<i32>,
+
+    /// Client will maintain a pool of open connection to the server, in order to speed up the connection process.
+    /// This option set the maximum number of connection that will be kept open.
+    /// This is useful if you plan to create/destroy a lot of tunnel (i.e: with socks5 to navigate with a browser)
+    /// It will avoid the latency of doing tcp + tls handshake with the server
+    #[arg(
+        short = 'c',
+        long,
+        value_name = "INT",
+        default_value = "0",
+        verbatim_doc_comment
+    )]
+    connection_min_idle: u32,
 
     /// Domain name that will be use as SNI during TLS handshake
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
@@ -163,7 +180,6 @@ enum LocalProtocol {
 
 #[derive(Clone, Debug)]
 pub struct LocalToRemote {
-    socket_so_mark: Option<i32>,
     local_protocol: LocalProtocol,
     local: SocketAddr,
     remote: (Host<String>, u16),
@@ -262,11 +278,8 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
     match &arg[..6] {
         "tcp://" => {
             let (local_bind, remaining) = parse_local_bind(&arg[6..])?;
-            let (dest_host, dest_port, options) = parse_tunnel_dest(remaining)?;
+            let (dest_host, dest_port, _options) = parse_tunnel_dest(remaining)?;
             Ok(LocalToRemote {
-                socket_so_mark: options
-                    .get("socket_so_mark")
-                    .and_then(|x| x.parse::<i32>().ok()),
                 local_protocol: LocalProtocol::Tcp,
                 local: local_bind,
                 remote: (dest_host, dest_port),
@@ -288,9 +301,6 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
                 .unwrap_or(Some(Duration::from_secs(30)));
 
             Ok(LocalToRemote {
-                socket_so_mark: options
-                    .get("socket_so_mark")
-                    .and_then(|x| x.parse::<i32>().ok()),
                 local_protocol: LocalProtocol::Udp { timeout },
                 local: local_bind,
                 remote: (dest_host, dest_port),
@@ -300,22 +310,16 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
             "socks5:/" => {
                 let (local_bind, remaining) = parse_local_bind(&arg[9..])?;
                 let x = format!("0.0.0.0:0?{}", remaining);
-                let (dest_host, dest_port, options) = parse_tunnel_dest(&x)?;
+                let (dest_host, dest_port, _options) = parse_tunnel_dest(&x)?;
                 Ok(LocalToRemote {
-                    socket_so_mark: options
-                        .get("socket_so_mark")
-                        .and_then(|x| x.parse::<i32>().ok()),
                     local_protocol: LocalProtocol::Socks5,
                     local: local_bind,
                     remote: (dest_host, dest_port),
                 })
             }
             "stdio://" => {
-                let (dest_host, dest_port, options) = parse_tunnel_dest(&arg[8..])?;
+                let (dest_host, dest_port, _options) = parse_tunnel_dest(&arg[8..])?;
                 Ok(LocalToRemote {
-                    socket_so_mark: options
-                        .get("socket_so_mark")
-                        .and_then(|x| x.parse::<i32>().ok()),
                     local_protocol: LocalProtocol::Stdio,
                     local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(0), 0)),
                     remote: (dest_host, dest_port),
@@ -441,6 +445,7 @@ impl Debug for WsServerConfig {
 #[derive(Clone, Debug)]
 pub struct WsClientConfig {
     pub remote_addr: (Host<String>, u16),
+    pub socket_so_mark: Option<i32>,
     pub tls: Option<TlsClientConfig>,
     pub http_upgrade_path_prefix: String,
     pub http_upgrade_credentials: Option<HeaderValue>,
@@ -449,6 +454,7 @@ pub struct WsClientConfig {
     pub websocket_ping_frequency: Duration,
     pub websocket_mask_frame: bool,
     pub http_proxy: Option<Url>,
+    cnx_pool: Option<bb8::Pool<WsClientConfig>>,
 }
 
 impl WsClientConfig {
@@ -457,6 +463,10 @@ impl WsClientConfig {
             None => "ws",
             Some(_) => "wss",
         }
+    }
+
+    pub fn cnx_pool(&self) -> &bb8::Pool<WsClientConfig> {
+        self.cnx_pool.as_ref().unwrap()
     }
 
     pub fn websocket_host_url(&self) -> String {
@@ -518,11 +528,12 @@ async fn main() {
                 _ => panic!("invalid scheme in server url {}", args.remote_addr.scheme()),
             };
 
-            let client_config = Arc::new(WsClientConfig {
+            let mut client_config = WsClientConfig {
                 remote_addr: (
                     args.remote_addr.host().unwrap().to_owned(),
                     args.remote_addr.port_or_known_default().unwrap(),
                 ),
+                socket_so_mark: args.socket_so_mark,
                 tls,
                 http_upgrade_path_prefix: args.http_upgrade_path_prefix,
                 http_upgrade_credentials: args.http_upgrade_credentials,
@@ -533,11 +544,23 @@ async fn main() {
                     .unwrap_or(Duration::from_secs(30)),
                 websocket_mask_frame: args.websocket_mask_frame,
                 http_proxy: args.http_proxy,
-            });
+                cnx_pool: None,
+            };
+
+            let pool = bb8::Pool::builder()
+                .max_size(1000)
+                .min_idle(Some(args.connection_min_idle))
+                .max_lifetime(Some(Duration::from_secs(30)))
+                .retry_connection(true)
+                .build(client_config.clone())
+                .await
+                .unwrap();
+            client_config.cnx_pool = Some(pool);
+            let client_config = Arc::new(client_config);
 
             // Start tunnels
             for tunnel in args.local_to_remote.into_iter() {
-                let server_config = client_config.clone();
+                let client_config = client_config.clone();
 
                 match &tunnel.local_protocol {
                     LocalProtocol::Tcp => {
@@ -551,7 +574,7 @@ async fn main() {
                             .map_ok(move |stream| (stream.into_split(), remote.clone()));
 
                         tokio::spawn(async move {
-                            if let Err(err) = run_tunnel(server_config, tunnel, server).await {
+                            if let Err(err) = run_tunnel(client_config, tunnel, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -567,7 +590,7 @@ async fn main() {
                             .map_ok(move |stream| (tokio::io::split(stream), remote.clone()));
 
                         tokio::spawn(async move {
-                            if let Err(err) = run_tunnel(server_config, tunnel, server).await {
+                            if let Err(err) = run_tunnel(client_config, tunnel, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -581,7 +604,7 @@ async fn main() {
                             .map_ok(|(stream, remote_dest)| (stream.into_split(), remote_dest));
 
                         tokio::spawn(async move {
-                            if let Err(err) = run_tunnel(server_config, tunnel, server).await {
+                            if let Err(err) = run_tunnel(client_config, tunnel, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -594,7 +617,7 @@ async fn main() {
                             });
                             tokio::spawn(async move {
                                 if let Err(err) = run_tunnel(
-                                    server_config,
+                                    client_config,
                                     tunnel.clone(),
                                     stream::once(async move { Ok((server, tunnel.remote)) }),
                                 )
@@ -646,7 +669,7 @@ async fn main() {
             };
 
             info!("{:?}", server_config);
-            transport::run_server(Arc::new(server_config))
+            tunnel::server::run_server(Arc::new(server_config))
                 .await
                 .unwrap_or_else(|err| {
                     panic!("Cannot start wstunnel server: {:?}", err);
@@ -658,7 +681,7 @@ async fn main() {
 }
 
 async fn run_tunnel<T, R, W>(
-    server_config: Arc<WsClientConfig>,
+    client_config: Arc<WsClientConfig>,
     tunnel: LocalToRemote,
     incoming_cnx: T,
 ) -> anyhow::Result<()>
@@ -676,15 +699,19 @@ where
             id = request_id.to_string(),
             remote = format!("{}:{}", remote_dest.0, remote_dest.1)
         );
-        let server_config = server_config.clone();
+        let server_config = client_config.clone();
         let mut tunnel = tunnel.clone();
         tunnel.remote = remote_dest;
 
         tokio::spawn(
             async move {
-                let ret =
-                    transport::connect_to_server(request_id, &server_config, &tunnel, cnx_stream)
-                        .await;
+                let ret = tunnel::client::connect_to_server(
+                    request_id,
+                    &server_config,
+                    &tunnel,
+                    cnx_stream,
+                )
+                .await;
 
                 if let Err(ret) = ret {
                     error!("{:?}", ret);

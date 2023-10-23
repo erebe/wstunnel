@@ -100,14 +100,14 @@ pub fn tls_acceptor(
 }
 
 pub async fn connect(
-    server_cfg: &WsClientConfig,
+    client_cfg: &WsClientConfig,
     tls_cfg: &TlsClientConfig,
     tcp_stream: TcpStream,
 ) -> anyhow::Result<TlsStream<TcpStream>> {
-    let sni = server_cfg.tls_server_name();
+    let sni = client_cfg.tls_server_name();
     info!(
         "Doing TLS handshake using sni {sni:?} with the server {}:{}",
-        server_cfg.remote_addr.0, server_cfg.remote_addr.1
+        client_cfg.remote_addr.0, client_cfg.remote_addr.1
     );
 
     let tls_connector = tls_connector(tls_cfg, Some(vec![b"http/1.1".to_vec()]))?;
@@ -117,7 +117,7 @@ pub async fn connect(
         .with_context(|| {
             format!(
                 "failed to do TLS handshake with the server {:?}",
-                server_cfg.remote_addr
+                client_cfg.remote_addr
             )
         })?;
 
