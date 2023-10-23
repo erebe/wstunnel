@@ -1,6 +1,6 @@
 before:
   hooks:
-    - /bin/sh -c 'echo -e "package main\\nfunc main() { }" > goreleaser.go'
+    - /bin/sh -c 'printf \'package main\nfunc main() { }\' > goreleaser.go'
 builds:
   - goos:
       - linux
