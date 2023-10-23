@@ -1,6 +1,3 @@
-before:
-  hooks:
-    - /bin/sh -c 'printf \'package main\nfunc main() { }\' > goreleaser.go'
 builds:
   - goos:
       - linux
