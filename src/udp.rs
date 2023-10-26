@@ -67,12 +67,6 @@ pub struct UdpStream {
     keys_to_delete: Weak<RwLock<Vec<SocketAddr>>>,
 }
 
-impl AsMut<DuplexStream> for UdpStream {
-    fn as_mut(&mut self) -> &mut DuplexStream {
-        &mut self.io
-    }
-}
-
 #[pinned_drop]
 impl PinnedDrop for UdpStream {
     fn drop(self: Pin<&mut Self>) {
