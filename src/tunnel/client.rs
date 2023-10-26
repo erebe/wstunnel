@@ -58,24 +58,18 @@ pub async fn connect(
             &client_cfg.http_upgrade_path_prefix,
             jsonwebtoken::encode(alg, &data, secret).unwrap_or_default(),
         ))
+        .header(HOST, &client_cfg.host_http_header)
         .header(UPGRADE, "websocket")
         .header(CONNECTION, "upgrade")
         .header(SEC_WEBSOCKET_KEY, fastwebsockets::handshake::generate_key())
         .header(SEC_WEBSOCKET_VERSION, "13")
         .version(hyper::Version::HTTP_11);
 
-    let mut contains_host = false;
     for (k, v) in &client_cfg.http_headers {
-        if k == HOST.as_str() {
-            contains_host = true;
-        }
-        req = req.header(k.clone(), v.clone());
-    }
-    if !contains_host {
-        req = req.header(HOST, client_cfg.remote_addr.0.to_string());
+        req = req.header(k, v);
     }
     if let Some(auth) = &client_cfg.http_upgrade_credentials {
-        req = req.header(AUTHORIZATION, auth.clone());
+        req = req.header(AUTHORIZATION, auth);
     }
 
     let req = req.body(Body::empty()).with_context(|| {
