@@ -16,7 +16,7 @@ use tokio::net::UdpSocket;
 use tokio::time::Sleep;
 use tracing::{debug, error, info};
 
-const DEFAULT_UDP_BUFFER_SIZE: usize = 8 * 1024;
+const DEFAULT_UDP_BUFFER_SIZE: usize = 64 * 1024; // 64kb
 
 struct UdpServer {
     listener: Arc<UdpSocket>,
@@ -154,7 +154,7 @@ pub async fn run_server(
 
             match server.peers.entry(peer_addr) {
                 Entry::Occupied(mut peer) => {
-                    let ret = peer.get_mut().write_all(&server.buffer[0..nb_bytes]).await;
+                    let ret = peer.get_mut().write_all(&server.buffer[..nb_bytes]).await;
                     if let Err(err) = ret {
                         info!("Peer {:?} disconnected {:?}", peer_addr, err);
                         peer.remove();
@@ -162,7 +162,7 @@ pub async fn run_server(
                 }
                 Entry::Vacant(peer) => {
                     let (mut rx, tx) = tokio::io::duplex(DEFAULT_UDP_BUFFER_SIZE);
-                    rx.write_all(&server.buffer[0..nb_bytes])
+                    rx.write_all(&server.buffer[..nb_bytes])
                         .await
                         .unwrap_or_default(); // should never fail
                     peer.insert(rx);
