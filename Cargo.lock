@@ -1544,6 +1544,7 @@ dependencies = [
  "async-trait",
  "base64",
  "bb8",
+ "bytes",
  "clap",
  "fast-socks5",
  "fastwebsockets",

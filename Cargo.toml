@@ -22,6 +22,7 @@ scopeguard = "1.2.0"
 uuid = { version = "1.5.0", features = ["v7", "serde"] }
 jsonwebtoken = { version = "9.0.0",  default-features = false }
 rustls-pemfile = { version = "1.0.3", features = [] }
+bytes = { version = "1.5.0", features = [] }
 
 rustls-native-certs = { version = "0.6.3", features = [] }
 tokio = { version = "1.33.0", features = ["full"] }
