@@ -1,13 +1,13 @@
 [package]
 name = "wstunnel"
-version = "7.5.0"
+version = "7.6.0"
 edition = "2021"
 repository = "https://github.com/erebe/wstunnel.git"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.4.6", features = ["derive"]}
+clap = { version = "4.4.7", features = ["derive"]}
 url = "2.4.1"
 anyhow = "1.0.75"
 
@@ -16,11 +16,11 @@ hyper = { version = "0.14.27", features = ["client", "runtime"] }
 fastwebsockets = { git = "https://github.com/mmastrac/fastwebsockets", branch = "split", features = ["upgrade", "simd"]}
 libc = { version = "0.2.149", features = []}
 once_cell = { version = "1.18.0", features = [] }
-ahash = { version = "0.8.3",  features = []}
+ahash = { version = "0.8.6",  features = []}
 pin-project = "1"
 scopeguard = "1.2.0"
 uuid = { version = "1.5.0", features = ["v7", "serde"] }
-jsonwebtoken = { version = "9.0.0",  default-features = false }
+jsonwebtoken = { version = "9.1.0",  default-features = false }
 rustls-pemfile = { version = "1.0.3", features = [] }
 bytes = { version = "1.5.0", features = [] }
 
@@ -29,12 +29,12 @@ tokio = { version = "1.33.0", features = ["full"] }
 tokio-rustls = { version = "0.24.1", features = ["tls12", "dangerous_configuration", "early-data"] }
 tokio-stream = { version = "0.1.14", features = ["net"] }
 fast-socks5 = { version = "0.9.1", features = [] }
-futures-util = { version = "0.3.28" }
+futures-util = { version = "0.3.29" }
 
 tracing = { version = "0.1.40", features = ["log"] }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt", "local-time"] }
-base64 = "0.21.4"
-serde = { version = "1.0.189", features = ["derive"] }
+base64 = "0.21.5"
+serde = { version = "1.0.190", features = ["derive"] }
 log = "0.4.20"
 
 bb8 = { version = "0.8", features = [] }
