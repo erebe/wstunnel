@@ -14,7 +14,7 @@ use tokio_rustls::rustls::{Certificate, ClientConfig, PrivateKey, ServerName};
 use tokio_rustls::{rustls, TlsAcceptor, TlsConnector};
 use tracing::info;
 
-pub struct NullVerifier;
+struct NullVerifier;
 impl ServerCertVerifier for NullVerifier {
     fn verify_server_cert(
         &self,
@@ -51,7 +51,7 @@ pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKey> {
     }
 }
 
-pub fn tls_connector(
+fn tls_connector(
     tls_cfg: &TlsClientConfig,
     alpn_protocols: Option<Vec<Vec<u8>>>,
 ) -> anyhow::Result<TlsConnector> {

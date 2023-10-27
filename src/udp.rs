@@ -246,3 +246,110 @@ impl AsyncWrite for MyUdpSocket {
         Poll::Ready(Ok(()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::{pin_mut, StreamExt};
+    use tokio::io::AsyncReadExt;
+    use tokio::time::error::Elapsed;
+    use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn test_udp_server() {
+        let server_addr: SocketAddr = "[::1]:1234".parse().unwrap();
+        let server = run_server(server_addr, None).await.unwrap();
+        pin_mut!(server);
+
+        // Should timeout
+        let fut = timeout(Duration::from_millis(100), server.next()).await;
+        assert!(matches!(fut, Err(Elapsed { .. })));
+
+        // Send some data to the server
+        let client = UdpSocket::bind("[::1]:0").await.unwrap();
+        assert!(client.send_to(b"hello".as_ref(), server_addr).await.is_ok());
+
+        // Should have a new connection
+        let fut = timeout(Duration::from_millis(100), server.next()).await;
+        assert!(matches!(fut, Ok(Some(Ok(_)))));
+
+        // Should timeout again, no new client
+        let fut2 = timeout(Duration::from_millis(100), server.next()).await;
+        assert!(matches!(fut2, Err(Elapsed { .. })));
+
+        // Take the stream of data
+        let stream = fut.unwrap().unwrap().unwrap();
+        pin_mut!(stream);
+
+        let mut buf = [0u8; 25];
+        let ret = stream.read(&mut buf).await;
+        assert!(matches!(ret, Ok(5)));
+        assert_eq!(&buf[..6], b"hello\0");
+
+        assert!(client.send_to(b"world".as_ref(), server_addr).await.is_ok());
+        assert!(client.send_to(b" test".as_ref(), server_addr).await.is_ok());
+
+        // Server need to be polled to feed the stream with need data
+        let _ = timeout(Duration::from_millis(100), server.next()).await;
+        let ret = timeout(Duration::from_millis(100), stream.read(&mut buf[5..])).await;
+        assert!(matches!(ret, Ok(Ok(10))));
+        assert_eq!(&buf[..16], b"helloworld test\0");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_client() {
+        let server_addr: SocketAddr = "[::1]:1235".parse().unwrap();
+        let server = run_server(server_addr, None).await.unwrap();
+        pin_mut!(server);
+
+        // Send some data to the server
+        let client = UdpSocket::bind("[::1]:0").await.unwrap();
+        assert!(client.send_to(b"aaaaa".as_ref(), server_addr).await.is_ok());
+
+        let client2 = UdpSocket::bind("[::1]:0").await.unwrap();
+        assert!(client2
+            .send_to(b"bbbbb".as_ref(), server_addr)
+            .await
+            .is_ok());
+
+        // Should have a new connection
+        let fut = timeout(Duration::from_millis(100), server.next()).await;
+        assert!(matches!(fut, Ok(Some(Ok(_)))));
+
+        let fut2 = timeout(Duration::from_millis(100), server.next()).await;
+        assert!(matches!(fut, Ok(Some(Ok(_)))));
+
+        // Take the stream of data
+        let stream = fut.unwrap().unwrap().unwrap();
+        pin_mut!(stream);
+
+        let stream2 = fut2.unwrap().unwrap().unwrap();
+        pin_mut!(stream2);
+
+        let mut buf = [0u8; 25];
+        let ret = stream.read(&mut buf).await;
+        assert!(matches!(ret, Ok(5)));
+        assert_eq!(&buf[..6], b"aaaaa\0");
+
+        let ret = stream2.read(&mut buf).await;
+        assert!(matches!(ret, Ok(5)));
+        assert_eq!(&buf[..6], b"bbbbb\0");
+
+        assert!(client.send_to(b"ccccc".as_ref(), server_addr).await.is_ok());
+        assert!(client2
+            .send_to(b"ddddd".as_ref(), server_addr)
+            .await
+            .is_ok());
+
+        // Server need to be polled to feed the stream with need data
+        let _ = timeout(Duration::from_millis(100), server.next()).await;
+
+        let ret = stream.read(&mut buf).await;
+        assert!(matches!(ret, Ok(5)));
+        assert_eq!(&buf[..6], b"ccccc\0");
+
+        let ret = stream2.read(&mut buf).await;
+        assert!(matches!(ret, Ok(5)));
+        assert_eq!(&buf[..6], b"ddddd\0");
+    }
+}
