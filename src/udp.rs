@@ -37,7 +37,6 @@ impl UdpServer {
             cnx_timeout: timeout,
         }
     }
-
     fn clean_dead_keys(&mut self) {
         let nb_key_to_delete = self.keys_to_delete.read().unwrap().len();
         if nb_key_to_delete == 0 {
@@ -51,7 +50,6 @@ impl UdpServer {
         }
         keys_to_delete.clear();
     }
-
     fn clone_socket(&self) -> Arc<UdpSocket> {
         self.listener.clone()
     }
@@ -80,7 +78,7 @@ impl AsyncRead for UdpStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-        buf: &mut ReadBuf<'_>,
+        obuf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let project = self.project();
         if let Some(deadline) = project.deadline.as_pin_mut() {
@@ -93,11 +91,11 @@ impl AsyncRead for UdpStream {
         }
 
         let mut guard = project.io.lock().unwrap();
-        let (inner, waker) = guard.deref_mut();
-        if inner.has_remaining() {
-            let max = inner.remaining().min(buf.remaining());
-            buf.put_slice(&inner[..max]);
-            inner.advance(max);
+        let (ibuf, waker) = guard.deref_mut();
+        if ibuf.has_remaining() {
+            let max = ibuf.remaining().min(obuf.remaining());
+            obuf.put_slice(&ibuf[..max]);
+            ibuf.advance(max);
             Poll::Ready(Ok(()))
         } else {
             waker.replace(cx.waker().clone());

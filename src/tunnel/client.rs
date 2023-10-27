@@ -58,7 +58,7 @@ pub async fn connect(
             &client_cfg.http_upgrade_path_prefix,
             jsonwebtoken::encode(alg, &data, secret).unwrap_or_default(),
         ))
-        .header(HOST, &client_cfg.host_http_header)
+        .header(HOST, &client_cfg.http_header_host)
         .header(UPGRADE, "websocket")
         .header(CONNECTION, "upgrade")
         .header(SEC_WEBSOCKET_KEY, fastwebsockets::handshake::generate_key())

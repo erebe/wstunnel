@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context};
 use std::{io, vec};
 
 use base64::Engine;
+use bytes::BytesMut;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -127,23 +128,17 @@ pub async fn connect_with_http_proxy(
 
     let connect_request =
         format!("CONNECT {host}:{port} HTTP/1.0\r\nHost: {host}:{port}\r\n{authorization}\r\n");
-    socket
-        .write_all(connect_request.trim_start().as_bytes())
-        .await?;
+    socket.write_all(connect_request.as_bytes()).await?;
 
-    let mut buf = [0u8; 8096];
-    let mut needle = 0;
+    let mut buf = BytesMut::with_capacity(1024);
     loop {
-        let nb_bytes = tokio::time::timeout(connect_timeout, socket.read(&mut buf[needle..])).await;
-        let nb_bytes = match nb_bytes {
-            Ok(Ok(nb_bytes)) => {
-                if nb_bytes == 0 {
-                    return Err(anyhow!(
-            "Cannot connect to http proxy. Proxy closed the connection without returning any response" ));
-                } else {
-                    nb_bytes
-                }
+        let nb_bytes = tokio::time::timeout(connect_timeout, socket.read_buf(&mut buf)).await;
+        match nb_bytes {
+            Ok(Ok(0)) => {
+                return Err(anyhow!(
+            "Cannot connect to http proxy. Proxy closed the connection without returning any response"));
             }
+            Ok(Ok(_)) => {}
             Ok(Err(err)) => {
                 return Err(anyhow!("Cannot connect to http proxy. {err}"));
             }
@@ -154,20 +149,24 @@ pub async fn connect_with_http_proxy(
             }
         };
 
-        needle += nb_bytes;
-        if buf[..needle].windows(4).any(|window| window == b"\r\n\r\n") {
+        static END_HTTP_RESPONSE: &[u8; 4] = b"\r\n\r\n"; // It is reversed from \r\n\r\n as we reverse scan the buffer
+        if buf.len() > 50 * 1024
+            || buf
+                .windows(END_HTTP_RESPONSE.len())
+                .any(|window| window == END_HTTP_RESPONSE)
+        {
             break;
         }
     }
 
-    let ok_response = b"HTTP/1.0 200";
+    static OK_RESPONSE: &[u8; 12] = b"HTTP/1.0 200";
     if !buf
-        .windows(ok_response.len())
-        .any(|window| window == ok_response)
+        .windows(OK_RESPONSE.len())
+        .any(|window| window == OK_RESPONSE)
     {
         return Err(anyhow!(
             "Cannot connect to http proxy. Proxy returned an invalid response: {}",
-            String::from_utf8_lossy(&buf[..needle])
+            String::from_utf8_lossy(&buf)
         ));
     }
 

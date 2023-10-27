@@ -1,6 +1,9 @@
+
 use fastwebsockets::{Frame, OpCode, Payload, WebSocketError, WebSocketRead, WebSocketWrite};
 use futures_util::pin_mut;
 use hyper::upgrade::Upgraded;
+
+
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::select;
@@ -22,21 +25,21 @@ pub(super) async fn propagate_read(
     let mut buffer = vec![0u8; 8 * 1024];
     pin_mut!(local_rx);
     loop {
-        let read = select! {
+        let read_len = select! {
             biased;
 
-            read_len = local_rx.read(buffer.as_mut_slice()) => read_len,
+            read_len = local_rx.read(&mut buffer) => read_len,
 
             _ = close_tx.closed() => break,
 
             _ = timeout(ping_frequency, futures_util::future::pending::<()>()) => {
                 debug!("sending ping to keep websocket connection alive");
-                ws_tx.write_frame(Frame::new(true, OpCode::Ping, None, Payload::Borrowed(&[]))).await?;
+                ws_tx.write_frame(Frame::new(true, OpCode::Ping, None, Payload::BorrowedMut(&mut []))).await?;
                 continue;
             }
         };
 
-        let read_len = match read {
+        let read_len = match read_len {
             Ok(read_len) if read_len > 0 => read_len,
             Ok(_) => break,
             Err(err) => {
@@ -50,7 +53,7 @@ pub(super) async fn propagate_read(
 
         trace!("read {} bytes", read_len);
         match ws_tx
-            .write_frame(Frame::binary(Payload::Borrowed(&buffer[..read_len])))
+            .write_frame(Frame::binary(Payload::BorrowedMut(&mut buffer[..read_len])))
             .await
         {
             Ok(_) => {}
@@ -60,8 +63,10 @@ pub(super) async fn propagate_read(
             }
         }
 
-        if read_len == buffer.len() {
-            buffer.resize(read_len * 2, 0);
+        if buffer.capacity() == read_len {
+            buffer.clear();
+            info!("capa: {} read:{}", buffer.capacity(), read_len);
+            buffer.resize(buffer.capacity() * 2, 0);
         }
     }
 
@@ -85,14 +90,14 @@ pub(super) async fn propagate_write(
 
     pin_mut!(local_tx);
     loop {
-        let ret = select! {
+        let msg = select! {
             biased;
-            ret = ws_rx.read_frame(&mut x) => ret,
+            msg = ws_rx.read_frame(&mut x) => msg,
 
             _ = &mut close_rx => break,
         };
 
-        let msg = match ret {
+        let msg = match msg {
             Ok(msg) => msg,
             Err(err) => {
                 error!("error while reading from websocket rx {}", err);

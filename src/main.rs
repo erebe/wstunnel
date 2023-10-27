@@ -451,7 +451,7 @@ pub struct WsClientConfig {
     pub http_upgrade_path_prefix: String,
     pub http_upgrade_credentials: Option<HeaderValue>,
     pub http_headers: HashMap<HeaderName, HeaderValue>,
-    pub host_http_header: HeaderValue,
+    pub http_header_host: HeaderValue,
     pub timeout_connect: Duration,
     pub websocket_ping_frequency: Duration,
     pub websocket_mask_frame: bool,
@@ -551,7 +551,7 @@ async fn main() {
                     .into_iter()
                     .filter(|(k, _)| k != HOST)
                     .collect(),
-                host_http_header: host_header,
+                http_header_host: host_header,
                 timeout_connect: Duration::from_secs(10),
                 websocket_ping_frequency: args
                     .websocket_ping_frequency_sec
