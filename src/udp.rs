@@ -352,4 +352,39 @@ mod tests {
         assert!(matches!(ret, Ok(5)));
         assert_eq!(&buf[..6], b"ddddd\0");
     }
+
+    #[tokio::test]
+    async fn test_udp_should_timeout() {
+        let server_addr: SocketAddr = "[::1]:1237".parse().unwrap();
+        let socket_timeout = Duration::from_secs(1);
+        let server = run_server(server_addr, Some(socket_timeout)).await.unwrap();
+        pin_mut!(server);
+
+        // Send some data to the server
+        let client = UdpSocket::bind("[::1]:0").await.unwrap();
+        assert!(client.send_to(b"hello".as_ref(), server_addr).await.is_ok());
+
+        // Should have a new connection
+        let fut = timeout(Duration::from_millis(100), server.next()).await;
+        assert!(matches!(fut, Ok(Some(Ok(_)))));
+
+        // Take the stream of data
+        let stream = fut.unwrap().unwrap().unwrap();
+        pin_mut!(stream);
+
+        let mut buf = [0u8; 25];
+        let ret = stream.read(&mut buf).await;
+        assert!(matches!(ret, Ok(5)));
+        assert_eq!(&buf[..6], b"hello\0");
+
+        // Server need to be polled to feed the stream with need data
+        let _ = timeout(Duration::from_millis(100), server.next()).await;
+        let ret = timeout(Duration::from_millis(100), stream.read(&mut buf[5..])).await;
+        assert!(ret.is_err());
+
+        // Stream should be closed after the timeout
+        tokio::time::sleep(socket_timeout).await;
+        let ret = stream.read(&mut buf[5..]).await;
+        assert!(ret.is_err());
+    }
 }
