@@ -159,10 +159,11 @@ pub async fn connect_with_http_proxy(
         }
     }
 
-    static OK_RESPONSE: &[u8; 12] = b"HTTP/1.0 200";
+    static OK_RESPONSE_10: &[u8] = b"HTTP/1.0 200 ";
+    static OK_RESPONSE_11: &[u8] = b"HTTP/1.1 200 ";
     if !buf
-        .windows(OK_RESPONSE.len())
-        .any(|window| window == OK_RESPONSE)
+        .windows(OK_RESPONSE_10.len())
+        .any(|window| window == OK_RESPONSE_10 || window == OK_RESPONSE_11)
     {
         return Err(anyhow!(
             "Cannot connect to http proxy. Proxy returned an invalid response: {}",
@@ -181,4 +182,80 @@ pub async fn run_server(bind: SocketAddr) -> Result<TcpListenerStream, anyhow::E
         .await
         .with_context(|| format!("Cannot create TCP server {:?}", bind))?;
     Ok(TcpListenerStream::new(listener))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::pin_mut;
+    use std::net::SocketAddr;
+    use testcontainers::core::WaitFor;
+    use testcontainers::{Image, ImageArgs, RunnableImage};
+
+    #[derive(Debug, Clone, Default)]
+    pub struct MitmProxy {}
+
+    impl ImageArgs for MitmProxy {
+        fn into_iterator(self) -> Box<dyn Iterator<Item = String>> {
+            Box::new(vec!["mitmdump".to_string()].into_iter())
+        }
+    }
+
+    impl Image for MitmProxy {
+        type Args = Self;
+
+        fn name(&self) -> String {
+            "mitmproxy/mitmproxy".to_string()
+        }
+
+        fn tag(&self) -> String {
+            "10.1.1".to_string()
+        }
+
+        fn ready_conditions(&self) -> Vec<WaitFor> {
+            vec![WaitFor::Duration {
+                length: Duration::from_secs(5),
+            }]
+        }
+    }
+
+    #[tokio::test]
+    async fn test_proxy_connection() {
+        let server_addr: SocketAddr = "[::1]:1236".parse().unwrap();
+        let server = TcpListener::bind(server_addr).await.unwrap();
+
+        let docker = testcontainers::clients::Cli::default();
+        let mitm_proxy: RunnableImage<MitmProxy> =
+            RunnableImage::from(MitmProxy {}).with_network("host".to_string());
+        let _node = docker.run(mitm_proxy);
+
+        let mut client = connect_with_http_proxy(
+            &"http://localhost:8080".parse().unwrap(),
+            &Host::Domain("[::1]".to_string()),
+            1236,
+            &None,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        client
+            .write_all(b"GET / HTTP/1.1\r\n\r\n".as_slice())
+            .await
+            .unwrap();
+        let client_srv = server.accept().await.unwrap().0;
+        pin_mut!(client_srv);
+
+        let mut buf = [0u8; 25];
+        let ret = client_srv.read(&mut buf).await;
+        assert!(matches!(ret, Ok(18)));
+        client_srv
+            .write_all("HTTP/1.1 200 OK\r\n\r\n".as_bytes())
+            .await
+            .unwrap();
+
+        client_srv.get_mut().shutdown().await.unwrap();
+        let _ = client.read(&mut buf).await.unwrap();
+        assert!(buf.starts_with(b"HTTP/1.1 200 OK\r\n\r\n"));
+    }
 }

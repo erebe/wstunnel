@@ -44,6 +44,10 @@ async-trait = "0.1.74"
 tokio-fd = "0.3.0"
 
 
+[dev-dependencies]
+testcontainers = "0.15.0"
+
+
 [profile.release]
 lto = "fat"
 panic = "abort"

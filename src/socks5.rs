@@ -122,21 +122,21 @@ pub fn new_reply(error: &ReplyError, sock_addr: SocketAddr) -> Vec<u8> {
     reply
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use futures_util::StreamExt;
-    use std::str::FromStr;
-
-    #[tokio::test]
-    async fn socks5_server() {
-        let mut x = run_server(SocketAddr::from_str("[::]:4343").unwrap())
-            .await
-            .unwrap();
-
-        loop {
-            let cnx = x.next().await.unwrap().unwrap();
-            eprintln!("{:?}", cnx);
-        }
-    }
-}
+//#[cfg(test)]
+//mod test {
+//    use super::*;
+//    use futures_util::StreamExt;
+//    use std::str::FromStr;
+//
+//    #[tokio::test]
+//    async fn socks5_server() {
+//        let mut x = run_server(SocketAddr::from_str("[::]:4343").unwrap())
+//            .await
+//            .unwrap();
+//
+//        loop {
+//            let cnx = x.next().await.unwrap().unwrap();
+//            eprintln!("{:?}", cnx);
+//        }
+//    }
+//}

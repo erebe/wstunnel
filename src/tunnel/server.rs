@@ -252,7 +252,7 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
 
             let fut = async move {
                 if let Err(e) = conn_fut.await {
-                    error!("Error while upgrading cnx to weboscket: {:?}", e);
+                    error!("Error while upgrading cnx to websocket: {:?}", e);
                 }
             }
             .instrument(span);
