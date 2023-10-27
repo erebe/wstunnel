@@ -96,7 +96,7 @@ pub async fn run_server(bind: SocketAddr) -> Result<Socks5Listener, anyhow::Erro
     Ok(listener)
 }
 
-pub fn new_reply(error: &ReplyError, sock_addr: SocketAddr) -> Vec<u8> {
+fn new_reply(error: &ReplyError, sock_addr: SocketAddr) -> Vec<u8> {
     let (addr_type, mut ip_oct, mut port) = match sock_addr {
         SocketAddr::V4(sock) => (
             consts::SOCKS5_ADDR_TYPE_IPV4,
