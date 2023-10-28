@@ -1625,6 +1625,7 @@ dependencies = [
  "libc",
  "log",
  "once_cell",
+ "parking_lot",
  "pin-project",
  "rustls-native-certs",
  "rustls-pemfile",
