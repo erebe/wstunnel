@@ -40,8 +40,8 @@ jobs:
           - name: MacOS x86_64
             target: x86_64-apple-darwin
 
-          - name: MacOS aarch64
-            target: aarch64-apple-darwin
+          #- name: MacOS aarch64
+          #  target: aarch64-apple-darwin
 
           # - name: iOS x86_64
           #   target: x86_64-apple-ios
