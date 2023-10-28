@@ -342,7 +342,7 @@ fn parse_sni_override(arg: &str) -> Result<DnsName, io::Error> {
     }
 }
 
-fn parse_http_headers(arg: &str) -> Result<(String, HeaderValue), io::Error> {
+fn parse_http_headers(arg: &str) -> Result<(HeaderName, HeaderValue), io::Error> {
     let Some((key, value)) = arg.split_once(':') else {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
@@ -363,7 +363,7 @@ fn parse_http_headers(arg: &str) -> Result<(String, HeaderValue), io::Error> {
         }
     };
 
-    Ok((key.to_owned(), value))
+    Ok((HeaderName::from_str(key).unwrap(), value))
 }
 
 fn parse_http_credentials(arg: &str) -> Result<HeaderValue, io::Error> {
