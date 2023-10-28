@@ -38,8 +38,8 @@ pub(super) async fn propagate_read(
         };
 
         let read_len = match read_len {
-            Ok(read_len) if read_len > 0 => read_len,
-            Ok(_) => break,
+            Ok(0) => break,
+            Ok(read_len) => read_len,
             Err(err) => {
                 warn!(
                     "error while reading incoming bytes from local tx tunnel {}",

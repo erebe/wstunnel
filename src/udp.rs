@@ -150,8 +150,8 @@ pub async fn run_server(
 
     let udp_server = UdpServer::new(Arc::new(listener), timeout);
     let stream = stream::unfold(udp_server, |mut server| async {
+        server.clean_dead_keys();
         loop {
-            server.clean_dead_keys();
             let peer_addr = match server.listener.peek_sender().await {
                 Ok(ret) => ret,
                 Err(err) => {
@@ -183,7 +183,7 @@ pub async fn run_server(
                 }
                 Entry::Vacant(peer) => {
                     let mut buf = BytesMut::with_capacity(DEFAULT_UDP_BUFFER_SIZE);
-                    let len = match server.listener.recv_buf(&mut buf).await {
+                    let len = match server.listener.try_recv_buf(&mut buf) {
                         Ok(0) | Err(_) => {
                             continue;
                         }
