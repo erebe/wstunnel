@@ -14,7 +14,7 @@ use jsonwebtoken::TokenData;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::oneshot;
-use tracing::{error, info, instrument, span, warn, Instrument, Level, Span};
+use tracing::{error, info, span, warn, Instrument, Level, Span};
 use url::Host;
 
 async fn from_query(
