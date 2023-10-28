@@ -63,7 +63,6 @@ pub(super) async fn propagate_read(
 
         if buffer.capacity() == read_len {
             buffer.clear();
-            info!("capa: {} read:{}", buffer.capacity(), read_len);
             buffer.resize(buffer.capacity() * 2, 0);
         }
     }

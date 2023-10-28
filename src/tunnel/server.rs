@@ -187,7 +187,6 @@ async fn server_upgrade(
     Ok(response)
 }
 
-#[instrument(name="tunnel", level="info", skip_all, fields(id=tracing::field::Empty, remote=tracing::field::Empty, peer=tracing::field::Empty, forwarded_for=tracing::field::Empty))]
 pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()> {
     info!(
         "Starting wstunnel server listening on {}",
