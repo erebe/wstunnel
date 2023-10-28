@@ -9,7 +9,7 @@ mod udp;
 
 use base64::Engine;
 use clap::Parser;
-use futures_util::{pin_mut, stream, Stream, StreamExt, TryStreamExt};
+use futures_util::{stream, TryStreamExt};
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -22,16 +22,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, io};
-use tokio::io::{AsyncRead, AsyncWrite};
 
 use tokio_rustls::rustls::server::DnsName;
 use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
 
-use tracing::{error, info, span, Instrument, Level};
+use tracing::{error, info, Level};
 
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
-use uuid::Uuid;
 
 /// Use the websockets protocol to tunnel {TCP,UDP} traffic
 /// wsTunnelClient <---> wsTunnelServer <---> RemoteHost
@@ -588,7 +586,9 @@ async fn main() {
                             .map_ok(move |stream| (stream.into_split(), remote.clone()));
 
                         tokio::spawn(async move {
-                            if let Err(err) = run_tunnel(client_config, tunnel, server).await {
+                            if let Err(err) =
+                                tunnel::client::run_tunnel(client_config, tunnel, server).await
+                            {
                                 error!("{:?}", err);
                             }
                         });
@@ -604,7 +604,9 @@ async fn main() {
                             .map_ok(move |stream| (tokio::io::split(stream), remote.clone()));
 
                         tokio::spawn(async move {
-                            if let Err(err) = run_tunnel(client_config, tunnel, server).await {
+                            if let Err(err) =
+                                tunnel::client::run_tunnel(client_config, tunnel, server).await
+                            {
                                 error!("{:?}", err);
                             }
                         });
@@ -618,7 +620,9 @@ async fn main() {
                             .map_ok(|(stream, remote_dest)| (stream.into_split(), remote_dest));
 
                         tokio::spawn(async move {
-                            if let Err(err) = run_tunnel(client_config, tunnel, server).await {
+                            if let Err(err) =
+                                tunnel::client::run_tunnel(client_config, tunnel, server).await
+                            {
                                 error!("{:?}", err);
                             }
                         });
@@ -630,7 +634,7 @@ async fn main() {
                                 panic!("Cannot start STDIO server: {}", err);
                             });
                             tokio::spawn(async move {
-                                if let Err(err) = run_tunnel(
+                                if let Err(err) = tunnel::client::run_tunnel(
                                     client_config,
                                     tunnel.clone(),
                                     stream::once(async move { Ok((server, tunnel.remote)) }),
@@ -692,50 +696,4 @@ async fn main() {
     }
 
     tokio::signal::ctrl_c().await.unwrap();
-}
-
-async fn run_tunnel<T, R, W>(
-    client_config: Arc<WsClientConfig>,
-    tunnel: LocalToRemote,
-    incoming_cnx: T,
-) -> anyhow::Result<()>
-where
-    T: Stream<Item = anyhow::Result<((R, W), (Host, u16))>>,
-    R: AsyncRead + Send + 'static,
-    W: AsyncWrite + Send + 'static,
-{
-    pin_mut!(incoming_cnx);
-    while let Some(Ok((cnx_stream, remote_dest))) = incoming_cnx.next().await {
-        let request_id = Uuid::now_v7();
-        let span = span!(
-            Level::INFO,
-            "tunnel",
-            id = request_id.to_string(),
-            remote = format!("{}:{}", remote_dest.0, remote_dest.1)
-        );
-        let server_config = client_config.clone();
-        let mut tunnel = tunnel.clone();
-        tunnel.remote = remote_dest;
-
-        tokio::spawn(
-            async move {
-                let ret = tunnel::client::connect_to_server(
-                    request_id,
-                    &server_config,
-                    &tunnel,
-                    cnx_stream,
-                )
-                .await;
-
-                if let Err(ret) = ret {
-                    error!("{:?}", ret);
-                }
-
-                anyhow::Ok(())
-            }
-            .instrument(span.clone()),
-        );
-    }
-
-    Ok(())
 }

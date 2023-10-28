@@ -1,18 +1,22 @@
-use super::{JwtTunnelConfig, MaybeTlsStream, JWT_KEY};
-use crate::{LocalProtocol, LocalToRemote, WsClientConfig};
+use super::{JwtTunnelConfig, JWT_KEY};
+use crate::{LocalToRemote, WsClientConfig};
 use anyhow::{anyhow, Context};
 
 use fastwebsockets::WebSocket;
+use futures_util::pin_mut;
 use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::upgrade::Upgraded;
 use hyper::{Body, Request};
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
+use tokio_stream::{Stream, StreamExt};
 use tracing::log::debug;
-use tracing::{Instrument, Span};
+use tracing::{error, span, Instrument, Level, Span};
+use url::Host;
 use uuid::Uuid;
 
 struct SpawnExecutor;
@@ -27,36 +31,30 @@ where
     }
 }
 
+fn tunnel_to_jwt_token(request_id: Uuid, tunnel: &LocalToRemote) -> String {
+    let cfg = JwtTunnelConfig::new(request_id, tunnel);
+    let (alg, secret) = JWT_KEY.deref();
+    jsonwebtoken::encode(alg, &cfg, secret).unwrap_or_default()
+}
+
 pub async fn connect(
     request_id: Uuid,
     client_cfg: &WsClientConfig,
     tunnel_cfg: &LocalToRemote,
 ) -> anyhow::Result<WebSocket<Upgraded>> {
-    let mut tcp_stream = match client_cfg.cnx_pool().get().await {
+    let mut pooled_cnx = match client_cfg.cnx_pool().get().await {
         Ok(tcp_stream) => tcp_stream,
         Err(err) => Err(anyhow!(
             "failed to get a connection to the server from the pool: {err:?}"
         ))?,
     };
 
-    let data = JwtTunnelConfig {
-        id: request_id.to_string(),
-        p: match tunnel_cfg.local_protocol {
-            LocalProtocol::Tcp => LocalProtocol::Tcp,
-            LocalProtocol::Udp { .. } => tunnel_cfg.local_protocol,
-            LocalProtocol::Stdio => LocalProtocol::Tcp,
-            LocalProtocol::Socks5 => LocalProtocol::Tcp,
-        },
-        r: tunnel_cfg.remote.0.to_string(),
-        rp: tunnel_cfg.remote.1,
-    };
-    let (alg, secret) = JWT_KEY.deref();
     let mut req = Request::builder()
         .method("GET")
         .uri(format!(
             "/{}/events?bearer={}",
             &client_cfg.http_upgrade_path_prefix,
-            jsonwebtoken::encode(alg, &data, secret).unwrap_or_default(),
+            tunnel_to_jwt_token(request_id, tunnel_cfg)
         ))
         .header(HOST, &client_cfg.http_header_host)
         .header(UPGRADE, "websocket")
@@ -79,26 +77,20 @@ pub async fn connect(
         )
     })?;
     debug!("with HTTP upgrade request {:?}", req);
-    let ws_handshake = match tcp_stream.deref_mut() {
-        MaybeTlsStream::Plain(cnx) => {
-            fastwebsockets::handshake::client(&SpawnExecutor, req, cnx.take().unwrap()).await
-        }
-        MaybeTlsStream::Tls(cnx) => {
-            fastwebsockets::handshake::client(&SpawnExecutor, req, cnx.take().unwrap()).await
-        }
-    };
-
-    let (ws, _) = ws_handshake.with_context(|| {
-        format!(
-            "failed to do websocket handshake with the server {:?}",
-            client_cfg.remote_addr
-        )
-    })?;
+    let transport = pooled_cnx.deref_mut().take().unwrap();
+    let (ws, _) = fastwebsockets::handshake::client(&SpawnExecutor, req, transport)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to do websocket handshake with the server {:?}",
+                client_cfg.remote_addr
+            )
+        })?;
 
     Ok(ws)
 }
 
-pub async fn connect_to_server<R, W>(
+async fn connect_to_server<R, W>(
     request_id: Uuid,
     client_cfg: &WsClientConfig,
     remote_cfg: &LocalToRemote,
@@ -124,6 +116,42 @@ where
 
     // Forward websocket rx to local rx
     let _ = super::io::propagate_write(local_tx, ws_rx, close_rx).await;
+
+    Ok(())
+}
+
+pub async fn run_tunnel<T, R, W>(
+    client_config: Arc<WsClientConfig>,
+    tunnel_cfg: LocalToRemote,
+    incoming_cnx: T,
+) -> anyhow::Result<()>
+where
+    T: Stream<Item = anyhow::Result<((R, W), (Host, u16))>>,
+    R: AsyncRead + Send + 'static,
+    W: AsyncWrite + Send + 'static,
+{
+    pin_mut!(incoming_cnx);
+    while let Some(Ok((cnx_stream, remote_dest))) = incoming_cnx.next().await {
+        let request_id = Uuid::now_v7();
+        let span = span!(
+            Level::INFO,
+            "tunnel",
+            id = request_id.to_string(),
+            remote = format!("{}:{}", remote_dest.0, remote_dest.1)
+        );
+        let mut tunnel_cfg = tunnel_cfg.clone();
+        tunnel_cfg.remote = remote_dest;
+        let client_config = client_config.clone();
+
+        let tunnel = async move {
+            let _ = connect_to_server(request_id, &client_config, &tunnel_cfg, cnx_stream)
+                .await
+                .map_err(|err| error!("{:?}", err));
+        }
+        .instrument(span);
+
+        tokio::spawn(tunnel);
+    }
 
     Ok(())
 }

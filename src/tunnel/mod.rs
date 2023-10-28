@@ -2,15 +2,20 @@ pub mod client;
 mod io;
 pub mod server;
 
-use crate::{tcp, tls, LocalProtocol, WsClientConfig};
+use crate::{tcp, tls, LocalProtocol, LocalToRemote, WsClientConfig};
 use async_trait::async_trait;
 use bb8::ManageConnection;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::io::{Error, IoSlice};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct JwtTunnelConfig {
@@ -18,6 +23,22 @@ struct JwtTunnelConfig {
     pub p: LocalProtocol,
     pub r: String,
     pub rp: u16,
+}
+
+impl JwtTunnelConfig {
+    fn new(request_id: Uuid, tunnel: &LocalToRemote) -> Self {
+        Self {
+            id: request_id.to_string(),
+            p: match tunnel.local_protocol {
+                LocalProtocol::Tcp => LocalProtocol::Tcp,
+                LocalProtocol::Udp { .. } => tunnel.local_protocol,
+                LocalProtocol::Stdio => LocalProtocol::Tcp,
+                LocalProtocol::Socks5 => LocalProtocol::Tcp,
+            },
+            r: tunnel.remote.0.to_string(),
+            rp: tunnel.remote.1,
+        }
+    }
 }
 
 static JWT_SECRET: &[u8; 15] = b"champignonfrais";
@@ -34,23 +55,72 @@ static JWT_DECODE: Lazy<(Validation, DecodingKey)> = Lazy::new(|| {
     (validation, DecodingKey::from_secret(JWT_SECRET))
 });
 
-pub enum MaybeTlsStream {
-    Plain(Option<TcpStream>),
-    Tls(Option<TlsStream<TcpStream>>),
+pub enum TransportStream {
+    Plain(TcpStream),
+    Tls(TlsStream<TcpStream>),
 }
 
-impl MaybeTlsStream {
-    pub fn is_used(&self) -> bool {
-        match self {
-            MaybeTlsStream::Plain(Some(_)) | MaybeTlsStream::Tls(Some(_)) => false,
-            MaybeTlsStream::Plain(None) | MaybeTlsStream::Tls(None) => true,
+impl AsyncRead for TransportStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            TransportStream::Plain(cnx) => Pin::new(cnx).poll_read(cx, buf),
+            TransportStream::Tls(cnx) => Pin::new(cnx).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for TransportStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, Error>> {
+        match self.get_mut() {
+            TransportStream::Plain(cnx) => Pin::new(cnx).poll_write(cx, buf),
+            TransportStream::Tls(cnx) => Pin::new(cnx).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        match self.get_mut() {
+            TransportStream::Plain(cnx) => Pin::new(cnx).poll_flush(cx),
+            TransportStream::Tls(cnx) => Pin::new(cnx).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        match self.get_mut() {
+            TransportStream::Plain(cnx) => Pin::new(cnx).poll_shutdown(cx),
+            TransportStream::Tls(cnx) => Pin::new(cnx).poll_shutdown(cx),
+        }
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<Result<usize, Error>> {
+        match self.get_mut() {
+            TransportStream::Plain(cnx) => Pin::new(cnx).poll_write_vectored(cx, bufs),
+            TransportStream::Tls(cnx) => Pin::new(cnx).poll_write_vectored(cx, bufs),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        match &self {
+            TransportStream::Plain(cnx) => cnx.is_write_vectored(),
+            TransportStream::Tls(cnx) => cnx.is_write_vectored(),
         }
     }
 }
 
 #[async_trait]
 impl ManageConnection for WsClientConfig {
-    type Connection = MaybeTlsStream;
+    type Connection = Option<TransportStream>;
     type Error = anyhow::Error;
 
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
@@ -65,10 +135,10 @@ impl ManageConnection for WsClientConfig {
         };
 
         match &self.tls {
-            None => Ok(MaybeTlsStream::Plain(Some(tcp_stream))),
+            None => Ok(Some(TransportStream::Plain(tcp_stream))),
             Some(tls_cfg) => {
                 let tls_stream = tls::connect(self, tls_cfg, tcp_stream).await?;
-                Ok(MaybeTlsStream::Tls(Some(tls_stream)))
+                Ok(Some(TransportStream::Tls(tls_stream)))
             }
         }
     }
@@ -78,6 +148,6 @@ impl ManageConnection for WsClientConfig {
     }
 
     fn has_broken(&self, conn: &mut Self::Connection) -> bool {
-        conn.is_used()
+        conn.is_none()
     }
 }
