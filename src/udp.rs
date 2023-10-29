@@ -1,6 +1,7 @@
 use anyhow::Context;
 use bytes::{Buf, BytesMut};
 use futures_util::{stream, Stream};
+
 use parking_lot::{Mutex, RwLock};
 use pin_project::{pin_project, pinned_drop};
 use std::collections::hash_map::Entry;
@@ -19,7 +20,8 @@ use tokio::net::UdpSocket;
 use tokio::time::Sleep;
 use tracing::{debug, error, info};
 
-const DEFAULT_UDP_BUFFER_SIZE: usize = 32 * 1024; // 32kb
+const MAX_UDP_PAYLOAD: usize = 65536;
+const DEFAULT_UDP_BUFFER_SIZE: usize = 64 * 1024; // 64kb
 
 type IoInner = Arc<Mutex<(BytesMut, Option<Waker>, VecDeque<usize>)>>;
 struct UdpServer {
@@ -166,6 +168,9 @@ pub async fn run_server(
                     let (buf, waker, read_lens) = guard.deref_mut();
                     // As we have done a peek_sender before, we are sure that there is pending read data
                     // and we don't want to wait to avoid holding the lock across await point
+                    if buf.capacity() < MAX_UDP_PAYLOAD {
+                        buf.reserve(MAX_UDP_PAYLOAD * 2);
+                    }
                     match server.listener.try_recv_buf(buf) {
                         Ok(0) => {} // don't wake if nothing was read
                         Ok(len) => {
