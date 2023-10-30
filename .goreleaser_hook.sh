@@ -20,7 +20,13 @@ case $go_os in
 esac
 
 # Find artifacts and uncompress in the coresponding directory
-DIST_DIR=$(find dist -type d -name "*${go_os}_${go_arch}*${go_arm}*")
+if [ -z "$go_arm" ]
+then 
+  DIST_DIR=$(find dist -type d -name "*${go_os}_${go_arch}*")
+else
+  DIST_DIR=$(find dist -type d -name "*${go_os}_${go_arch}_${go_arm}*")
+fi
+
 echo "DIST_DIR: $DIST_DIR"
 rm -f ${DIST_DIR}/${project_name}*
 
