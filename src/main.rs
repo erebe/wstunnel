@@ -67,13 +67,7 @@ struct Client {
     /// This option set the maximum number of connection that will be kept open.
     /// This is useful if you plan to create/destroy a lot of tunnel (i.e: with socks5 to navigate with a browser)
     /// It will avoid the latency of doing tcp + tls handshake with the server
-    #[arg(
-        short = 'c',
-        long,
-        value_name = "INT",
-        default_value = "0",
-        verbatim_doc_comment
-    )]
+    #[arg(short = 'c', long, value_name = "INT", default_value = "0", verbatim_doc_comment)]
     connection_min_idle: u32,
 
     /// Domain name that will be use as SNI during TLS handshake
@@ -88,12 +82,7 @@ struct Client {
     tls_verify_certificate: bool,
 
     /// If set, will use this http proxy to connect to the server
-    #[arg(
-        short = 'p',
-        long,
-        value_name = "http://USER:PASS@HOST:PORT",
-        verbatim_doc_comment
-    )]
+    #[arg(short = 'p', long, value_name = "http://USER:PASS@HOST:PORT", verbatim_doc_comment)]
     http_proxy: Option<Url>,
 
     /// Use a specific prefix that will show up in the http path during the upgrade request.
@@ -241,9 +230,7 @@ fn parse_local_bind(arg: &str) -> Result<(SocketAddr, &str), io::Error> {
 }
 
 #[allow(clippy::type_complexity)]
-fn parse_tunnel_dest(
-    remaining: &str,
-) -> Result<(Host<String>, u16, BTreeMap<String, String>), io::Error> {
+fn parse_tunnel_dest(remaining: &str) -> Result<(Host<String>, u16, BTreeMap<String, String>), io::Error> {
     use std::io::Error;
 
     let Ok(remote) = Url::parse(&format!("fake://{}", remaining)) else {
@@ -290,13 +277,7 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
             let timeout = options
                 .get("timeout_sec")
                 .and_then(|x| x.parse::<u64>().ok())
-                .map(|d| {
-                    if d == 0 {
-                        None
-                    } else {
-                        Some(Duration::from_secs(d))
-                    }
-                })
+                .map(|d| if d == 0 { None } else { Some(Duration::from_secs(d)) })
                 .unwrap_or(Some(Duration::from_secs(30)));
 
             Ok(LocalToRemote {
@@ -355,10 +336,7 @@ fn parse_http_headers(arg: &str) -> Result<(HeaderName, HeaderValue), io::Error>
         Err(err) => {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!(
-                    "cannot parse http header value from {} due to {:?}",
-                    value, err
-                ),
+                format!("cannot parse http header value from {} due to {:?}", value, err),
             ))
         }
     };
@@ -394,10 +372,7 @@ fn parse_server_url(arg: &str) -> Result<Url, io::Error> {
     }
 
     if url.host().is_none() {
-        return Err(io::Error::new(
-            ErrorKind::InvalidInput,
-            format!("invalid server host {}", arg),
-        ));
+        return Err(io::Error::new(ErrorKind::InvalidInput, format!("invalid server host {}", arg)));
     }
 
     Ok(url)
@@ -474,15 +449,9 @@ impl WsClientConfig {
     }
 
     pub fn tls_server_name(&self) -> ServerName {
-        match self
-            .tls
-            .as_ref()
-            .and_then(|tls| tls.tls_sni_override.as_ref())
-        {
+        match self.tls.as_ref().and_then(|tls| tls.tls_sni_override.as_ref()) {
             None => match &self.remote_addr.0 {
-                Host::Domain(domain) => {
-                    ServerName::DnsName(DnsName::try_from(domain.clone()).unwrap())
-                }
+                Host::Domain(domain) => ServerName::DnsName(DnsName::try_from(domain.clone()).unwrap()),
                 Host::Ipv4(ip) => ServerName::IpAddress(IpAddr::V4(*ip)),
                 Host::Ipv6(ip) => ServerName::IpAddress(IpAddr::V6(*ip)),
             },
@@ -529,12 +498,11 @@ async fn main() {
             };
 
             // Extract host header from http_headers
-            let host_header =
-                if let Some((_, host_val)) = args.http_headers.iter().find(|(h, _)| *h == HOST) {
-                    host_val.clone()
-                } else {
-                    HeaderValue::from_str(&args.remote_addr.host().unwrap().to_string()).unwrap()
-                };
+            let host_header = if let Some((_, host_val)) = args.http_headers.iter().find(|(h, _)| *h == HOST) {
+                host_val.clone()
+            } else {
+                HeaderValue::from_str(&args.remote_addr.host().unwrap().to_string()).unwrap()
+            };
             let mut client_config = WsClientConfig {
                 remote_addr: (
                     args.remote_addr.host().unwrap().to_owned(),
@@ -544,16 +512,10 @@ async fn main() {
                 tls,
                 http_upgrade_path_prefix: args.http_upgrade_path_prefix,
                 http_upgrade_credentials: args.http_upgrade_credentials,
-                http_headers: args
-                    .http_headers
-                    .into_iter()
-                    .filter(|(k, _)| k != HOST)
-                    .collect(),
+                http_headers: args.http_headers.into_iter().filter(|(k, _)| k != HOST).collect(),
                 http_header_host: host_header,
                 timeout_connect: Duration::from_secs(10),
-                websocket_ping_frequency: args
-                    .websocket_ping_frequency_sec
-                    .unwrap_or(Duration::from_secs(30)),
+                websocket_ping_frequency: args.websocket_ping_frequency_sec.unwrap_or(Duration::from_secs(30)),
                 websocket_mask_frame: args.websocket_mask_frame,
                 http_proxy: args.http_proxy,
                 cnx_pool: None,
@@ -579,16 +541,12 @@ async fn main() {
                         let remote = tunnel.remote.clone();
                         let server = tcp::run_server(tunnel.local)
                             .await
-                            .unwrap_or_else(|err| {
-                                panic!("Cannot start TCP server on {}: {}", tunnel.local, err)
-                            })
+                            .unwrap_or_else(|err| panic!("Cannot start TCP server on {}: {}", tunnel.local, err))
                             .map_err(anyhow::Error::new)
                             .map_ok(move |stream| (stream.into_split(), remote.clone()));
 
                         tokio::spawn(async move {
-                            if let Err(err) =
-                                tunnel::client::run_tunnel(client_config, tunnel, server).await
-                            {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -597,16 +555,12 @@ async fn main() {
                         let remote = tunnel.remote.clone();
                         let server = udp::run_server(tunnel.local, *timeout)
                             .await
-                            .unwrap_or_else(|err| {
-                                panic!("Cannot start UDP server on {}: {}", tunnel.local, err)
-                            })
+                            .unwrap_or_else(|err| panic!("Cannot start UDP server on {}: {}", tunnel.local, err))
                             .map_err(anyhow::Error::new)
                             .map_ok(move |stream| (tokio::io::split(stream), remote.clone()));
 
                         tokio::spawn(async move {
-                            if let Err(err) =
-                                tunnel::client::run_tunnel(client_config, tunnel, server).await
-                            {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -614,15 +568,11 @@ async fn main() {
                     LocalProtocol::Socks5 => {
                         let server = socks5::run_server(tunnel.local)
                             .await
-                            .unwrap_or_else(|err| {
-                                panic!("Cannot start Socks5 server on {}: {}", tunnel.local, err)
-                            })
+                            .unwrap_or_else(|err| panic!("Cannot start Socks5 server on {}: {}", tunnel.local, err))
                             .map_ok(|(stream, remote_dest)| (stream.into_split(), remote_dest));
 
                         tokio::spawn(async move {
-                            if let Err(err) =
-                                tunnel::client::run_tunnel(client_config, tunnel, server).await
-                            {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -656,8 +606,7 @@ async fn main() {
         Commands::Server(args) => {
             let tls_config = if args.remote_addr.scheme() == "wss" {
                 let tls_certificate = if let Some(cert_path) = args.tls_certificate {
-                    tls::load_certificates_from_pem(&cert_path)
-                        .expect("Cannot load tls certificate")
+                    tls::load_certificates_from_pem(&cert_path).expect("Cannot load tls certificate")
                 } else {
                     embedded_certificate::TLS_CERTIFICATE.clone()
                 };

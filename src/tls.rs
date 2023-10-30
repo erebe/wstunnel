@@ -45,21 +45,15 @@ pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKey> {
     match keys.len() {
         0 => Err(anyhow!("No PKCS8-encoded private key found in {path:?}")),
         1 => Ok(PrivateKey(keys.remove(0))),
-        _ => Err(anyhow!(
-            "More than one PKCS8-encoded private key found in {path:?}"
-        )),
+        _ => Err(anyhow!("More than one PKCS8-encoded private key found in {path:?}")),
     }
 }
 
-fn tls_connector(
-    tls_cfg: &TlsClientConfig,
-    alpn_protocols: Option<Vec<Vec<u8>>>,
-) -> anyhow::Result<TlsConnector> {
+fn tls_connector(tls_cfg: &TlsClientConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsConnector> {
     let mut root_store = rustls::RootCertStore::empty();
 
     // Load system certificates and add them to the root store
-    let certs = rustls_native_certs::load_native_certs()
-        .with_context(|| "Cannot load system certificates")?;
+    let certs = rustls_native_certs::load_native_certs().with_context(|| "Cannot load system certificates")?;
     for cert in certs {
         root_store.add(&Certificate(cert.0))?;
     }
@@ -71,9 +65,7 @@ fn tls_connector(
 
     // To bypass certificate verification
     if !tls_cfg.tls_verify_certificate {
-        config
-            .dangerous()
-            .set_certificate_verifier(Arc::new(NullVerifier));
+        config.dangerous().set_certificate_verifier(Arc::new(NullVerifier));
     }
 
     if let Some(alpn_protocols) = alpn_protocols {
@@ -83,10 +75,7 @@ fn tls_connector(
     Ok(tls_connector)
 }
 
-pub fn tls_acceptor(
-    tls_cfg: &TlsServerConfig,
-    alpn_protocols: Option<Vec<Vec<u8>>>,
-) -> anyhow::Result<TlsAcceptor> {
+pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsAcceptor> {
     let mut config = rustls::ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
@@ -114,12 +103,7 @@ pub async fn connect(
     let tls_stream = tls_connector
         .connect(sni, tcp_stream)
         .await
-        .with_context(|| {
-            format!(
-                "failed to do TLS handshake with the server {:?}",
-                client_cfg.remote_addr
-            )
-        })?;
+        .with_context(|| format!("failed to do TLS handshake with the server {:?}", client_cfg.remote_addr))?;
 
     Ok(tls_stream)
 }

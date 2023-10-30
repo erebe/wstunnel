@@ -42,12 +42,8 @@ impl JwtTunnelConfig {
 }
 
 static JWT_SECRET: &[u8; 15] = b"champignonfrais";
-static JWT_KEY: Lazy<(Header, EncodingKey)> = Lazy::new(|| {
-    (
-        Header::new(Algorithm::HS256),
-        EncodingKey::from_secret(JWT_SECRET),
-    )
-});
+static JWT_KEY: Lazy<(Header, EncodingKey)> =
+    Lazy::new(|| (Header::new(Algorithm::HS256), EncodingKey::from_secret(JWT_SECRET)));
 
 static JWT_DECODE: Lazy<(Validation, DecodingKey)> = Lazy::new(|| {
     let mut validation = Validation::new(Algorithm::HS256);
@@ -61,11 +57,7 @@ pub enum TransportStream {
 }
 
 impl AsyncRead for TransportStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
         match self.get_mut() {
             TransportStream::Plain(cnx) => Pin::new(cnx).poll_read(cx, buf),
             TransportStream::Tls(cnx) => Pin::new(cnx).poll_read(cx, buf),
@@ -74,11 +66,7 @@ impl AsyncRead for TransportStream {
 }
 
 impl AsyncWrite for TransportStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, Error>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         match self.get_mut() {
             TransportStream::Plain(cnx) => Pin::new(cnx).poll_write(cx, buf),
             TransportStream::Tls(cnx) => Pin::new(cnx).poll_write(cx, buf),

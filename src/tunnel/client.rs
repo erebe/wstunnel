@@ -44,9 +44,7 @@ pub async fn connect(
 ) -> anyhow::Result<WebSocket<Upgraded>> {
     let mut pooled_cnx = match client_cfg.cnx_pool().get().await {
         Ok(tcp_stream) => tcp_stream,
-        Err(err) => Err(anyhow!(
-            "failed to get a connection to the server from the pool: {err:?}"
-        ))?,
+        Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}"))?,
     };
 
     let mut req = Request::builder()
@@ -80,12 +78,7 @@ pub async fn connect(
     let transport = pooled_cnx.deref_mut().take().unwrap();
     let (ws, _) = fastwebsockets::handshake::client(&SpawnExecutor, req, transport)
         .await
-        .with_context(|| {
-            format!(
-                "failed to do websocket handshake with the server {:?}",
-                client_cfg.remote_addr
-            )
-        })?;
+        .with_context(|| format!("failed to do websocket handshake with the server {:?}", client_cfg.remote_addr))?;
 
     Ok(ws)
 }
@@ -109,10 +102,7 @@ where
 
     // Forward local tx to websocket tx
     let ping_frequency = client_cfg.websocket_ping_frequency;
-    tokio::spawn(
-        super::io::propagate_read(local_rx, ws_tx, close_tx, ping_frequency)
-            .instrument(Span::current()),
-    );
+    tokio::spawn(super::io::propagate_read(local_rx, ws_tx, close_tx, ping_frequency).instrument(Span::current()));
 
     // Forward websocket rx to local rx
     let _ = super::io::propagate_write(local_tx, ws_rx, close_rx).await;

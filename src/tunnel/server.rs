@@ -46,15 +46,8 @@ async fn from_query(
     Span::current().record("remote", format!("{}:{}", jwt.claims.r, jwt.claims.rp));
     if let Some(allowed_dests) = &server_config.restrict_to {
         let requested_dest = format!("{}:{}", jwt.claims.r, jwt.claims.rp);
-        if allowed_dests
-            .iter()
-            .any(|dest| dest == &requested_dest)
-            .not()
-        {
-            warn!(
-                "Rejecting connection with not allowed destination: {}",
-                requested_dest
-            );
+        if allowed_dests.iter().any(|dest| dest == &requested_dest).not() {
+            warn!("Rejecting connection with not allowed destination: {}", requested_dest);
             return Err(anyhow::anyhow!("Invalid upgrade request"));
         }
     }
@@ -75,14 +68,9 @@ async fn from_query(
         LocalProtocol::Tcp { .. } => {
             let host = Host::parse(&jwt.claims.r)?;
             let port = jwt.claims.rp;
-            let (rx, tx) = tcp::connect(
-                &host,
-                port,
-                &server_config.socket_so_mark,
-                Duration::from_secs(10),
-            )
-            .await?
-            .into_split();
+            let (rx, tx) = tcp::connect(&host, port, &server_config.socket_so_mark, Duration::from_secs(10))
+                .await?
+                .into_split();
 
             Ok((jwt.claims.p, host, port, Box::pin(rx), Box::pin(tx)))
         }
@@ -100,10 +88,7 @@ async fn server_upgrade(
     }
 
     if !req.uri().path().ends_with("/events") {
-        warn!(
-            "Rejecting connection with bad upgrade request: {}",
-            req.uri()
-        );
+        warn!("Rejecting connection with bad upgrade request: {}", req.uri());
         return Ok(http::Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body(Body::from("Invalid upgrade request"))
@@ -118,10 +103,7 @@ async fn server_upgrade(
             || &path[min_len..max_len] != path_prefix.as_str()
             || !path[max_len..].starts_with('/')
         {
-            warn!(
-                "Rejecting connection with bad path prefix in upgrade request: {}",
-                req.uri()
-            );
+            warn!("Rejecting connection with bad path prefix in upgrade request: {}", req.uri());
             return Ok(http::Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::from("Invalid upgrade request"))
@@ -133,11 +115,7 @@ async fn server_upgrade(
         match from_query(&server_config, req.uri().query().unwrap_or_default()).await {
             Ok(ret) => ret,
             Err(err) => {
-                warn!(
-                    "Rejecting connection with bad upgrade request: {} {}",
-                    err,
-                    req.uri()
-                );
+                warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
                 return Ok(http::Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .body(Body::from(format!("Invalid upgrade request: {:?}", err)))
@@ -149,11 +127,7 @@ async fn server_upgrade(
     let (response, fut) = match fastwebsockets::upgrade::upgrade(&mut req) {
         Ok(ret) => ret,
         Err(err) => {
-            warn!(
-                "Rejecting connection with bad upgrade request: {} {}",
-                err,
-                req.uri()
-            );
+            warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
             return Ok(http::Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::from(format!("Invalid upgrade request: {:?}", err)))
@@ -171,14 +145,10 @@ async fn server_upgrade(
                 }
             };
             let (close_tx, close_rx) = oneshot::channel::<()>();
-            let ping_frequency = server_config
-                .websocket_ping_frequency
-                .unwrap_or(Duration::MAX);
+            let ping_frequency = server_config.websocket_ping_frequency.unwrap_or(Duration::MAX);
             ws_tx.set_auto_apply_mask(server_config.websocket_mask_frame);
 
-            tokio::task::spawn(
-                super::io::propagate_write(local_tx, ws_rx, close_rx).instrument(Span::current()),
-            );
+            tokio::task::spawn(super::io::propagate_write(local_tx, ws_rx, close_rx).instrument(Span::current()));
 
             let _ = super::io::propagate_read(local_rx, ws_tx, close_tx, ping_frequency).await;
         }
@@ -189,10 +159,7 @@ async fn server_upgrade(
 }
 
 pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()> {
-    info!(
-        "Starting wstunnel server listening on {}",
-        server_config.bind
-    );
+    info!("Starting wstunnel server listening on {}", server_config.bind);
 
     let config = server_config.clone();
     let upgrade_fn = move |req: Request<Body>| server_upgrade(config.clone(), req);

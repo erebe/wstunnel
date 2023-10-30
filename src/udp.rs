@@ -1,18 +1,17 @@
 use anyhow::Context;
 use futures_util::{stream, Stream};
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use pin_project::{pin_project, pinned_drop};
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::net::SocketAddr;
-use std::ops::DerefMut;
+
 use std::pin::{pin, Pin};
 use std::sync::{Arc, Weak};
-use std::task::{ready, Poll, Waker};
+use std::task::{ready, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
@@ -23,8 +22,7 @@ use tokio::time::Sleep;
 use tracing::{debug, error, info};
 
 struct IoInner {
-    has_data_to_read: &'static Notify,
-    waker: Mutex<Option<Waker>>,
+    has_data_to_read: Notify,
     has_read_data: Notify,
 }
 struct UdpServer {
@@ -43,6 +41,7 @@ impl UdpServer {
             cnx_timeout: timeout,
         }
     }
+    #[inline]
     fn clean_dead_keys(&mut self) {
         let nb_key_to_delete = self.keys_to_delete.read().len();
         if nb_key_to_delete == 0 {
@@ -52,16 +51,7 @@ impl UdpServer {
         debug!("Cleaning {} dead udp peers", nb_key_to_delete);
         let mut keys_to_delete = self.keys_to_delete.write();
         for key in keys_to_delete.iter() {
-            let Some(peer) = self.peers.remove(key) else {
-                continue;
-            };
-
-            #[allow(mutable_transmutes)]
-            unsafe {
-                let _ = Box::from_raw(std::mem::transmute::<&Notify, &mut Notify>(
-                    peer.has_data_to_read,
-                ));
-            }
+            self.peers.remove(key);
         }
         keys_to_delete.clear();
     }
@@ -90,7 +80,42 @@ impl PinnedDrop for UdpStream {
             keys_to_delete.write().push(self.peer);
         }
 
-        self.io.has_read_data.notify_one();
+        // safety: we are dropping the notification as we extend its lifetime to 'static unsafely
+        // So it must be gone before we drop its parent. It should never happen but in case
+        let mut project = self.project();
+        project.pending_notification.as_mut().set(None);
+        project.io.has_read_data.notify_one();
+    }
+}
+
+impl UdpStream {
+    fn new(
+        socket: Arc<UdpSocket>,
+        peer: SocketAddr,
+        deadline: Option<Sleep>,
+        keys_to_delete: Weak<RwLock<Vec<SocketAddr>>>,
+    ) -> (Self, Arc<IoInner>) {
+        let has_data_to_read = Notify::new();
+        let has_read_data = Notify::new();
+        has_data_to_read.notify_one();
+        let io = Arc::new(IoInner {
+            has_data_to_read,
+            has_read_data,
+        });
+        let mut s = Self {
+            socket,
+            peer,
+            deadline,
+            has_been_notified: false,
+            pending_notification: None,
+            io: io.clone(),
+            keys_to_delete,
+        };
+
+        let pending_notification = unsafe { std::mem::transmute(s.io.has_data_to_read.notified()) };
+        s.pending_notification = Some(pending_notification);
+
+        (s, io)
     }
 }
 
@@ -111,43 +136,28 @@ impl AsyncRead for UdpStream {
         }
 
         if let Some(notified) = project.pending_notification.as_mut().as_pin_mut() {
-            if !notified.poll(cx).is_ready() {
-                project.io.waker.lock().replace(cx.waker().clone());
-                return Poll::Pending;
-            }
+            ready!(notified.poll(cx));
             project.pending_notification.as_mut().set(None);
         }
 
         let _ = ready!(project.socket.poll_recv(cx, obuf));
-        project
-            .pending_notification
-            .as_mut()
-            .set(Some(project.io.has_data_to_read.notified()));
+        let notified: Notified<'static> = unsafe { std::mem::transmute(project.io.has_data_to_read.notified()) };
+        project.pending_notification.as_mut().set(Some(notified));
         project.io.has_read_data.notify_one();
         Poll::Ready(Ok(()))
     }
 }
 
 impl AsyncWrite for UdpStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, Error>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         self.socket.poll_send_to(cx, buf, self.peer)
     }
 
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), Error>> {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
         self.socket.poll_send_ready(cx)
     }
 
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), Error>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
     }
 }
@@ -178,39 +188,22 @@ pub async fn run_server(
                 }
             };
 
-            match server.peers.entry(peer_addr) {
-                Entry::Occupied(mut peer) => {
-                    let io = peer.get_mut();
+            match server.peers.get(&peer_addr) {
+                Some(io) => {
                     io.has_read_data.notified().await;
                     io.has_data_to_read.notify_one();
-                    let waker = io.waker.lock().deref_mut().take();
-                    if let Some(waker) = waker {
-                        waker.wake();
-                    }
                 }
-                Entry::Vacant(peer) => {
-                    let has_data_to_read: &'static Notify = Box::leak(Box::new(Notify::new()));
-                    let pending_notification = has_data_to_read.notified();
-                    let has_read_data = Notify::new();
-                    has_data_to_read.notify_one();
-                    let io = Arc::new(IoInner {
-                        has_data_to_read,
-                        waker: Mutex::new(None),
-                        has_read_data,
-                    });
-                    peer.insert(io.clone());
-                    let udp_client = UdpStream {
-                        socket: server.clone_socket(),
-                        peer: peer_addr,
-                        deadline: server
+                None => {
+                    let (udp_client, io) = UdpStream::new(
+                        server.clone_socket(),
+                        peer_addr,
+                        server
                             .cnx_timeout
                             .and_then(|timeout| tokio::time::Instant::now().checked_add(timeout))
                             .map(tokio::time::sleep_until),
-                        keys_to_delete: Arc::downgrade(&server.keys_to_delete),
-                        has_been_notified: false,
-                        pending_notification: Some(pending_notification),
-                        io,
-                    };
+                        Arc::downgrade(&server.keys_to_delete),
+                    );
+                    server.peers.insert(peer_addr, io);
                     return Some((Ok(udp_client), (server)));
                 }
             }
@@ -231,11 +224,7 @@ impl MyUdpSocket {
 }
 
 impl AsyncRead for MyUdpSocket {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         unsafe { self.map_unchecked_mut(|x| &mut x.socket) }
             .poll_recv_from(cx, buf)
             .map(|x| x.map(|_| ()))
@@ -243,25 +232,15 @@ impl AsyncRead for MyUdpSocket {
 }
 
 impl AsyncWrite for MyUdpSocket {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, Error>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         unsafe { self.map_unchecked_mut(|x| &mut x.socket) }.poll_send(cx, buf)
     }
 
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), Error>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), Error>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
     }
 }
@@ -331,10 +310,7 @@ mod tests {
         assert!(client.send_to(b"aaaaa".as_ref(), server_addr).await.is_ok());
 
         let client2 = UdpSocket::bind("[::1]:0").await.unwrap();
-        assert!(client2
-            .send_to(b"bbbbb".as_ref(), server_addr)
-            .await
-            .is_ok());
+        assert!(client2.send_to(b"bbbbb".as_ref(), server_addr).await.is_ok());
 
         // Should have a new connection
         let fut = timeout(Duration::from_millis(100), server.next()).await;
@@ -360,10 +336,7 @@ mod tests {
         assert_eq!(&buf[..6], b"bbbbb\0");
 
         assert!(client.send_to(b"ccccc".as_ref(), server_addr).await.is_ok());
-        assert!(client2
-            .send_to(b"ddddd".as_ref(), server_addr)
-            .await
-            .is_ok());
+        assert!(client2.send_to(b"ddddd".as_ref(), server_addr).await.is_ok());
 
         // Server need to be polled to feed the stream with need data
         let _ = timeout(Duration::from_millis(100), server.next()).await;

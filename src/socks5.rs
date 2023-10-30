@@ -19,10 +19,7 @@ pub struct Socks5Listener {
 impl Stream for Socks5Listener {
     type Item = anyhow::Result<(TcpStream, (Host, u16))>;
 
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
         unsafe { self.map_unchecked_mut(|x| &mut x.stream) }.poll_next(cx)
     }
 }
