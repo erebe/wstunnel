@@ -12,8 +12,7 @@ url = "2.4.1"
 anyhow = "1.0.75"
 
 hyper = { version = "0.14.27", features = ["client", "runtime"] }
-#fastwebsockets = { version = "0.4.4", features = ["upgrade"]}
-fastwebsockets = { git = "https://github.com/mmastrac/fastwebsockets", branch = "split", features = ["upgrade", "simd", "unstable-split"]}
+fastwebsockets = { git = "https://github.com/erebe/fastwebsockets", branch = "split", features = ["upgrade", "simd", "unstable-split"]}
 libc = { version = "0.2.149", features = []}
 once_cell = { version = "1.18.0", features = [] }
 ahash = { version = "0.8.6",  features = []}

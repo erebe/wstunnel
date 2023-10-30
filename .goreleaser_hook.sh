@@ -2,7 +2,8 @@
 
 go_arch=$1
 go_os=$2
-project_name=$3
+go_arm=$3
+project_name=$4
 
 # Make Go -> Rust arch/os mapping
 case $go_arch in
@@ -19,7 +20,7 @@ case $go_os in
 esac
 
 # Find artifacts and uncompress in the coresponding directory
-DIST_DIR=$(find dist -type d -name "*${go_os}_${go_arch}*")
+DIST_DIR=$(find dist -type d -name "*${go_os}_${go_arch}*${go_arm}*")
 echo "DIST_DIR: $DIST_DIR"
 rm -f ${DIST_DIR}/${project_name}*
 
