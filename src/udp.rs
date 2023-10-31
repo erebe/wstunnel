@@ -9,17 +9,17 @@ use std::io;
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
+use log::warn;
 use std::pin::{pin, Pin};
 use std::sync::{Arc, Weak};
 use std::task::{ready, Poll};
 use std::time::Duration;
-use log::warn;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::futures::Notified;
 
 use tokio::sync::Notify;
-use tokio::time::{Sleep, timeout};
+use tokio::time::{timeout, Sleep};
 use tracing::{debug, error, info};
 use url::Host;
 
@@ -248,11 +248,7 @@ impl AsyncWrite for MyUdpSocket {
     }
 }
 
-pub async fn connect(
-    host: &Host<String>,
-    port: u16,
-    connect_timeout: Duration,
-) -> anyhow::Result<MyUdpSocket> {
+pub async fn connect(host: &Host<String>, port: u16, connect_timeout: Duration) -> anyhow::Result<MyUdpSocket> {
     info!("Opening UDP connection to {}:{}", host, port);
 
     let socket_addrs: Vec<SocketAddr> = match host {
@@ -263,7 +259,6 @@ pub async fn connect(
         Host::Ipv4(ip) => vec![SocketAddr::V4(SocketAddrV4::new(*ip, port))],
         Host::Ipv6(ip) => vec![SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))],
     };
-
 
     let mut cnx = None;
     let mut last_err = None;
@@ -280,7 +275,7 @@ pub async fn connect(
             Err(err) => {
                 warn!("cannot bind udp socket {:?}", err);
                 continue;
-            },
+            }
         };
 
         match timeout(connect_timeout, socket.connect(addr)).await {
@@ -304,12 +299,7 @@ pub async fn connect(
     if let Some(cnx) = cnx {
         Ok(MyUdpSocket::new(Arc::new(cnx)))
     } else {
-        Err(anyhow!(
-            "Cannot connect to udp peer {}:{} reason {:?}",
-            host,
-            port,
-            last_err
-        ))
+        Err(anyhow!("Cannot connect to udp peer {}:{} reason {:?}", host, port, last_err))
     }
 }
 

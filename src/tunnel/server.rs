@@ -5,14 +5,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{JwtTunnelConfig, JWT_DECODE};
-use crate::{tcp, tls, LocalProtocol, WsServerConfig, udp};
+use crate::{tcp, tls, udp, LocalProtocol, WsServerConfig};
 use hyper::server::conn::Http;
 use hyper::service::service_fn;
 use hyper::{http, Body, Request, Response, StatusCode};
 use jsonwebtoken::TokenData;
 
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpListener};
+use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tracing::{error, info, span, warn, Instrument, Level, Span};
 use url::Host;
