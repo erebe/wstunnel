@@ -5,15 +5,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{JwtTunnelConfig, JWT_DECODE};
-use crate::udp::MyUdpSocket;
-use crate::{tcp, tls, LocalProtocol, WsServerConfig};
+use crate::{tcp, tls, LocalProtocol, WsServerConfig, udp};
 use hyper::server::conn::Http;
 use hyper::service::service_fn;
 use hyper::{http, Body, Request, Response, StatusCode};
 use jsonwebtoken::TokenData;
 
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpListener, UdpSocket};
+use tokio::net::{TcpListener};
 use tokio::sync::oneshot;
 use tracing::{error, info, span, warn, Instrument, Level, Span};
 use url::Host;
@@ -53,16 +52,15 @@ async fn from_query(
     }
 
     match jwt.claims.p {
-        LocalProtocol::Udp { .. } => {
+        LocalProtocol::Udp { timeout, .. } => {
             let host = Host::parse(&jwt.claims.r)?;
-            let cnx = Arc::new(UdpSocket::bind("[::]:0").await?);
-            cnx.connect((host.to_string(), jwt.claims.rp)).await?;
+            let cnx = udp::connect(&host, jwt.claims.rp, timeout.unwrap_or(Duration::from_secs(10))).await?;
             Ok((
                 LocalProtocol::Udp { timeout: None },
                 host,
                 jwt.claims.rp,
-                Box::pin(MyUdpSocket::new(cnx.clone())),
-                Box::pin(MyUdpSocket::new(cnx)),
+                Box::pin(cnx.clone()),
+                Box::pin(cnx),
             ))
         }
         LocalProtocol::Tcp { .. } => {

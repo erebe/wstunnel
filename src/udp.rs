@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use futures_util::{stream, Stream};
 
 use parking_lot::RwLock;
@@ -7,19 +7,21 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::io::{Error, ErrorKind};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use std::pin::{pin, Pin};
 use std::sync::{Arc, Weak};
 use std::task::{ready, Poll};
 use std::time::Duration;
+use log::warn;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::futures::Notified;
 
 use tokio::sync::Notify;
-use tokio::time::Sleep;
+use tokio::time::{Sleep, timeout};
 use tracing::{debug, error, info};
+use url::Host;
 
 struct IoInner {
     has_data_to_read: Notify,
@@ -29,7 +31,7 @@ struct UdpServer {
     listener: Arc<UdpSocket>,
     peers: HashMap<SocketAddr, Arc<IoInner>, ahash::RandomState>,
     keys_to_delete: Arc<RwLock<Vec<SocketAddr>>>,
-    pub cnx_timeout: Option<Duration>,
+    cnx_timeout: Option<Duration>,
 }
 
 impl UdpServer {
@@ -213,6 +215,7 @@ pub async fn run_server(
     Ok(stream)
 }
 
+#[derive(Clone)]
 pub struct MyUdpSocket {
     socket: Arc<UdpSocket>,
 }
@@ -242,6 +245,71 @@ impl AsyncWrite for MyUdpSocket {
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
+    }
+}
+
+pub async fn connect(
+    host: &Host<String>,
+    port: u16,
+    connect_timeout: Duration,
+) -> anyhow::Result<MyUdpSocket> {
+    info!("Opening UDP connection to {}:{}", host, port);
+
+    let socket_addrs: Vec<SocketAddr> = match host {
+        Host::Domain(domain) => timeout(connect_timeout, tokio::net::lookup_host(format!("{}:{}", domain, port)))
+            .await
+            .with_context(|| format!("cannot resolve domain: {}", domain))??
+            .collect(),
+        Host::Ipv4(ip) => vec![SocketAddr::V4(SocketAddrV4::new(*ip, port))],
+        Host::Ipv6(ip) => vec![SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))],
+    };
+
+
+    let mut cnx = None;
+    let mut last_err = None;
+    for addr in socket_addrs {
+        debug!("connecting to {}", addr);
+
+        let socket = match &addr {
+            SocketAddr::V4(_) => UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).await,
+            SocketAddr::V6(_) => UdpSocket::bind(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)).await,
+        };
+
+        let socket = match socket {
+            Ok(socket) => socket,
+            Err(err) => {
+                warn!("cannot bind udp socket {:?}", err);
+                continue;
+            },
+        };
+
+        match timeout(connect_timeout, socket.connect(addr)).await {
+            Ok(Ok(_)) => {
+                cnx = Some(socket);
+                break;
+            }
+            Ok(Err(err)) => {
+                debug!("Cannot connect udp socket to specified peer {addr} reason {err}");
+                last_err = Some(err);
+            }
+            Err(_) => {
+                debug!(
+                    "Cannot connect udp socket to specified peer {addr} due to timeout of {}s elapsed",
+                    connect_timeout.as_secs()
+                );
+            }
+        }
+    }
+
+    if let Some(cnx) = cnx {
+        Ok(MyUdpSocket::new(Arc::new(cnx)))
+    } else {
+        Err(anyhow!(
+            "Cannot connect to udp peer {}:{} reason {:?}",
+            host,
+            port,
+            last_err
+        ))
     }
 }
 
