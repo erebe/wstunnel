@@ -1,7 +1,6 @@
 use fastwebsockets::{Frame, OpCode, Payload, WebSocketError, WebSocketRead, WebSocketWrite};
 use futures_util::pin_mut;
 use hyper::upgrade::Upgraded;
-use std::pin::Pin;
 
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -25,8 +24,8 @@ pub(super) async fn propagate_read(
 
     // We do our own pin_mut! to avoid shadowing timeout and be able to reset it, on next loop iteration
     // We reuse the future to avoid creating a timer in the tight loop
-    let mut timeout_unpin = tokio::time::sleep(ping_frequency);
-    let mut timeout = unsafe { Pin::new_unchecked(&mut timeout_unpin) };
+    let timeout = tokio::time::interval_at(tokio::time::Instant::now() + ping_frequency, ping_frequency);
+    pin_mut!(timeout);
 
     pin_mut!(local_rx);
     loop {
@@ -37,12 +36,10 @@ pub(super) async fn propagate_read(
 
             _ = close_tx.closed() => break,
 
-            _ = &mut timeout => {
+            _ = timeout.tick() => {
                 debug!("sending ping to keep websocket connection alive");
                 ws_tx.write_frame(Frame::new(true, OpCode::Ping, None, Payload::BorrowedMut(&mut []))).await?;
 
-                timeout_unpin = tokio::time::sleep(ping_frequency);
-                timeout = unsafe {  Pin::new_unchecked(&mut timeout_unpin) };
                 continue;
             }
         };
@@ -51,7 +48,7 @@ pub(super) async fn propagate_read(
             Ok(0) => break,
             Ok(read_len) => read_len,
             Err(err) => {
-                warn!("error while reading incoming bytes from local tx tunnel {}", err);
+                warn!("error while reading incoming bytes from local tx tunnel: {}", err);
                 break;
             }
         };
