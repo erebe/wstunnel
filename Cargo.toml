@@ -1,6 +1,6 @@
 [package]
 name = "wstunnel"
-version = "7.9.0"
+version = "7.9.1"
 edition = "2021"
 repository = "https://github.com/erebe/wstunnel.git"
 
@@ -39,6 +39,7 @@ log = "0.4.20"
 
 bb8 = { version = "0.8", features = [] }
 async-trait = "0.1.74"
+socket2 = { version = "0.5.5", features = [] }
 
 [target.'cfg(target_family = "unix")'.dependencies]
 tokio-fd = "0.3.0"

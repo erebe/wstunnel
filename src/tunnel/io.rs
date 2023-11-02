@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::select;
 use tokio::sync::oneshot;
+use tokio::time::Instant;
 use tracing::log::debug;
 use tracing::{error, info, trace, warn};
 
@@ -24,7 +25,10 @@ pub(super) async fn propagate_read(
 
     // We do our own pin_mut! to avoid shadowing timeout and be able to reset it, on next loop iteration
     // We reuse the future to avoid creating a timer in the tight loop
-    let timeout = tokio::time::interval_at(tokio::time::Instant::now() + ping_frequency, ping_frequency);
+    let start_at = Instant::now()
+        .checked_add(ping_frequency)
+        .unwrap_or(Instant::now() + Duration::from_secs(3600 * 24));
+    let timeout = tokio::time::interval_at(start_at, ping_frequency);
     pin_mut!(timeout);
 
     pin_mut!(local_rx);

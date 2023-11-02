@@ -8,7 +8,6 @@ use std::future::Future;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::os::fd::AsRawFd;
 
 use log::warn;
 use std::pin::{pin, Pin};
@@ -36,24 +35,20 @@ struct UdpServer {
 }
 
 impl UdpServer {
-    pub fn new(listener: Arc<UdpSocket>, timeout: Option<Duration>) -> Self {
-        unsafe {
-            // Increase socket buffer length to 64MB
-            let buf_len: libc::c_int = 64 * 1024 * 1024;
-            let ret = libc::setsockopt(
-                listener.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_RCVBUF,
-                &buf_len as *const _ as *const libc::c_void,
-                std::mem::size_of_val(&buf_len) as libc::socklen_t,
-            );
-            if ret != 0 {
-                warn!("Cannot set UDP server recv buffer: {}", io::Error::last_os_error());
-            }
-        };
+    pub fn new(listener: UdpSocket, timeout: Option<Duration>) -> Self {
+        let socket = socket2::Socket::from(listener.into_std().unwrap());
+
+        // Increase receive buffer
+        if let Err(err) = socket.set_recv_buffer_size(64 * 1024 * 1024) {
+            warn!("Cannot set UDP server recv buffer: {}", err);
+        }
+
+        if let Err(err) = socket.set_send_buffer_size(64 * 1024 * 1024) {
+            warn!("Cannot set UDP server recv buffer: {}", err);
+        }
 
         Self {
-            listener,
+            listener: Arc::new(UdpSocket::from_std(socket.into()).unwrap()),
             peers: HashMap::with_hasher(ahash::RandomState::new()),
             keys_to_delete: Default::default(),
             cnx_timeout: timeout,
@@ -210,7 +205,7 @@ pub async fn run_server(
         .await
         .with_context(|| format!("Cannot create UDP server {:?}", bind))?;
 
-    let udp_server = UdpServer::new(Arc::new(listener), timeout);
+    let udp_server = UdpServer::new(listener, timeout);
     let stream = stream::unfold((udp_server, None), |(mut server, peer_with_data)| async move {
         // New returned peer hasn't read its data yet, await for it.
         if let Some(await_peer) = peer_with_data {
