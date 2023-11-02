@@ -19,8 +19,8 @@ pub(super) async fn propagate_read(
         info!("Closing local tx ==> websocket tx tunnel");
     });
 
-    static JUMBO_FRAME_SIZE: usize = 9 * 1024; // enough for a jumbo frame
-    let mut buffer = vec![0u8; JUMBO_FRAME_SIZE];
+    static MAX_PACKET_LENGTH: usize = 64 * 1024;
+    let mut buffer = vec![0u8; MAX_PACKET_LENGTH];
 
     // We do our own pin_mut! to avoid shadowing timeout and be able to reset it, on next loop iteration
     // We reuse the future to avoid creating a timer in the tight loop
