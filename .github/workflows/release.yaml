@@ -30,11 +30,11 @@ jobs:
           - name: Linux armv7hf
             target: armv7-unknown-linux-musleabihf
 
-          - name: Android aarch64
-            target: aarch64-linux-android
+          # - name: Android aarch64
+          #   target: aarch64-linux-android
 
-          - name: Android armv7
-            target: armv7-linux-androideabi
+          # - name: Android armv7
+          #   target: armv7-linux-androideabi
 
           #- name: Linux mips
           #  target: mips-unknown-linux-musl
