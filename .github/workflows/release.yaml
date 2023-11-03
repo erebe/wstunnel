@@ -65,7 +65,7 @@ jobs:
     steps:
     - name: Install package for linux
       if: contains(matrix.platform.target, 'linux')
-      run: sudo apt install musl-tools libunwind8 android-libunwind 
+      run: sudo apt install musl-tools 
 
     - name: Install package for Android
       if: contains(matrix.platform.target, 'android')
@@ -76,12 +76,23 @@ jobs:
 
     # Linux & Windows
     - name: Install rust toolchain
-      if: ${{ !contains(matrix.platform.target, 'apple') }}
+      if: ${{ !contains(matrix.platform.target, 'apple') && !contains(matrix.platform.target, 'android') }}
       uses: actions-rs/toolchain@v1
       with:
         # We setup Rust toolchain and the desired target
         profile: minimal
         toolchain: "${{ env.RUST_VERSION }}"
+        override: true
+        target: ${{ matrix.platform.target }}
+        components: rustfmt, clippy
+
+    - name: Install rust toolchain
+      if: ${{ !contains(matrix.platform.target, 'android') }}
+      uses: actions-rs/toolchain@v1
+      with:
+        # We setup Rust toolchain and the desired target
+        profile: minimal
+        toolchain: 1.67.0
         override: true
         target: ${{ matrix.platform.target }}
         components: rustfmt, clippy
