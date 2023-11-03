@@ -63,9 +63,13 @@ jobs:
             target: x86_64-pc-windows-msvc
 
     steps:
-    - name: Create annotation for build error
+    - name: Install package for linux
       if: contains(matrix.platform.target, 'linux')
-      run: sudo apt install musl-tools libunwind-dev
+      run: sudo apt install musl-tools libunwind8 android-libunwind 
+
+    - name: Install package for Android
+      if: contains(matrix.platform.target, 'android')
+      run: sudo apt install musl-tools android-libunwind 
 
     - name: Checkout Git repo
       uses: actions/checkout@v3
