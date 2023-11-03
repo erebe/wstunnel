@@ -143,12 +143,11 @@ async fn server_upgrade(
                 }
             };
             let (close_tx, close_rx) = oneshot::channel::<()>();
-            let ping_frequency = server_config.websocket_ping_frequency.unwrap_or(Duration::MAX);
             ws_tx.set_auto_apply_mask(server_config.websocket_mask_frame);
 
             tokio::task::spawn(super::io::propagate_write(local_tx, ws_rx, close_rx).instrument(Span::current()));
 
-            let _ = super::io::propagate_read(local_rx, ws_tx, close_tx, ping_frequency).await;
+            let _ = super::io::propagate_read(local_rx, ws_tx, close_tx, None).await;
         }
         .instrument(Span::current()),
     );

@@ -14,7 +14,7 @@ pub(super) async fn propagate_read(
     local_rx: impl AsyncRead,
     mut ws_tx: WebSocketWrite<WriteHalf<Upgraded>>,
     mut close_tx: oneshot::Sender<()>,
-    ping_frequency: Duration,
+    ping_frequency: Option<Duration>,
 ) -> Result<(), WebSocketError> {
     let _guard = scopeguard::guard((), |_| {
         info!("Closing local tx ==> websocket tx tunnel");
@@ -25,10 +25,9 @@ pub(super) async fn propagate_read(
 
     // We do our own pin_mut! to avoid shadowing timeout and be able to reset it, on next loop iteration
     // We reuse the future to avoid creating a timer in the tight loop
-    let start_at = Instant::now()
-        .checked_add(ping_frequency)
-        .unwrap_or(Instant::now() + Duration::from_secs(3600 * 24));
-    let timeout = tokio::time::interval_at(start_at, ping_frequency);
+    let frequency = ping_frequency.unwrap_or(Duration::from_secs(u64::MAX));
+    let start_at = Instant::now().checked_add(frequency).unwrap_or(Instant::now());
+    let timeout = tokio::time::interval_at(start_at, frequency);
     pin_mut!(timeout);
 
     pin_mut!(local_rx);
@@ -40,7 +39,7 @@ pub(super) async fn propagate_read(
 
             _ = close_tx.closed() => break,
 
-            _ = timeout.tick() => {
+            _ = timeout.tick(), if ping_frequency.is_some() => {
                 debug!("sending ping to keep websocket connection alive");
                 ws_tx.write_frame(Frame::new(true, OpCode::Ping, None, Payload::BorrowedMut(&mut []))).await?;
 

@@ -102,7 +102,7 @@ where
 
     // Forward local tx to websocket tx
     let ping_frequency = client_cfg.websocket_ping_frequency;
-    tokio::spawn(super::io::propagate_read(local_rx, ws_tx, close_tx, ping_frequency).instrument(Span::current()));
+    tokio::spawn(super::io::propagate_read(local_rx, ws_tx, close_tx, Some(ping_frequency)).instrument(Span::current()));
 
     // Forward websocket rx to local rx
     let _ = super::io::propagate_write(local_tx, ws_rx, close_rx).await;
