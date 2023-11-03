@@ -1,6 +1,9 @@
 [build]
 rustflags = ["--cfg", "uuid_unstable"]
 
+[env]
+ANDROID_NDK = "r25b"
+
 #[target.'cfg(target_os = "linux")']
 #rustflags = ["-C", "linker=ld.lld", "-C", "relocation-model=static", "-C", "strip=symbols", "--cfg", "uuid_unstable"]
 
