@@ -69,7 +69,7 @@ jobs:
 
     - name: Install package for Android
       if: contains(matrix.platform.target, 'android')
-      run: sudo apt install musl-tools android-libunwind 
+      run: sudo apt install musl-tools android-libunwind libunwind8
 
     - name: Checkout Git repo
       uses: actions/checkout@v3
