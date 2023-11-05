@@ -154,9 +154,10 @@ On the client side use this command to forward traffic through the websocket tun
 ```bash
 wstunnel client -L socks5://127.0.0.1:8888 --connection-min-idle 10 ws://myRemoteHost:8080
 ```
-This command will create a socks5 server listening on port 8888 of a loopback interface and will forward traffic.
+This command will create a socks5 server listening on port 8888 of the loopback interface and will forward traffic dynamically.
+`connection-min-idle 10` is going an optimization to create a pool of 10 connection connected to the server, to speed-up the establishement of new tunnels.
 
-With firefox you can setup a proxy using this tunnel, by setting in networking preferences 127.0.0.1:8888 and selecting socks5 proxy
+With firefox you can setup a proxy using this tunnel, by setting in networking preferences 127.0.0.1:8888 and selecting socks5 proxy.
 Be sure to check the option `Proxy DNS when using SOCKS v5` for the server to resolve DNS name and not your local machine.
 
 or with curl
@@ -185,7 +186,7 @@ The server will listen on any interface using port 443 (https) and restrict traf
 **Be aware that the server will use self signed certificate with weak cryptographic algorithm.
 It was made in order to add the least possible overhead while still being compliant with tls.**
 
-**Do not rely on wstunnel to protect your privacy, as it only forwards traffic that is already secure by design (ex: https)**
+**Do not rely on wstunnel to protect your privacy, if it is one of your concerns, you should only forwards traffic that is already secure by design (ie: https or vpn traffic)**
 
 Now on the client side start the client with
 ```bash
