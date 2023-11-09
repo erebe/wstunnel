@@ -36,7 +36,7 @@ struct UdpServer {
 
 impl UdpServer {
     pub fn new(listener: UdpSocket, timeout: Option<Duration>) -> Self {
-        let socket = socket2::Socket::from(listener.into_std().unwrap());
+        let socket = socket2::SockRef::from(&listener);
 
         // Increase receive buffer
         if let Err(err) = socket.set_recv_buffer_size(64 * 1024 * 1024) {
@@ -48,7 +48,7 @@ impl UdpServer {
         }
 
         Self {
-            listener: Arc::new(UdpSocket::from_std(socket.into()).unwrap()),
+            listener: Arc::new(listener),
             peers: HashMap::with_hasher(ahash::RandomState::new()),
             keys_to_delete: Default::default(),
             cnx_timeout: timeout,
