@@ -112,6 +112,7 @@ pub async fn connect_with_http_proxy(
     info!("Connected to http proxy {}:{}", proxy_host, proxy_port);
 
     let authorization = if let Some((user, password)) = proxy.password().map(|p| (proxy.username(), p)) {
+        let user = urlencoding::decode(user).with_context(|| format!("Cannot urldecode proxy user: {}", user))?;
         let password =
             urlencoding::decode(password).with_context(|| format!("Cannot urldecode proxy password: {}", password))?;
         let creds = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", user, password));
