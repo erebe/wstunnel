@@ -501,7 +501,11 @@ async fn main() {
             let host_header = if let Some((_, host_val)) = args.http_headers.iter().find(|(h, _)| *h == HOST) {
                 host_val.clone()
             } else {
-                HeaderValue::from_str(&args.remote_addr.host().unwrap().to_string()).unwrap()
+                let host = match args.remote_addr.port_or_known_default() {
+                    None | Some(80) | Some(443) => args.remote_addr.host().unwrap().to_string(),
+                    Some(port) => format!("{}:{}", args.remote_addr.host().unwrap(), port),
+                };
+                HeaderValue::from_str(&host).unwrap()
             };
             let mut client_config = WsClientConfig {
                 remote_addr: (
