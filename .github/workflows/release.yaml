@@ -62,6 +62,10 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
 
+          - name: Windows x86
+            os: windows-latest
+            target: i686-pc-windows-msvc
+
     steps:
     - name: Install package for linux
       if: contains(matrix.platform.target, 'linux')
