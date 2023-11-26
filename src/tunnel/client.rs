@@ -1,5 +1,5 @@
 use super::{JwtTunnelConfig, JWT_KEY};
-use crate::{tcp, LocalToRemote, WsClientConfig};
+use crate::{LocalToRemote, WsClientConfig};
 use anyhow::{anyhow, Context};
 
 use fastwebsockets::WebSocket;
@@ -149,10 +149,16 @@ where
     Ok(())
 }
 
-pub async fn run_reverse_tunnel(
+pub async fn run_reverse_tunnel<F, Fut, T>(
     client_config: Arc<WsClientConfig>,
     mut tunnel_cfg: LocalToRemote,
-) -> anyhow::Result<()> {
+    connect_to_dest: F,
+) -> anyhow::Result<()>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = anyhow::Result<T>>,
+    T: AsyncRead + AsyncWrite + Send + 'static,
+{
     // Invert local with remote
     let remote = tunnel_cfg.remote;
     tunnel_cfg.remote = match tunnel_cfg.local.ip() {
@@ -178,14 +184,7 @@ pub async fn run_reverse_tunnel(
         ws.set_auto_apply_mask(client_config.websocket_mask_frame);
 
         // Connect to endpoint
-        let stream = tcp::connect(
-            &remote.0,
-            remote.1,
-            &client_config.socket_so_mark,
-            client_config.timeout_connect,
-        )
-        .instrument(span.clone())
-        .await;
+        let stream = connect_to_dest().instrument(span.clone()).await;
 
         let stream = match stream {
             Ok(s) => s,

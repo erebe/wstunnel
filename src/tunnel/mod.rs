@@ -35,6 +35,7 @@ impl JwtTunnelConfig {
                 LocalProtocol::Stdio => LocalProtocol::Tcp,
                 LocalProtocol::Socks5 => LocalProtocol::Tcp,
                 LocalProtocol::ReverseTcp => LocalProtocol::ReverseTcp,
+                LocalProtocol::ReverseUdp { .. } => tunnel.local_protocol,
             },
             r: tunnel.remote.0.to_string(),
             rp: tunnel.remote.1,
@@ -114,7 +115,7 @@ impl ManageConnection for WsClientConfig {
 
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
         let (host, port) = &self.remote_addr;
-        let so_mark = &self.socket_so_mark;
+        let so_mark = self.socket_so_mark;
         let timeout = self.timeout_connect;
 
         let tcp_stream = if let Some(http_proxy) = &self.http_proxy {

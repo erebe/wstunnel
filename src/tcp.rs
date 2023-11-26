@@ -44,7 +44,7 @@ fn configure_socket(socket: &mut TcpSocket, so_mark: &Option<i32>) -> Result<(),
 pub async fn connect(
     host: &Host<String>,
     port: u16,
-    so_mark: &Option<i32>,
+    so_mark: Option<i32>,
     connect_timeout: Duration,
 ) -> Result<TcpStream, anyhow::Error> {
     info!("Opening TCP connection to {}:{}", host, port);
@@ -68,7 +68,7 @@ pub async fn connect(
             SocketAddr::V6(_) => TcpSocket::new_v6()?,
         };
 
-        configure_socket(&mut socket, so_mark)?;
+        configure_socket(&mut socket, &so_mark)?;
         match timeout(connect_timeout, socket.connect(addr)).await {
             Ok(Ok(stream)) => {
                 cnx = Some(stream);
@@ -103,7 +103,7 @@ pub async fn connect_with_http_proxy(
     proxy: &Url,
     host: &Host<String>,
     port: u16,
-    so_mark: &Option<i32>,
+    so_mark: Option<i32>,
     connect_timeout: Duration,
 ) -> Result<TcpStream, anyhow::Error> {
     let proxy_host = proxy.host().context("Cannot parse proxy host")?.to_owned();
@@ -226,7 +226,7 @@ mod tests {
             &"http://localhost:8080".parse().unwrap(),
             &Host::Domain("[::1]".to_string()),
             1236,
-            &None,
+            None,
             Duration::from_secs(1),
         )
         .await

@@ -1,6 +1,7 @@
 use ahash::{HashMap, HashMapExt};
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
 use std::cmp::min;
+use std::io;
 use std::ops::{Deref, Not};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use jsonwebtoken::TokenData;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 
+use crate::udp::UdpStream;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -71,7 +73,7 @@ async fn from_query(
         LocalProtocol::Tcp => {
             let host = Host::parse(&jwt.claims.r)?;
             let port = jwt.claims.rp;
-            let (rx, tx) = tcp::connect(&host, port, &server_config.socket_so_mark, Duration::from_secs(10))
+            let (rx, tx) = tcp::connect(&host, port, server_config.socket_so_mark, Duration::from_secs(10))
                 .await?
                 .into_split();
 
@@ -93,6 +95,27 @@ async fn from_query(
 
             let tcp = listening_server.next().await.unwrap()?;
             let (local_rx, local_tx) = tokio::io::split(tcp);
+            REVERSE.lock().insert(local_srv.clone(), listening_server);
+
+            Ok((jwt.claims.p, local_srv.0, local_srv.1, Box::pin(local_rx), Box::pin(local_tx)))
+        }
+        LocalProtocol::ReverseUdp { timeout } => {
+            #[allow(clippy::type_complexity)]
+            static REVERSE: Lazy<
+                Mutex<HashMap<(Host<String>, u16), Pin<Box<dyn Stream<Item = io::Result<UdpStream>> + Send>>>>,
+            > = Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
+
+            let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
+            let listening_server = REVERSE.lock().remove(&local_srv);
+            let mut listening_server = if let Some(listening_server) = listening_server {
+                listening_server
+            } else {
+                let bind = format!("{}:{}", local_srv.0, local_srv.1);
+                Box::pin(udp::run_server(bind.parse()?, timeout).await?)
+            };
+
+            let udp = listening_server.next().await.unwrap()?;
+            let (local_rx, local_tx) = tokio::io::split(udp);
             REVERSE.lock().insert(local_srv.clone(), listening_server);
 
             Ok((jwt.claims.p, local_srv.0, local_srv.1, Box::pin(local_rx), Box::pin(local_tx)))
