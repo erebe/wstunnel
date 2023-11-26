@@ -1,5 +1,5 @@
 use super::{JwtTunnelConfig, JWT_KEY};
-use crate::{LocalToRemote, WsClientConfig};
+use crate::{tcp, LocalToRemote, WsClientConfig};
 use anyhow::{anyhow, Context};
 
 use fastwebsockets::WebSocket;
@@ -9,6 +9,7 @@ use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::upgrade::Upgraded;
 use hyper::{Body, Request};
 use std::future::Future;
+use std::net::IpAddr;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -146,4 +147,68 @@ where
     }
 
     Ok(())
+}
+
+pub async fn run_reverse_tunnel(
+    client_config: Arc<WsClientConfig>,
+    mut tunnel_cfg: LocalToRemote,
+) -> anyhow::Result<()> {
+    // Invert local with remote
+    let remote = tunnel_cfg.remote;
+    tunnel_cfg.remote = match tunnel_cfg.local.ip() {
+        IpAddr::V4(ip) => (Host::Ipv4(ip), tunnel_cfg.local.port()),
+        IpAddr::V6(ip) => (Host::Ipv6(ip), tunnel_cfg.local.port()),
+    };
+
+    loop {
+        let client_config = client_config.clone();
+        let request_id = Uuid::now_v7();
+        let span = span!(
+            Level::INFO,
+            "tunnel",
+            id = request_id.to_string(),
+            remote = format!("{}:{}", tunnel_cfg.remote.0, tunnel_cfg.remote.1)
+        );
+        let _span = span.enter();
+
+        // Correctly configure tunnel cfg
+        let mut ws = connect(request_id, &client_config, &tunnel_cfg)
+            .instrument(span.clone())
+            .await?;
+        ws.set_auto_apply_mask(client_config.websocket_mask_frame);
+
+        // Connect to endpoint
+        let stream = tcp::connect(
+            &remote.0,
+            remote.1,
+            &client_config.socket_so_mark,
+            client_config.timeout_connect,
+        )
+        .instrument(span.clone())
+        .await;
+
+        let stream = match stream {
+            Ok(s) => s,
+            Err(err) => {
+                error!("Cannot connect to {remote:?}: {err:?}");
+                continue;
+            }
+        };
+
+        let (local_rx, local_tx) = tokio::io::split(stream);
+        let (ws_rx, ws_tx) = ws.split(tokio::io::split);
+        let (close_tx, close_rx) = oneshot::channel::<()>();
+
+        let tunnel = async move {
+            let ping_frequency = client_config.websocket_ping_frequency;
+            tokio::spawn(
+                super::io::propagate_read(local_rx, ws_tx, close_tx, Some(ping_frequency)).instrument(Span::current()),
+            );
+
+            // Forward websocket rx to local rx
+            let _ = super::io::propagate_write(local_tx, ws_rx, close_rx).await;
+        }
+        .instrument(span.clone());
+        tokio::spawn(tunnel);
+    }
 }

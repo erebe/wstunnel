@@ -34,6 +34,7 @@ impl JwtTunnelConfig {
                 LocalProtocol::Udp { .. } => tunnel.local_protocol,
                 LocalProtocol::Stdio => LocalProtocol::Tcp,
                 LocalProtocol::Socks5 => LocalProtocol::Tcp,
+                LocalProtocol::ReverseTcp => LocalProtocol::ReverseTcp,
             },
             r: tunnel.remote.0.to_string(),
             rp: tunnel.remote.1,

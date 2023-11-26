@@ -28,6 +28,7 @@ use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
 
 use tracing::{error, info, Level};
 
+use crate::LocalProtocol::ReverseTcp;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
 
@@ -57,6 +58,12 @@ struct Client {
     /// 'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
     #[arg(short='L', long, value_name = "{tcp,udp,socks5,stdio}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
     local_to_remote: Vec<LocalToRemote>,
+
+    /// Listen on remote and forwards traffic from local. Can be specified multiple times. Only tcp is supported
+    /// examples:
+    /// 'tcp://1212:google.com:443'      =>     listen on server for incoming tcp cnx on port 1212 and forward to google.com on port 443 from local machine
+    #[arg(short='R', long, value_name = "{tcp}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
+    remote_to_local: Vec<LocalToRemote>,
 
     /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
     /// You need to use {root, sudo, capabilities} to run wstunnel when using this option
@@ -164,6 +171,7 @@ enum LocalProtocol {
     Udp { timeout: Option<Duration> },
     Stdio,
     Socks5,
+    ReverseTcp,
 }
 
 #[derive(Clone, Debug)]
@@ -537,6 +545,21 @@ async fn main() {
             let client_config = Arc::new(client_config);
 
             // Start tunnels
+            for mut tunnel in args.remote_to_local.into_iter() {
+                let client_config = client_config.clone();
+                match &tunnel.local_protocol {
+                    LocalProtocol::Tcp => {
+                        tunnel.local_protocol = ReverseTcp;
+                        tokio::spawn(async move {
+                            if let Err(err) = tunnel::client::run_reverse_tunnel(client_config, tunnel).await {
+                                error!("{:?}", err);
+                            }
+                        });
+                    }
+                    _ => panic!("Invalid protocol for reverse tunnel"),
+                }
+            }
+
             for tunnel in args.local_to_remote.into_iter() {
                 let client_config = client_config.clone();
 
@@ -604,6 +627,7 @@ async fn main() {
                             panic!("stdio is not implemented for non unix platform")
                         }
                     }
+                    LocalProtocol::ReverseTcp => {}
                 }
             }
         }

@@ -3,6 +3,7 @@ use std::{io, vec};
 
 use base64::Engine;
 use bytes::BytesMut;
+use log::warn;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -74,11 +75,11 @@ pub async fn connect(
                 break;
             }
             Ok(Err(err)) => {
-                debug!("Cannot connect to tcp endpoint {addr} reason {err}");
+                warn!("Cannot connect to tcp endpoint {addr} reason {err}");
                 last_err = Some(err);
             }
             Err(_) => {
-                debug!(
+                warn!(
                     "Cannot connect to tcp endpoint {addr} due to timeout of {}s elapsed",
                     connect_timeout.as_secs()
                 );
