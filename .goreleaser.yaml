@@ -4,6 +4,7 @@ builds:
       - darwin
       - windows
     goarch:
+      - "386"
       - amd64
       - arm64
       - arm
@@ -19,6 +20,10 @@ builds:
         goarch: arm64
       - goos: darwin
         goarch: arm
+      - goos: linux
+        goarch: "386"
+      - goos: darwin
+        goarch: "386"
     main: goreleaser.go
     hooks:
       #pre:

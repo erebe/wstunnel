@@ -10,6 +10,7 @@ case $go_arch in
     amd64) rust_arch='x86_64' ;;
     arm64) rust_arch='aarch64' ;;
     arm) rust_arch='armv7' ;;
+    386) rust_arch='i686' ;;
     *) echo "unknown arch: $go_arch" && exit 1 ;;
 esac
 case $go_os in
