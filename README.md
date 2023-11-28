@@ -67,14 +67,14 @@ Options:
           'socks5://[::1]:1212'            =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
           'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
   -R, --remote-to-local <{tcp,udp}://[BIND:]PORT:HOST:PORT>
-          Listen on remote and forwards traffic from local. Can be specified multiple times. Only tcp is supported
+          Listen on remote and forwards traffic from local. Can be specified multiple times.
           examples:
           'tcp://1212:google.com:443'      =>     listen on server for incoming tcp cnx on port 1212 and forward to google.com on port 443 from local machine
           'udp://1212:1.1.1.1:53'          =>     listen on server for incoming udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53 from local machine
       --socket-so-mark <INT>
           (linux only) Mark network packet with SO_MARK sockoption with the specified value.
           You need to use {root, sudo, capabilities} to run wstunnel when using this option
-     -c, --connection-min-idle <INT>
+  -c, --connection-min-idle <INT>
           Client will maintain a pool of open connection to the server, in order to speed up the connection process.
           This option set the maximum number of connection that will be kept open.
           This is useful if you plan to create/destroy a lot of tunnel (i.e: with socks5 to navigate with a browser)
