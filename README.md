@@ -19,13 +19,12 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 **What to expect:**
 
 * Good error messages and debug informations
-* Static tunneling (TCP and UDP)
+* Static forward and reverse tunneling (TCP and UDP)
 * Dynamic tunneling (socks5 proxy)
 * Support for http proxy (when behind one)
 * Support for tls/https server (with embedded self-signed certificate, see comment in the example section)
 * Support IPv6
-* **Standalone binary for linux x86_64** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
-* Standalone archive for windows
+* **Standalone binaries** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
 
 P.S: Please do not pay attention to Main.hs because as I hate to write command line code this file is crappy
 
