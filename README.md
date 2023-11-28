@@ -26,8 +26,6 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 * Support IPv6
 * **Standalone binaries** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
 
-P.S: Please do not pay attention to Main.hs because as I hate to write command line code this file is crappy
-
 ## Note
 
 v7.0.0 is a complete rewrite of wstunnel in Rust and is not compatible with previous version.
