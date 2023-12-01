@@ -58,7 +58,7 @@ struct Client {
     ///
     /// 'socks5://[::1]:1212'            =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
     ///
-    /// 'tproxy+tcp://[::1]:1212         =>     listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
+    /// 'tproxy+tcp://[::1]:1212'        =>     listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
     ///                                         linux only and requires sudo/CAP_NET_ADMIN
     ///
     /// 'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
