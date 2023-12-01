@@ -2,15 +2,17 @@ use ahash::{HashMap, HashMapExt};
 use anyhow::anyhow;
 use futures_util::{pin_mut, Stream, StreamExt};
 use std::cmp::min;
+use std::fmt::Debug;
 use std::future::Future;
-use std::io;
 use std::ops::{Deref, Not};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::{JwtTunnelConfig, JWT_DECODE};
-use crate::{tcp, tls, udp, LocalProtocol, WsServerConfig};
+use crate::{socks5, tcp, tls, udp, LocalProtocol, WsServerConfig};
+use hyper::header::COOKIE;
+use hyper::http::HeaderValue;
 use hyper::server::conn::Http;
 use hyper::service::service_fn;
 use hyper::{http, Body, Request, Response, StatusCode};
@@ -107,19 +109,33 @@ async fn from_query(
 
             Ok((jwt.claims.p, local_srv.0, local_srv.1, Box::pin(local_rx), Box::pin(local_tx)))
         }
+        LocalProtocol::ReverseSocks5 => {
+            #[allow(clippy::type_complexity)]
+            static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<(TcpStream, (Host, u16))>>>> =
+                Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
+
+            let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
+            let bind = format!("{}:{}", local_srv.0, local_srv.1);
+            let listening_server = socks5::run_server(bind.parse()?);
+            let (tcp, local_srv) = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
+            let (local_rx, local_tx) = tokio::io::split(tcp);
+
+            Ok((jwt.claims.p, local_srv.0, local_srv.1, Box::pin(local_rx), Box::pin(local_tx)))
+        }
         _ => Err(anyhow::anyhow!("Invalid upgrade request")),
     }
 }
 
 #[allow(clippy::type_complexity)]
-async fn run_listening_server<T, Fut, FutOut>(
+async fn run_listening_server<T, Fut, FutOut, E>(
     local_srv: &(Host, u16),
     servers: &Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<T>>>,
     gen_listening_server: Fut,
 ) -> anyhow::Result<T>
 where
     Fut: Future<Output = anyhow::Result<FutOut>>,
-    FutOut: Stream<Item = io::Result<T>> + Send + 'static,
+    FutOut: Stream<Item = Result<T, E>> + Send + 'static,
+    E: Debug + Send,
     T: Send + 'static,
 {
     let listening_server = servers.lock().remove(local_srv);
@@ -214,7 +230,7 @@ async fn server_upgrade(
         };
 
     info!("connected to {:?} {:?} {:?}", protocol, dest, port);
-    let (response, fut) = match fastwebsockets::upgrade::upgrade(&mut req) {
+    let (mut response, fut) = match fastwebsockets::upgrade::upgrade(&mut req) {
         Ok(ret) => ret,
         Err(err) => {
             warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
@@ -244,6 +260,9 @@ async fn server_upgrade(
         .instrument(Span::current()),
     );
 
+    response
+        .headers_mut()
+        .insert(COOKIE, HeaderValue::from_str(&format!("fake://{}:{}", dest, port)).unwrap());
     Ok(response)
 }
 

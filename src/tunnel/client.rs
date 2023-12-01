@@ -1,15 +1,14 @@
-use super::{JwtTunnelConfig, JWT_KEY};
+use super::{to_host_port, JwtTunnelConfig, JWT_KEY};
 use crate::{LocalToRemote, WsClientConfig};
 use anyhow::{anyhow, Context};
 
 use fastwebsockets::WebSocket;
 use futures_util::pin_mut;
-use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_VERSION, UPGRADE};
+use hyper::header::{AUTHORIZATION, COOKIE, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::upgrade::Upgraded;
-use hyper::{Body, Request};
+use hyper::{Body, Request, Response};
 use std::future::Future;
-use std::net::IpAddr;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -17,7 +16,7 @@ use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tracing::log::debug;
 use tracing::{error, span, Instrument, Level, Span};
-use url::Host;
+use url::{Host, Url};
 use uuid::Uuid;
 
 struct SpawnExecutor;
@@ -42,7 +41,7 @@ pub async fn connect(
     request_id: Uuid,
     client_cfg: &WsClientConfig,
     tunnel_cfg: &LocalToRemote,
-) -> anyhow::Result<WebSocket<Upgraded>> {
+) -> anyhow::Result<(WebSocket<Upgraded>, Response<Body>)> {
     let mut pooled_cnx = match client_cfg.cnx_pool().get().await {
         Ok(tcp_stream) => tcp_stream,
         Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}"))?,
@@ -77,11 +76,11 @@ pub async fn connect(
     })?;
     debug!("with HTTP upgrade request {:?}", req);
     let transport = pooled_cnx.deref_mut().take().unwrap();
-    let (ws, _) = fastwebsockets::handshake::client(&SpawnExecutor, req, transport)
+    let (ws, response) = fastwebsockets::handshake::client(&SpawnExecutor, req, transport)
         .await
         .with_context(|| format!("failed to do websocket handshake with the server {:?}", client_cfg.remote_addr))?;
 
-    Ok(ws)
+    Ok((ws, response))
 }
 
 async fn connect_to_server<R, W>(
@@ -94,7 +93,7 @@ where
     R: AsyncRead + Send + 'static,
     W: AsyncWrite + Send + 'static,
 {
-    let mut ws = connect(request_id, client_cfg, remote_cfg).await?;
+    let (mut ws, _) = connect(request_id, client_cfg, remote_cfg).await?;
     ws.set_auto_apply_mask(client_cfg.websocket_mask_frame);
 
     let (ws_rx, ws_tx) = ws.split(tokio::io::split);
@@ -155,16 +154,13 @@ pub async fn run_reverse_tunnel<F, Fut, T>(
     connect_to_dest: F,
 ) -> anyhow::Result<()>
 where
-    F: Fn() -> Fut,
+    F: Fn((Host, u16)) -> Fut,
     Fut: Future<Output = anyhow::Result<T>>,
     T: AsyncRead + AsyncWrite + Send + 'static,
 {
     // Invert local with remote
-    let remote = tunnel_cfg.remote;
-    tunnel_cfg.remote = match tunnel_cfg.local.ip() {
-        IpAddr::V4(ip) => (Host::Ipv4(ip), tunnel_cfg.local.port()),
-        IpAddr::V6(ip) => (Host::Ipv6(ip), tunnel_cfg.local.port()),
-    };
+    let remote_ori = tunnel_cfg.remote;
+    tunnel_cfg.remote = to_host_port(tunnel_cfg.local);
 
     loop {
         let client_config = client_config.clone();
@@ -178,13 +174,26 @@ where
         let _span = span.enter();
 
         // Correctly configure tunnel cfg
-        let mut ws = connect(request_id, &client_config, &tunnel_cfg)
+        let (mut ws, response) = connect(request_id, &client_config, &tunnel_cfg)
             .instrument(span.clone())
             .await?;
         ws.set_auto_apply_mask(client_config.websocket_mask_frame);
 
         // Connect to endpoint
-        let stream = connect_to_dest().instrument(span.clone()).await;
+        let remote: (Host, u16) = response
+            .headers()
+            .get(COOKIE)
+            .and_then(|h| {
+                h.to_str()
+                    .ok()
+                    .and_then(|s| Url::parse(s).ok())
+                    .and_then(|url| match (url.host(), url.port()) {
+                        (Some(h), Some(p)) => Some((h.to_owned(), p)),
+                        _ => None,
+                    })
+            })
+            .unwrap_or(remote_ori.clone());
+        let stream = connect_to_dest(remote.clone()).instrument(span.clone()).await;
 
         let stream = match stream {
             Ok(s) => s,

@@ -69,6 +69,7 @@ struct Client {
     /// examples:
     /// 'tcp://1212:google.com:443'      =>     listen on server for incoming tcp cnx on port 1212 and forward to google.com on port 443 from local machine
     /// 'udp://1212:1.1.1.1:53'          =>     listen on server for incoming udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53 from local machine
+    /// 'socks://[::1]:1212'             =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine
     #[arg(short='R', long, value_name = "{tcp,udp}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
     remote_to_local: Vec<LocalToRemote>,
 
@@ -181,6 +182,7 @@ enum LocalProtocol {
     TProxyTcp,
     ReverseTcp,
     ReverseUdp { timeout: Option<Duration> },
+    ReverseSocks5,
 }
 
 #[derive(Clone, Debug)]
@@ -572,7 +574,7 @@ async fn main() {
                         tokio::spawn(async move {
                             let remote = tunnel.remote.clone();
                             let cfg = client_config.clone();
-                            let connect_to_dest = || async {
+                            let connect_to_dest = |_| async {
                                 tcp::connect(&remote.0, remote.1, cfg.socket_so_mark, cfg.timeout_connect).await
                             };
 
@@ -590,7 +592,24 @@ async fn main() {
                             let cfg = client_config.clone();
                             let remote = tunnel.remote.clone();
                             let connect_to_dest =
-                                || async { udp::connect(&remote.0, remote.1, cfg.timeout_connect).await };
+                                |_| async { udp::connect(&remote.0, remote.1, cfg.timeout_connect).await };
+
+                            if let Err(err) =
+                                tunnel::client::run_reverse_tunnel(client_config, tunnel, connect_to_dest).await
+                            {
+                                error!("{:?}", err);
+                            }
+                        });
+                    }
+                    LocalProtocol::Socks5 => {
+                        tunnel.local_protocol = LocalProtocol::ReverseSocks5;
+                        tokio::spawn(async move {
+                            let cfg = client_config.clone();
+                            let connect_to_dest = |remote: (Host, u16)| {
+                                let so_mark = cfg.socket_so_mark;
+                                let timeout = cfg.timeout_connect;
+                                async move { tcp::connect(&remote.0, remote.1, so_mark, timeout).await }
+                            };
 
                             if let Err(err) =
                                 tunnel::client::run_reverse_tunnel(client_config, tunnel, connect_to_dest).await
@@ -693,6 +712,7 @@ async fn main() {
                     }
                     LocalProtocol::ReverseTcp => {}
                     LocalProtocol::ReverseUdp { .. } => {}
+                    LocalProtocol::ReverseSocks5 => {}
                 }
             }
         }
