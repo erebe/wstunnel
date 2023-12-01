@@ -56,7 +56,8 @@ struct Client {
     /// 'udp://1212:1.1.1.1:53?timeout_sec=10'  timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
     /// 'socks5://[::1]:1212'            =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
     /// 'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
-    /// 'tproxy+tcp://[::1]:1212         =>     listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel (linux only requires sudo/CAP_NET_ADMIN)
+    /// 'tproxy+tcp://[::1]:1212         =>     listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
+    ///                                         linux only and requires sudo/CAP_NET_ADMIN
     #[arg(short='L', long, value_name = "{tcp,udp,socks5,stdio}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
     local_to_remote: Vec<LocalToRemote>,
 
