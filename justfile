@@ -3,15 +3,15 @@ set dotenv-load := false
 _default:
     @just --list
 
-make_release $VERSION:
+make_release $VERSION $FORCE="":
    sed -i 's/^version = .*/version = "'$VERSION'"/g' Cargo.toml
    cargo fmt --all -- --check --color=always || (echo "Use cargo fmt to format your code"; exit 1)
    cargo clippy --all --all-features -- -D warnings || (echo "Solve your clippy warnings to succeed"; exit 1)
    git add Cargo.*
    git commit -m 'Bump version v'$VERSION
-   git tag v$VERSION -m 'version v'$VERSION
+   git tag $FORCE v$VERSION -m 'version v'$VERSION
    git push
-   git push origin v$VERSION
+   git push $FORCE origin v$VERSION
    @just docker_release v$VERSION
 
 docker_release $TAG:
