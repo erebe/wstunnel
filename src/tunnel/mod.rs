@@ -10,11 +10,13 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{Error, IoSlice};
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
+use url::Host;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +38,7 @@ impl JwtTunnelConfig {
                 LocalProtocol::Socks5 => LocalProtocol::Tcp,
                 LocalProtocol::ReverseTcp => LocalProtocol::ReverseTcp,
                 LocalProtocol::ReverseUdp { .. } => tunnel.local_protocol,
+                LocalProtocol::TProxyTcp => LocalProtocol::Tcp,
             },
             r: tunnel.remote.0.to_string(),
             rp: tunnel.remote.1,
@@ -139,5 +142,12 @@ impl ManageConnection for WsClientConfig {
 
     fn has_broken(&self, conn: &mut Self::Connection) -> bool {
         conn.is_none()
+    }
+}
+
+pub fn to_host_port(addr: SocketAddr) -> (Host, u16) {
+    match addr.ip() {
+        IpAddr::V4(ip) => (Host::Ipv4(ip), addr.port()),
+        IpAddr::V6(ip) => (Host::Ipv6(ip), addr.port()),
     }
 }

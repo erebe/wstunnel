@@ -88,7 +88,7 @@ async fn from_query(
 
             let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
-            let listening_server = tcp::run_server(bind.parse()?);
+            let listening_server = tcp::run_server(bind.parse()?, false);
             let tcp = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let (local_rx, local_tx) = tcp.into_split();
 

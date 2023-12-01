@@ -169,12 +169,19 @@ pub async fn connect_with_http_proxy(
     Ok(socket)
 }
 
-pub async fn run_server(bind: SocketAddr) -> Result<TcpListenerStream, anyhow::Error> {
+pub async fn run_server(bind: SocketAddr, ip_transparent: bool) -> Result<TcpListenerStream, anyhow::Error> {
     info!("Starting TCP server listening cnx on {}", bind);
 
     let listener = TcpListener::bind(bind)
         .await
         .with_context(|| format!("Cannot create TCP server {:?}", bind))?;
+
+    #[cfg(target_os = "linux")]
+    if ip_transparent {
+        info!("TCP server listening in TProxy mode");
+        socket2::SockRef::from(&listener).set_ip_transparent(ip_transparent)?;
+    }
+
     Ok(TcpListenerStream::new(listener))
 }
 

@@ -6,7 +6,6 @@
 <p align="right">
   <a href="https://ko-fi.com/P5P4QCHMO"><img src="https://ko-fi.com/img/githubbutton_sm.svg"/></a>
   <br/>
-  Donations goes to Wife, so she can allow me to work on the project
 </p>
 
 
@@ -22,7 +21,7 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 
 * Good error messages and debug informations
 * Static forward and reverse tunneling (TCP and UDP)
-* Dynamic tunneling (socks5 proxy)
+* Dynamic tunneling (Socks5 proxy and Transparent Proxy)
 * Support for http proxy (when behind one)
 * Support for tls/https server (with embedded self-signed certificate, see comment in the example section)
 * Support IPv6

@@ -28,7 +28,7 @@ use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
 
 use tracing::{error, info, Level};
 
-use crate::LocalProtocol::ReverseTcp;
+use crate::tunnel::to_host_port;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
 
@@ -56,6 +56,7 @@ struct Client {
     /// 'udp://1212:1.1.1.1:53?timeout_sec=10'  timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
     /// 'socks5://[::1]:1212'            =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
     /// 'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
+    /// 'tproxy+tcp://[::1]:1212         =>     listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel (linux only requires sudo/CAP_NET_ADMIN)
     #[arg(short='L', long, value_name = "{tcp,udp,socks5,stdio}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
     local_to_remote: Vec<LocalToRemote>,
 
@@ -172,6 +173,7 @@ enum LocalProtocol {
     Udp { timeout: Option<Duration> },
     Stdio,
     Socks5,
+    TProxyTcp,
     ReverseTcp,
     ReverseUdp { timeout: Option<Duration> },
 }
@@ -312,6 +314,16 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
                 Ok(LocalToRemote {
                     local_protocol: LocalProtocol::Stdio,
                     local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(0), 0)),
+                    remote: (dest_host, dest_port),
+                })
+            }
+            "tproxy+t" => {
+                let (local_bind, remaining) = parse_local_bind(&arg["tproxy+tcp://".len()..])?;
+                let x = format!("0.0.0.0:0?{}", remaining);
+                let (dest_host, dest_port, _options) = parse_tunnel_dest(&x)?;
+                Ok(LocalToRemote {
+                    local_protocol: LocalProtocol::TProxyTcp,
+                    local: local_bind,
                     remote: (dest_host, dest_port),
                 })
             }
@@ -551,7 +563,7 @@ async fn main() {
                 let client_config = client_config.clone();
                 match &tunnel.local_protocol {
                     LocalProtocol::Tcp => {
-                        tunnel.local_protocol = ReverseTcp;
+                        tunnel.local_protocol = LocalProtocol::ReverseTcp;
                         tokio::spawn(async move {
                             let remote = tunnel.remote.clone();
                             let cfg = client_config.clone();
@@ -592,7 +604,7 @@ async fn main() {
                 match &tunnel.local_protocol {
                     LocalProtocol::Tcp => {
                         let remote = tunnel.remote.clone();
-                        let server = tcp::run_server(tunnel.local)
+                        let server = tcp::run_server(tunnel.local, false)
                             .await
                             .unwrap_or_else(|err| panic!("Cannot start TCP server on {}: {}", tunnel.local, err))
                             .map_err(anyhow::Error::new)
@@ -603,6 +615,28 @@ async fn main() {
                                 error!("{:?}", err);
                             }
                         });
+                    }
+                    #[cfg(target_os = "linux")]
+                    LocalProtocol::TProxyTcp => {
+                        let server = tcp::run_server(tunnel.local, true)
+                            .await
+                            .unwrap_or_else(|err| panic!("Cannot start TProxy server on {}: {}", tunnel.local, err))
+                            .map_err(anyhow::Error::new)
+                            .map_ok(move |stream| {
+                                // In TProxy mode local destination is the final ip:port destination
+                                let dest = to_host_port(stream.local_addr().unwrap());
+                                (stream.into_split(), dest)
+                            });
+
+                        tokio::spawn(async move {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
+                                error!("{:?}", err);
+                            }
+                        });
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    LocalProtocol::TProxyTcp => {
+                        panic!("Transparent proxy is not available for non Linux platform")
                     }
                     LocalProtocol::Udp { timeout } => {
                         let remote = tunnel.remote.clone();
@@ -630,28 +664,27 @@ async fn main() {
                             }
                         });
                     }
+
+                    #[cfg(target_family = "unix")]
                     LocalProtocol::Stdio => {
-                        #[cfg(target_family = "unix")]
-                        {
-                            let server = stdio::run_server().await.unwrap_or_else(|err| {
-                                panic!("Cannot start STDIO server: {}", err);
-                            });
-                            tokio::spawn(async move {
-                                if let Err(err) = tunnel::client::run_tunnel(
-                                    client_config,
-                                    tunnel.clone(),
-                                    stream::once(async move { Ok((server, tunnel.remote)) }),
-                                )
-                                .await
-                                {
-                                    error!("{:?}", err);
-                                }
-                            });
-                        }
-                        #[cfg(not(target_family = "unix"))]
-                        {
-                            panic!("stdio is not implemented for non unix platform")
-                        }
+                        let server = stdio::run_server().await.unwrap_or_else(|err| {
+                            panic!("Cannot start STDIO server: {}", err);
+                        });
+                        tokio::spawn(async move {
+                            if let Err(err) = tunnel::client::run_tunnel(
+                                client_config,
+                                tunnel.clone(),
+                                stream::once(async move { Ok((server, tunnel.remote)) }),
+                            )
+                            .await
+                            {
+                                error!("{:?}", err);
+                            }
+                        });
+                    }
+                    #[cfg(not(target_family = "unix"))]
+                    LocalProtocol::Stdio => {
+                        panic!("stdio is not implemented for non unix platform")
                     }
                     LocalProtocol::ReverseTcp => {}
                     LocalProtocol::ReverseUdp { .. } => {}
