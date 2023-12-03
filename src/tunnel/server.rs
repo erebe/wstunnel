@@ -202,12 +202,15 @@ async fn server_upgrade(
             .unwrap_or_default());
     }
 
-    if let Some(path_prefix) = &server_config.restrict_http_upgrade_path_prefix {
+    if let Some(paths_prefix) = &server_config.restrict_http_upgrade_path_prefix {
         let path = req.uri().path();
         let min_len = min(path.len(), 1);
-        let max_len = min(path.len(), path_prefix.len() + 1);
+        let mut max_len = 0;
         if &path[0..min_len] != "/"
-            || &path[min_len..max_len] != path_prefix.as_str()
+            || !paths_prefix.iter().any(|p| {
+                max_len = min(path.len(), p.len() + 1);
+                p == &path[min_len..max_len]
+            })
             || !path[max_len..].starts_with('/')
         {
             warn!("Rejecting connection with bad path prefix in upgrade request: {}", req.uri());

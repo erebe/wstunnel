@@ -430,7 +430,9 @@ mod tests {
     #[tokio::test]
     async fn test_udp_server() {
         let server_addr: SocketAddr = "[::1]:1234".parse().unwrap();
-        let server = run_server(server_addr, None, |_| Ok(()), |l| Ok(l.clone())).await.unwrap();
+        let server = run_server(server_addr, None, |_| Ok(()), |l| Ok(l.clone()))
+            .await
+            .unwrap();
         pin_mut!(server);
 
         // Should timeout
@@ -476,7 +478,11 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_client() {
         let server_addr: SocketAddr = "[::1]:1235".parse().unwrap();
-        let mut server = Box::pin(run_server(server_addr, None, |_| Ok(()), |l| Ok(l.clone())).await.unwrap());
+        let mut server = Box::pin(
+            run_server(server_addr, None, |_| Ok(()), |l| Ok(l.clone()))
+                .await
+                .unwrap(),
+        );
 
         // Send some data to the server
         let client = UdpSocket::bind("[::1]:0").await.unwrap();
@@ -542,7 +548,9 @@ mod tests {
     async fn test_udp_should_timeout() {
         let server_addr: SocketAddr = "[::1]:1237".parse().unwrap();
         let socket_timeout = Duration::from_secs(1);
-        let server = run_server(server_addr, Some(socket_timeout), |_| Ok(()), |l| Ok(l.clone())).await.unwrap();
+        let server = run_server(server_addr, Some(socket_timeout), |_| Ok(()), |l| Ok(l.clone()))
+            .await
+            .unwrap();
         pin_mut!(server);
 
         // Send some data to the server
