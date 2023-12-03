@@ -23,15 +23,15 @@ use tokio::time::{timeout, Interval};
 use tracing::{debug, error, info};
 use url::Host;
 
-struct IoInner {
-    has_data_to_read: Notify,
-    has_read_data: Notify,
+pub struct IoInner {
+    pub has_data_to_read: Notify,
+    pub has_read_data: Notify,
 }
-struct UdpServer {
-    listener: Arc<UdpSocket>,
-    peers: HashMap<SocketAddr, Pin<Arc<IoInner>>, ahash::RandomState>,
-    keys_to_delete: Arc<RwLock<Vec<SocketAddr>>>,
-    cnx_timeout: Option<Duration>,
+pub struct UdpServer {
+    pub listener: Arc<UdpSocket>,
+    pub peers: HashMap<SocketAddr, Pin<Arc<IoInner>>, ahash::RandomState>,
+    pub keys_to_delete: Arc<RwLock<Vec<SocketAddr>>>,
+    pub cnx_timeout: Option<Duration>,
 }
 
 impl UdpServer {
@@ -55,7 +55,7 @@ impl UdpServer {
         }
     }
     #[inline]
-    fn clean_dead_keys(&mut self) {
+    pub fn clean_dead_keys(&mut self) {
         let nb_key_to_delete = self.keys_to_delete.read().len();
         if nb_key_to_delete == 0 {
             return;
@@ -68,14 +68,15 @@ impl UdpServer {
         }
         keys_to_delete.clear();
     }
-    fn clone_socket(&self) -> Arc<UdpSocket> {
+    pub fn clone_socket(&self) -> Arc<UdpSocket> {
         self.listener.clone()
     }
 }
 
 #[pin_project(PinnedDrop)]
 pub struct UdpStream {
-    socket: Arc<UdpSocket>,
+    recv_socket: Arc<UdpSocket>,
+    send_socket: Arc<UdpSocket>,
     peer: SocketAddr,
     #[pin]
     watchdog_deadline: Option<Interval>,
@@ -103,8 +104,9 @@ impl PinnedDrop for UdpStream {
 }
 
 impl UdpStream {
-    fn new(
-        socket: Arc<UdpSocket>,
+    pub fn new(
+        recv_socket: Arc<UdpSocket>,
+        send_socket: Arc<UdpSocket>,
         peer: SocketAddr,
         watchdog_deadline: Option<Duration>,
         keys_to_delete: Weak<RwLock<Vec<SocketAddr>>>,
@@ -116,7 +118,8 @@ impl UdpStream {
             has_read_data,
         });
         let mut s = Self {
-            socket,
+            recv_socket,
+            send_socket,
             peer,
             watchdog_deadline: watchdog_deadline
                 .map(|timeout| tokio::time::interval_at(tokio::time::Instant::now() + timeout, timeout)),
@@ -131,6 +134,10 @@ impl UdpStream {
         s.pending_notification = Some(pending_notification);
 
         (s, io)
+    }
+
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.send_socket.local_addr()
     }
 }
 
@@ -161,7 +168,7 @@ impl AsyncRead for UdpStream {
             project.pending_notification.as_mut().set(None);
         }
 
-        let peer = ready!(project.socket.poll_recv_from(cx, obuf))?;
+        let peer = ready!(project.recv_socket.poll_recv_from(cx, obuf))?;
         debug_assert_eq!(peer, *project.peer);
         *project.data_read_before_deadline = true;
 
@@ -179,11 +186,11 @@ impl AsyncRead for UdpStream {
 
 impl AsyncWrite for UdpStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
-        self.socket.poll_send_to(cx, buf, self.peer)
+        self.send_socket.poll_send_to(cx, buf, self.peer)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
-        self.socket.poll_send_ready(cx)
+        self.send_socket.poll_send_ready(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
@@ -194,6 +201,8 @@ impl AsyncWrite for UdpStream {
 pub async fn run_server(
     bind: SocketAddr,
     timeout: Option<Duration>,
+    configure_listener: impl Fn(&UdpSocket) -> anyhow::Result<()>,
+    mk_send_socket: impl Fn(&Arc<UdpSocket>) -> anyhow::Result<Arc<UdpSocket>>,
 ) -> Result<impl Stream<Item = io::Result<UdpStream>>, anyhow::Error> {
     info!(
         "Starting UDP server listening cnx on {} with cnx timeout of {}s",
@@ -204,46 +213,51 @@ pub async fn run_server(
     let listener = UdpSocket::bind(bind)
         .await
         .with_context(|| format!("Cannot create UDP server {:?}", bind))?;
+    configure_listener(&listener)?;
 
     let udp_server = UdpServer::new(listener, timeout);
-    let stream = stream::unfold((udp_server, None), |(mut server, peer_with_data)| async move {
-        // New returned peer hasn't read its data yet, await for it.
-        if let Some(await_peer) = peer_with_data {
-            if let Some(peer) = server.peers.get(&await_peer) {
-                peer.has_read_data.notified().await;
-            }
-        };
-
-        loop {
-            server.clean_dead_keys();
-            let peer_addr = match server.listener.peek_sender().await {
-                Ok(ret) => ret,
-                Err(err) => {
-                    error!("Cannot read from UDP server. Closing server: {}", err);
-                    return None;
+    let stream = stream::unfold(
+        (udp_server, None, mk_send_socket),
+        |(mut server, peer_with_data, mk_send_socket)| async move {
+            // New returned peer hasn't read its data yet, await for it.
+            if let Some(await_peer) = peer_with_data {
+                if let Some(peer) = server.peers.get(&await_peer) {
+                    peer.has_read_data.notified().await;
                 }
             };
 
-            match server.peers.get(&peer_addr) {
-                Some(io) => {
-                    io.has_data_to_read.notify_one();
-                    io.has_read_data.notified().await;
-                }
-                None => {
-                    info!("New UDP connection from {}", peer_addr);
-                    let (udp_client, io) = UdpStream::new(
-                        server.clone_socket(),
-                        peer_addr,
-                        server.cnx_timeout,
-                        Arc::downgrade(&server.keys_to_delete),
-                    );
-                    io.has_data_to_read.notify_waiters();
-                    server.peers.insert(peer_addr, io);
-                    return Some((Ok(udp_client), (server, Some(peer_addr))));
+            loop {
+                server.clean_dead_keys();
+                let peer_addr = match server.listener.peek_sender().await {
+                    Ok(ret) => ret,
+                    Err(err) => {
+                        error!("Cannot read from UDP server. Closing server: {}", err);
+                        return None;
+                    }
+                };
+
+                match server.peers.get(&peer_addr) {
+                    Some(io) => {
+                        io.has_data_to_read.notify_one();
+                        io.has_read_data.notified().await;
+                    }
+                    None => {
+                        info!("New UDP connection from {}", peer_addr);
+                        let (udp_client, io) = UdpStream::new(
+                            server.clone_socket(),
+                            mk_send_socket(&server.listener).ok()?,
+                            peer_addr,
+                            server.cnx_timeout,
+                            Arc::downgrade(&server.keys_to_delete),
+                        );
+                        io.has_data_to_read.notify_waiters();
+                        server.peers.insert(peer_addr, io);
+                        return Some((Ok(udp_client), (server, Some(peer_addr), mk_send_socket)));
+                    }
                 }
             }
-        }
-    });
+        },
+    );
 
     Ok(stream)
 }
@@ -336,6 +350,75 @@ pub async fn connect(host: &Host<String>, port: u16, connect_timeout: Duration) 
     }
 }
 
+#[cfg(target_os = "linux")]
+pub fn configure_tproxy(listener: &UdpSocket) -> anyhow::Result<()> {
+    use std::net::IpAddr;
+    use std::os::fd::AsFd;
+
+    socket2::SockRef::from(&listener).set_ip_transparent(true)?;
+    match listener.local_addr().unwrap().ip() {
+        IpAddr::V4(_) => {
+            nix::sys::socket::setsockopt(&listener.as_fd(), nix::sys::socket::sockopt::Ipv4OrigDstAddr, &true)?;
+        }
+        IpAddr::V6(_) => {
+            nix::sys::socket::setsockopt(&listener.as_fd(), nix::sys::socket::sockopt::Ipv6OrigDstAddr, &true)?;
+        }
+    };
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn mk_send_socket_tproxy(listener: &Arc<UdpSocket>) -> anyhow::Result<Arc<UdpSocket>> {
+    use nix::cmsg_space;
+    use nix::sys::socket::{ControlMessageOwned, RecvMsg, SockaddrIn};
+    use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+    use std::io::IoSliceMut;
+    use std::net::IpAddr;
+    use std::os::fd::AsRawFd;
+
+    let mut x = cmsg_space!(libc::sockaddr_in6);
+    let mut buf = [0; 8];
+    let mut io = [IoSliceMut::new(&mut buf)];
+    let msg: nix::Result<RecvMsg<SockaddrIn>> = nix::sys::socket::recvmsg(
+        listener.as_raw_fd(),
+        &mut io,
+        Some(&mut x),
+        nix::sys::socket::MsgFlags::MSG_PEEK,
+    );
+
+    let mut remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+    let msg = msg.unwrap();
+    for cmsg in msg.cmsgs() {
+        match cmsg {
+            ControlMessageOwned::Ipv4OrigDstAddr(ip) => {
+                remote_addr = SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::from(u32::from_be(ip.sin_addr.s_addr))),
+                    u16::from_be(ip.sin_port),
+                );
+            }
+            ControlMessageOwned::Ipv6OrigDstAddr(ip) => {
+                remote_addr = SocketAddr::new(
+                    IpAddr::V6(Ipv6Addr::from(u128::from_be_bytes(ip.sin6_addr.s6_addr))),
+                    u16::from_be(ip.sin6_port),
+                );
+            }
+            _ => {
+                warn!("Unknown control message {:?}", cmsg);
+            }
+        }
+    }
+
+    let socket = Socket::new(Domain::for_address(remote_addr), Type::DGRAM, Some(Protocol::UDP)).unwrap();
+    socket.set_ip_transparent(true).unwrap();
+    socket.set_reuse_address(true).unwrap();
+    socket.set_reuse_port(true).unwrap();
+    socket.bind(&SockAddr::from(remote_addr)).unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let socket = UdpSocket::from_std(std::net::UdpSocket::from(socket)).unwrap();
+
+    Ok(Arc::new(socket))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,7 +430,7 @@ mod tests {
     #[tokio::test]
     async fn test_udp_server() {
         let server_addr: SocketAddr = "[::1]:1234".parse().unwrap();
-        let server = run_server(server_addr, None).await.unwrap();
+        let server = run_server(server_addr, None, |_| Ok(()), |l| Ok(l.clone())).await.unwrap();
         pin_mut!(server);
 
         // Should timeout
@@ -393,7 +476,7 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_client() {
         let server_addr: SocketAddr = "[::1]:1235".parse().unwrap();
-        let mut server = Box::pin(run_server(server_addr, None).await.unwrap());
+        let mut server = Box::pin(run_server(server_addr, None, |_| Ok(()), |l| Ok(l.clone())).await.unwrap());
 
         // Send some data to the server
         let client = UdpSocket::bind("[::1]:0").await.unwrap();
@@ -459,7 +542,7 @@ mod tests {
     async fn test_udp_should_timeout() {
         let server_addr: SocketAddr = "[::1]:1237".parse().unwrap();
         let socket_timeout = Duration::from_secs(1);
-        let server = run_server(server_addr, Some(socket_timeout)).await.unwrap();
+        let server = run_server(server_addr, Some(socket_timeout), |_| Ok(()), |l| Ok(l.clone())).await.unwrap();
         pin_mut!(server);
 
         // Send some data to the server

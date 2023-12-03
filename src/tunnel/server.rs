@@ -103,7 +103,8 @@ async fn from_query(
 
             let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
-            let listening_server = udp::run_server(bind.parse()?, timeout);
+            let listening_server =
+                udp::run_server(bind.parse()?, timeout, |_| Ok(()), |send_socket| Ok(send_socket.clone()));
             let udp = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let (local_rx, local_tx) = tokio::io::split(udp);
 

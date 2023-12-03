@@ -51,17 +51,18 @@ enum Commands {
 struct Client {
     /// Listen on local and forwards traffic from remote. Can be specified multiple times
     /// examples:
-    /// 'tcp://1212:google.com:443'      =>     listen locally on tcp on port 1212 and forward to google.com on port 443
+    /// 'tcp://1212:google.com:443'      =>       listen locally on tcp on port 1212 and forward to google.com on port 443
     ///
-    /// 'udp://1212:1.1.1.1:53'          =>     listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
-    /// 'udp://1212:1.1.1.1:53?timeout_sec=10'  timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
+    /// 'udp://1212:1.1.1.1:53'          =>       listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
+    /// 'udp://1212:1.1.1.1:53?timeout_sec=10'    timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
     ///
-    /// 'socks5://[::1]:1212'            =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
+    /// 'socks5://[::1]:1212'            =>       listen locally with socks5 on port 1212 and forward dynamically requested tunnel
     ///
-    /// 'tproxy+tcp://[::1]:1212'        =>     listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
-    ///                                         linux only and requires sudo/CAP_NET_ADMIN
+    /// 'tproxy+tcp://[::1]:1212'        =>       listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
+    /// 'tproxy+udp://[::1]:1212?timeout_sec=10'  listen locally on udp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
+    ///                                           linux only and requires sudo/CAP_NET_ADMIN
     ///
-    /// 'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
+    /// 'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
     #[arg(short='L', long, value_name = "{tcp,udp,socks5,stdio}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
     local_to_remote: Vec<LocalToRemote>,
 
@@ -180,6 +181,7 @@ enum LocalProtocol {
     Stdio,
     Socks5,
     TProxyTcp,
+    TProxyUdp { timeout: Option<Duration> },
     ReverseTcp,
     ReverseUdp { timeout: Option<Duration> },
     ReverseSocks5,
@@ -330,6 +332,21 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
                 let (dest_host, dest_port, _options) = parse_tunnel_dest(&x)?;
                 Ok(LocalToRemote {
                     local_protocol: LocalProtocol::TProxyTcp,
+                    local: local_bind,
+                    remote: (dest_host, dest_port),
+                })
+            }
+            "tproxy+u" => {
+                let (local_bind, remaining) = parse_local_bind(&arg["tproxy+udp://".len()..])?;
+                let x = format!("0.0.0.0:0?{}", remaining);
+                let (dest_host, dest_port, options) = parse_tunnel_dest(&x)?;
+                let timeout = options
+                    .get("timeout_sec")
+                    .and_then(|x| x.parse::<u64>().ok())
+                    .map(|d| if d == 0 { None } else { Some(Duration::from_secs(d)) })
+                    .unwrap_or(Some(Duration::from_secs(30)));
+                Ok(LocalToRemote {
+                    local_protocol: LocalProtocol::TProxyUdp { timeout },
                     local: local_bind,
                     remote: (dest_host, dest_port),
                 })
@@ -644,7 +661,7 @@ async fn main() {
                     LocalProtocol::TProxyTcp => {
                         let server = tcp::run_server(tunnel.local, true)
                             .await
-                            .unwrap_or_else(|err| panic!("Cannot start TProxy server on {}: {}", tunnel.local, err))
+                            .unwrap_or_else(|err| panic!("Cannot start TProxy TCP server on {}: {}", tunnel.local, err))
                             .map_err(anyhow::Error::new)
                             .map_ok(move |stream| {
                                 // In TProxy mode local destination is the final ip:port destination
@@ -658,13 +675,34 @@ async fn main() {
                             }
                         });
                     }
+                    #[cfg(target_os = "linux")]
+                    LocalProtocol::TProxyUdp { timeout } => {
+                        let server =
+                            udp::run_server(tunnel.local, *timeout, udp::configure_tproxy, udp::mk_send_socket_tproxy)
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("Cannot start TProxy UDP server on {}: {}", tunnel.local, err)
+                                })
+                                .map_err(anyhow::Error::new)
+                                .map_ok(move |stream| {
+                                    // In TProxy mode local destination is the final ip:port destination
+                                    let dest = to_host_port(stream.local_addr().unwrap());
+                                    (tokio::io::split(stream), dest)
+                                });
+
+                        tokio::spawn(async move {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
+                                error!("{:?}", err);
+                            }
+                        });
+                    }
                     #[cfg(not(target_os = "linux"))]
-                    LocalProtocol::TProxyTcp => {
+                    LocalProtocol::TProxyTcp | LocalProtocol::TProxyUdp { .. } => {
                         panic!("Transparent proxy is not available for non Linux platform")
                     }
                     LocalProtocol::Udp { timeout } => {
                         let remote = tunnel.remote.clone();
-                        let server = udp::run_server(tunnel.local, *timeout)
+                        let server = udp::run_server(tunnel.local, *timeout, |_| Ok(()), |s| Ok(s.clone()))
                             .await
                             .unwrap_or_else(|err| panic!("Cannot start UDP server on {}: {}", tunnel.local, err))
                             .map_err(anyhow::Error::new)

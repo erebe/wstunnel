@@ -40,6 +40,7 @@ impl JwtTunnelConfig {
                 LocalProtocol::ReverseUdp { .. } => tunnel.local_protocol,
                 LocalProtocol::ReverseSocks5 => LocalProtocol::ReverseSocks5,
                 LocalProtocol::TProxyTcp => LocalProtocol::Tcp,
+                LocalProtocol::TProxyUdp { timeout } => LocalProtocol::Udp { timeout },
             },
             r: tunnel.remote.0.to_string(),
             rp: tunnel.remote.1,
