@@ -162,7 +162,7 @@ struct Server {
     /// Useful if you specify in the client a custom path prefix and you want the server to only allow this one.
     /// The path prefix act as a secret to authenticate clients
     /// Disabled by default. Accept all path prefix. Can be specified multiple time
-    #[arg(long, verbatim_doc_comment)]
+    #[arg(short = 'r', long, verbatim_doc_comment)]
     restrict_http_upgrade_path_prefix: Option<Vec<String>>,
 
     /// [Optional] Use custom certificate (.crt) instead of the default embedded self signed certificate.
