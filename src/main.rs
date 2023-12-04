@@ -454,6 +454,7 @@ impl Debug for WsServerConfig {
             .field("socket_so_mark", &self.socket_so_mark)
             .field("bind", &self.bind)
             .field("restrict_to", &self.restrict_to)
+            .field("restrict_http_upgrade_path_prefix", &self.restrict_http_upgrade_path_prefix)
             .field("websocket_ping_frequency", &self.websocket_ping_frequency)
             .field("timeout_connect", &self.timeout_connect)
             .field("websocket_mask_frame", &self.websocket_mask_frame)
@@ -786,7 +787,11 @@ async fn main() {
                 tls: tls_config,
             };
 
-            info!("{:?}", server_config);
+            info!(
+                "Starting wstunnel server v{} with config {:?}",
+                env!("CARGO_PKG_VERSION"),
+                server_config
+            );
             tunnel::server::run_server(Arc::new(server_config))
                 .await
                 .unwrap_or_else(|err| {
