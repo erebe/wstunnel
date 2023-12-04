@@ -2,6 +2,7 @@ use crate::{TlsClientConfig, TlsServerConfig, WsClientConfig};
 use anyhow::{anyhow, Context};
 use std::fs::File;
 
+use log::warn;
 use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
@@ -30,23 +31,35 @@ impl ServerCertVerifier for NullVerifier {
 }
 
 pub fn load_certificates_from_pem(path: &Path) -> anyhow::Result<Vec<Certificate>> {
+    info!("Loading tls certificate from {:?}", path);
+
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader)?;
+    let certs = rustls_pemfile::certs(&mut reader);
 
-    Ok(certs.into_iter().map(Certificate).collect())
+    Ok(certs
+        .into_iter()
+        .filter_map(|cert| match cert {
+            Ok(cert) => Some(Certificate(cert.to_vec())),
+            Err(err) => {
+                warn!("Error while parsing tls certificate: {:?}", err);
+                None
+            }
+        })
+        .collect())
 }
 
 pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKey> {
+    info!("Loading tls private key from {:?}", path);
+
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    let mut keys = rustls_pemfile::pkcs8_private_keys(&mut reader)?;
 
-    match keys.len() {
-        0 => Err(anyhow!("No PKCS8-encoded private key found in {path:?}")),
-        1 => Ok(PrivateKey(keys.remove(0))),
-        _ => Err(anyhow!("More than one PKCS8-encoded private key found in {path:?}")),
-    }
+    let Some(private_key) = rustls_pemfile::private_key(&mut reader)? else {
+        return Err(anyhow!("No private key found in {path:?}"));
+    };
+
+    Ok(PrivateKey(private_key.secret_der().to_vec()))
 }
 
 fn tls_connector(tls_cfg: &TlsClientConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsConnector> {
@@ -55,7 +68,7 @@ fn tls_connector(tls_cfg: &TlsClientConfig, alpn_protocols: Option<Vec<Vec<u8>>>
     // Load system certificates and add them to the root store
     let certs = rustls_native_certs::load_native_certs().with_context(|| "Cannot load system certificates")?;
     for cert in certs {
-        root_store.add(&Certificate(cert.0))?;
+        root_store.add(&Certificate(cert.as_ref().to_vec()))?;
     }
 
     let mut config = ClientConfig::builder()

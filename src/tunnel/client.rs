@@ -181,23 +181,19 @@ where
         ws.set_auto_apply_mask(client_config.websocket_mask_frame);
 
         // Connect to endpoint
-        let remote: (Host, u16) = response
+        let remote = response
             .headers()
             .get(COOKIE)
-            .and_then(|h| {
-                h.to_str()
-                    .ok()
-                    .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
-                    .and_then(|s| Url::parse(&String::from_utf8_lossy(&s)).ok())
-                    .and_then(|url| match (url.host(), url.port()) {
-                        (Some(h), Some(p)) => Some((h.to_owned(), p)),
-                        _ => None,
-                    })
+            .and_then(|h| h.to_str().ok())
+            .and_then(|h| base64::engine::general_purpose::STANDARD.decode(h).ok())
+            .and_then(|h| Url::parse(&String::from_utf8_lossy(&h)).ok())
+            .and_then(|url| match (url.host(), url.port()) {
+                (Some(h), Some(p)) => Some((h.to_owned(), p)),
+                _ => None,
             })
             .unwrap_or(remote_ori.clone());
-        let stream = connect_to_dest(remote.clone()).instrument(span.clone()).await;
 
-        let stream = match stream {
+        let stream = match connect_to_dest(remote.clone()).instrument(span.clone()).await {
             Ok(s) => s,
             Err(err) => {
                 error!("Cannot connect to {remote:?}: {err:?}");

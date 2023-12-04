@@ -77,7 +77,7 @@ struct Client {
     /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
     /// You need to use {root, sudo, capabilities} to run wstunnel when using this option
     #[arg(long, value_name = "INT", verbatim_doc_comment)]
-    socket_so_mark: Option<i32>,
+    socket_so_mark: Option<u32>,
 
     /// Client will maintain a pool of open connection to the server, in order to speed up the connection process.
     /// This option set the maximum number of connection that will be kept open.
@@ -141,7 +141,7 @@ struct Server {
     /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
     /// You need to use {root, sudo, capabilities} to run wstunnel when using this option
     #[arg(long, value_name = "INT", verbatim_doc_comment)]
-    socket_so_mark: Option<i32>,
+    socket_so_mark: Option<u32>,
 
     /// Frequency at which the server will send websocket ping to client.
     #[arg(long, value_name = "seconds", value_parser = parse_duration_sec, verbatim_doc_comment)]
@@ -438,7 +438,7 @@ pub struct TlsServerConfig {
 
 #[derive(Clone)]
 pub struct WsServerConfig {
-    pub socket_so_mark: Option<i32>,
+    pub socket_so_mark: Option<u32>,
     pub bind: SocketAddr,
     pub restrict_to: Option<Vec<String>>,
     pub restrict_http_upgrade_path_prefix: Option<Vec<String>>,
@@ -465,7 +465,7 @@ impl Debug for WsServerConfig {
 #[derive(Clone, Debug)]
 pub struct WsClientConfig {
     pub remote_addr: (Host<String>, u16),
-    pub socket_so_mark: Option<i32>,
+    pub socket_so_mark: Option<u32>,
     pub tls: Option<TlsClientConfig>,
     pub http_upgrade_path_prefix: String,
     pub http_upgrade_credentials: Option<HeaderValue>,

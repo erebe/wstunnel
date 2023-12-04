@@ -14,27 +14,22 @@ use tracing::debug;
 use tracing::log::info;
 use url::{Host, Url};
 
-fn configure_socket(socket: &mut TcpSocket, so_mark: &Option<i32>) -> Result<(), anyhow::Error> {
+fn configure_socket(socket: &mut TcpSocket, so_mark: &Option<u32>) -> Result<(), anyhow::Error> {
     socket
         .set_nodelay(true)
         .with_context(|| format!("cannot set no_delay on socket: {}", io::Error::last_os_error()))?;
 
     #[cfg(target_os = "linux")]
     if let Some(so_mark) = so_mark {
-        use std::os::fd::AsRawFd;
-        unsafe {
-            let optval: libc::c_int = *so_mark;
-            let ret = libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_MARK,
-                &optval as *const _ as *const libc::c_void,
-                std::mem::size_of_val(&optval) as libc::socklen_t,
-            );
+        use std::os::fd::AsFd;
 
-            if ret != 0 {
-                return Err(anyhow!("Cannot set SO_MARK on the connection {:?}", io::Error::last_os_error()));
-            }
+        let ret = nix::sys::socket::setsockopt(&socket.as_fd(), nix::sys::socket::sockopt::Mark, so_mark);
+        if let Err(err) = ret {
+            return Err(anyhow!(
+                "Cannot set SO_MARK on the connection {:?} {:?}",
+                err,
+                io::Error::last_os_error()
+            ));
         }
     }
 
@@ -44,7 +39,7 @@ fn configure_socket(socket: &mut TcpSocket, so_mark: &Option<i32>) -> Result<(),
 pub async fn connect(
     host: &Host<String>,
     port: u16,
-    so_mark: Option<i32>,
+    so_mark: Option<u32>,
     connect_timeout: Duration,
 ) -> Result<TcpStream, anyhow::Error> {
     info!("Opening TCP connection to {}:{}", host, port);
@@ -103,7 +98,7 @@ pub async fn connect_with_http_proxy(
     proxy: &Url,
     host: &Host<String>,
     port: u16,
-    so_mark: Option<i32>,
+    so_mark: Option<u32>,
     connect_timeout: Duration,
 ) -> Result<TcpStream, anyhow::Error> {
     let proxy_host = proxy.host().context("Cannot parse proxy host")?.to_owned();

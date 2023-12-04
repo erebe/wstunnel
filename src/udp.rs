@@ -377,7 +377,7 @@ pub fn mk_send_socket_tproxy(listener: &Arc<UdpSocket>) -> anyhow::Result<Arc<Ud
     use std::net::IpAddr;
     use std::os::fd::AsRawFd;
 
-    let mut cmsg_space = cmsg_space!(libc::sockaddr_in6);
+    let mut cmsg_space = cmsg_space!(nix::libc::sockaddr_in6);
     let mut buf = [0; 8];
     let mut io = [IoSliceMut::new(&mut buf)];
     let msg: RecvMsg<SockaddrIn> = nix::sys::socket::recvmsg(
