@@ -23,15 +23,15 @@ use tokio::time::{timeout, Interval};
 use tracing::{debug, error, info};
 use url::Host;
 
-pub struct IoInner {
-    pub has_data_to_read: Notify,
-    pub has_read_data: Notify,
+struct IoInner {
+    has_data_to_read: Notify,
+    has_read_data: Notify,
 }
-pub struct UdpServer {
-    pub listener: Arc<UdpSocket>,
-    pub peers: HashMap<SocketAddr, Pin<Arc<IoInner>>, ahash::RandomState>,
-    pub keys_to_delete: Arc<RwLock<Vec<SocketAddr>>>,
-    pub cnx_timeout: Option<Duration>,
+struct UdpServer {
+    listener: Arc<UdpSocket>,
+    peers: HashMap<SocketAddr, Pin<Arc<IoInner>>, ahash::RandomState>,
+    keys_to_delete: Arc<RwLock<Vec<SocketAddr>>>,
+    cnx_timeout: Option<Duration>,
 }
 
 impl UdpServer {
@@ -104,7 +104,7 @@ impl PinnedDrop for UdpStream {
 }
 
 impl UdpStream {
-    pub fn new(
+    fn new(
         recv_socket: Arc<UdpSocket>,
         send_socket: Arc<UdpSocket>,
         peer: SocketAddr,
@@ -368,6 +368,7 @@ pub fn configure_tproxy(listener: &UdpSocket) -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+#[inline]
 pub fn mk_send_socket_tproxy(listener: &Arc<UdpSocket>) -> anyhow::Result<Arc<UdpSocket>> {
     use nix::cmsg_space;
     use nix::sys::socket::{ControlMessageOwned, RecvMsg, SockaddrIn};
@@ -376,18 +377,17 @@ pub fn mk_send_socket_tproxy(listener: &Arc<UdpSocket>) -> anyhow::Result<Arc<Ud
     use std::net::IpAddr;
     use std::os::fd::AsRawFd;
 
-    let mut x = cmsg_space!(libc::sockaddr_in6);
+    let mut cmsg_space = cmsg_space!(libc::sockaddr_in6);
     let mut buf = [0; 8];
     let mut io = [IoSliceMut::new(&mut buf)];
-    let msg: nix::Result<RecvMsg<SockaddrIn>> = nix::sys::socket::recvmsg(
+    let msg: RecvMsg<SockaddrIn> = nix::sys::socket::recvmsg(
         listener.as_raw_fd(),
         &mut io,
-        Some(&mut x),
+        Some(&mut cmsg_space),
         nix::sys::socket::MsgFlags::MSG_PEEK,
-    );
+    )?;
 
     let mut remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
-    let msg = msg.unwrap();
     for cmsg in msg.cmsgs() {
         match cmsg {
             ControlMessageOwned::Ipv4OrigDstAddr(ip) => {
@@ -408,13 +408,13 @@ pub fn mk_send_socket_tproxy(listener: &Arc<UdpSocket>) -> anyhow::Result<Arc<Ud
         }
     }
 
-    let socket = Socket::new(Domain::for_address(remote_addr), Type::DGRAM, Some(Protocol::UDP)).unwrap();
-    socket.set_ip_transparent(true).unwrap();
-    socket.set_reuse_address(true).unwrap();
-    socket.set_reuse_port(true).unwrap();
-    socket.bind(&SockAddr::from(remote_addr)).unwrap();
-    socket.set_nonblocking(true).unwrap();
-    let socket = UdpSocket::from_std(std::net::UdpSocket::from(socket)).unwrap();
+    let socket = Socket::new(Domain::for_address(remote_addr), Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_ip_transparent(true)?;
+    socket.set_reuse_address(true)?;
+    socket.set_reuse_port(true)?;
+    socket.bind(&SockAddr::from(remote_addr))?;
+    socket.set_nonblocking(true)?;
+    let socket = UdpSocket::from_std(std::net::UdpSocket::from(socket))?;
 
     Ok(Arc::new(socket))
 }
