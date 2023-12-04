@@ -1,5 +1,5 @@
 use fastwebsockets::{Frame, OpCode, Payload, WebSocketError, WebSocketRead, WebSocketWrite};
-use futures_util::pin_mut;
+use futures_util::{pin_mut, FutureExt};
 use hyper::upgrade::Upgraded;
 
 use std::time::Duration;
@@ -28,8 +28,10 @@ pub(super) async fn propagate_read(
     let frequency = ping_frequency.unwrap_or(Duration::from_secs(3600 * 24));
     let start_at = Instant::now().checked_add(frequency).unwrap_or(Instant::now());
     let timeout = tokio::time::interval_at(start_at, frequency);
-    pin_mut!(timeout);
+    let should_close = close_tx.closed().fuse();
 
+    pin_mut!(timeout);
+    pin_mut!(should_close);
     pin_mut!(local_rx);
     loop {
         let read_len = select! {
@@ -37,7 +39,7 @@ pub(super) async fn propagate_read(
 
             read_len = local_rx.read(&mut buffer) => read_len,
 
-            _ = close_tx.closed() => break,
+            _ = &mut should_close => break,
 
             _ = timeout.tick(), if ping_frequency.is_some() => {
                 debug!("sending ping to keep websocket connection alive");

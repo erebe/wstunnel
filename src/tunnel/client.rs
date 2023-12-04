@@ -2,6 +2,7 @@ use super::{to_host_port, JwtTunnelConfig, JWT_KEY};
 use crate::{LocalToRemote, WsClientConfig};
 use anyhow::{anyhow, Context};
 
+use base64::Engine;
 use fastwebsockets::WebSocket;
 use futures_util::pin_mut;
 use hyper::header::{AUTHORIZATION, COOKIE, SEC_WEBSOCKET_VERSION, UPGRADE};
@@ -186,7 +187,8 @@ where
             .and_then(|h| {
                 h.to_str()
                     .ok()
-                    .and_then(|s| Url::parse(s).ok())
+                    .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
+                    .and_then(|s| Url::parse(&String::from_utf8_lossy(&s)).ok())
                     .and_then(|url| match (url.host(), url.port()) {
                         (Some(h), Some(p)) => Some((h.to_owned(), p)),
                         _ => None,

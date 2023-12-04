@@ -1,5 +1,6 @@
 use ahash::{HashMap, HashMapExt};
 use anyhow::anyhow;
+use base64::Engine;
 use futures_util::{pin_mut, Stream, StreamExt};
 use std::cmp::min;
 use std::fmt::Debug;
@@ -264,9 +265,14 @@ async fn server_upgrade(
         .instrument(Span::current()),
     );
 
-    response
-        .headers_mut()
-        .insert(COOKIE, HeaderValue::from_str(&format!("fake://{}:{}", dest, port)).unwrap());
+    if protocol == LocalProtocol::ReverseSocks5 {
+        response.headers_mut().insert(
+            COOKIE,
+            HeaderValue::from_str(
+                &base64::engine::general_purpose::STANDARD.encode(format!("fake://{}:{}", dest, port)),
+            )?,
+        );
+    }
     Ok(response)
 }
 
