@@ -132,7 +132,7 @@ Options:
           Server will only accept connection from the specified tunnel information.
           Can be specified multiple time
           Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
-      --restrict-http-upgrade-path-prefix <RESTRICT_HTTP_UPGRADE_PATH_PREFIX>
+  -r, --restrict-http-upgrade-path-prefix <RESTRICT_HTTP_UPGRADE_PATH_PREFIX>
           Server will only accept connection from if this specific path prefix is used during websocket upgrade.
           Useful if you specify in the client a custom path prefix and you want the server to only allow this one.
           The path prefix act as a secret to authenticate clients
