@@ -60,16 +60,24 @@ Options:
   -L, --local-to-remote <{tcp,udp,socks5,stdio}://[BIND:]PORT:HOST:PORT>
           Listen on local and forwards traffic from remote. Can be specified multiple times
           examples:
-          'tcp://1212:google.com:443'      =>     listen locally on tcp on port 1212 and forward to google.com on port 443
-          'udp://1212:1.1.1.1:53'          =>     listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
-          'udp://1212:1.1.1.1:53?timeout_sec=10'  timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
-          'socks5://[::1]:1212'            =>     listen locally with socks5 on port 1212 and forward dynamically requested tunnel
-          'stdio://google.com:443'         =>     listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
+          'tcp://1212:google.com:443'      =>       listen locally on tcp on port 1212 and forward to google.com on port 443
+
+          'udp://1212:1.1.1.1:53'          =>       listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
+          'udp://1212:1.1.1.1:53?timeout_sec=10'    timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
+
+          'socks5://[::1]:1212'            =>       listen locally with socks5 on port 1212 and forward dynamically requested tunnel
+
+          'tproxy+tcp://[::1]:1212'        =>       listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
+          'tproxy+udp://[::1]:1212?timeout_sec=10'  listen locally on udp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
+                                                    linux only and requires sudo/CAP_NET_ADMIN
+
+          'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
   -R, --remote-to-local <{tcp,udp}://[BIND:]PORT:HOST:PORT>
           Listen on remote and forwards traffic from local. Can be specified multiple times.
           examples:
           'tcp://1212:google.com:443'      =>     listen on server for incoming tcp cnx on port 1212 and forward to google.com on port 443 from local machine
           'udp://1212:1.1.1.1:53'          =>     listen on server for incoming udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53 from local machine
+          'socks://[::1]:1212'             =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine
       --socket-so-mark <INT>
           (linux only) Mark network packet with SO_MARK sockoption with the specified value.
           You need to use {root, sudo, capabilities} to run wstunnel when using this option
@@ -128,7 +136,7 @@ Options:
           Server will only accept connection from if this specific path prefix is used during websocket upgrade.
           Useful if you specify in the client a custom path prefix and you want the server to only allow this one.
           The path prefix act as a secret to authenticate clients
-          Disabled by default. Accept all path prefix
+          Disabled by default. Accept all path prefix. Can be specified multiple time
       --tls-certificate <FILE_PATH>
           [Optional] Use custom certificate (.crt) instead of the default embedded self signed certificate.
       --tls-private-key <FILE_PATH>
