@@ -9,7 +9,15 @@
 </p>
 
 
-## Description
+* [Description](#description)
+* [Note](#note)
+* [Command line](#cmd)
+* [Release](#release)
+* [Examples](#examples)
+* [How to build](#build)
+
+
+## Description <a name="description"></a>
 
 Most of the time when you are using a public network, you are behind some kind of firewall or proxy. One of their purpose is to constrain you to only use certain kind of protocols. Nowadays, the most widespread protocol is http and is de facto allowed by third party equipment.
 
@@ -27,7 +35,7 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 * Support IPv6
 * **Standalone binaries** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
 
-## Note
+## Note <a name="note"></a>
 
 v7.0.0 is a complete rewrite of wstunnel in Rust and is not compatible with previous version.
 Previous code in Haskell can be found on branch https://github.com/erebe/wstunnel/tree/haskell
@@ -42,7 +50,7 @@ What to expect from previous version:
 * Armv7 build (aka raspberry pi), as new version of GHC (Haskell compiler) dropped its support
 
 
-## Command line
+## Command line <a name="cmd"></a>
 
 ```
 Use the websockets protocol to tunnel {TCP,UDP} traffic
@@ -145,7 +153,7 @@ Options:
           Print help
 ```
 
-## Release
+## Release <a name="release"></a>
 
 Static binaries are available in [release section](https://github.com/erebe/wstunnel/releases)
 
@@ -155,7 +163,7 @@ docker image are available at https://github.com/erebe/wstunnel/pkgs/container/w
 docker pull ghcr.io/erebe/wstunnel:latest
 ```
 
-## Examples
+## Examples <a name="examples"></a>
 
 * [Simplest one with socks5 - Good for browsing internet](#simple)
 * [Proxy SSH](#ssh)
@@ -310,7 +318,7 @@ wstunnel client --http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd 
 Now your wstunnel server, will only accept connection if the client specify the correct path prefix during the upgrade request.
 
 
-## How to Build
+## How to Build <a name="build"></a>
 Install the Rust https://www.rust-lang.org/tools/install or if you are a believer
 ```
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
