@@ -310,6 +310,7 @@ Else if you forward all the traffic without putting a static route, you will end
 
 ### Transparent proxy (linux only) <a name="tproxy"></a>
 
+Transparent proxy allows to easily proxy any program.
 Start wstunnel with
 ```
 sudo wstunnel client -L 'tproxy+tcp://1080' -L 'tproxy+udp://1080' wss://my.server.com:443
@@ -319,6 +320,12 @@ use this project to route traffic seamlessly https://github.com/NOBLES5E/cproxy.
 ```
 cproxy --port 1080 --mode tproxy -- curl https://google.com
 ```
+
+You can even start a new shell, were all your commands will be proxyfied
+```
+cproxy --port 1080 --mode tproxy -- bash
+```
+
 
 ---
 
