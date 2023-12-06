@@ -9,11 +9,13 @@
 </p>
 
 
+## Summary 
+
 * [Description](#description)
-* [Note](#note)
 * [Command line](#cmd)
-* [Release](#release)
 * [Examples](#examples)
+* [Release](#release)
+* [Note](#note)
 * [How to build](#build)
 
 
@@ -195,11 +197,15 @@ curl -x socks5h://127.0.0.1:8888 http://google.com/
 #Please note h after the 5, it is to avoid curl resolving DNS name locally
 ```
 
+---
+
 ### As proxy command for SSH <a name="ssh"></a>
 You can specify `stdio` as source port on the client side if you wish to use wstunnel as part of a proxy command for ssh
 ```bash
-ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server
+ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://myRemoteHost:8080" my-server
 ```
+
+---
 
 ### When behind a corporate proxy <a name="corporate"></a>
 An other useful example is when you want to bypass an http proxy (a corporate proxy for example)
@@ -227,6 +233,7 @@ You may now access your server from your local machine on ssh by using
 ssh -p 9999 login@127.0.0.1
 ```
 
+---
 
 ### Wireguard and wstunnel <a name="wireguard"></a>
 
@@ -289,6 +296,8 @@ FAQ
 - If wstunnel cannot connect to server while wireguard is on, be sure you have added a static route via your main gateway for the ip of wstunnel server.
 Else if you forward all the traffic without putting a static route, you will endup looping your traffic wireguard interface -> wstunnel client -> wireguard interface
 
+---
+
 ### Transparent proxy (linux only) <a name="tproxy"></a>
 
 Start wstunnel with
@@ -300,6 +309,8 @@ use this project to route traffic seamlessly https://github.com/NOBLES5E/cproxy.
 ```
 cproxy --port 1080 --mode tproxy -- curl https://google.com
 ```
+
+---
 
 ### How to secure the access of your wstunnel server <a name="secure"></a>
 
@@ -317,6 +328,7 @@ wstunnel client --http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd 
 
 Now your wstunnel server, will only accept connection if the client specify the correct path prefix during the upgrade request.
 
+---
 
 ## How to Build <a name="build"></a>
 Install the Rust https://www.rust-lang.org/tools/install or if you are a believer
