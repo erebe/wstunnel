@@ -228,8 +228,61 @@ wstunnel client --http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd 
 Now your wstunnel server, will only accept connection if the client specify the correct path prefix during the upgrade request.
 
 ### Wireguard and wstunnel
-https://kirill888.github.io/notes/wireguard-via-websocket/
 
+You have a working wireguard client configuration called `wg0.conf`. Let's say 
+```
+[Interface]
+Address = 10.200.0.2/32, fd00:cafe::2/128
+PrivateKey = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=
+
+[Peer]
+PublicKey = 9iicV7Stdl/U0RH1BNf3VvlVjaa4Eus6QPEfEz6cR0c=
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = my.server.com:51820
+```
+
+Start wstunnel server on my.server.com like this
+```
+wstunnel server --restrict-to localhost:51820 wss://[::]:443
+```
+
+on your local machine start the client like this
+```
+wstunnel client -L 'udp://51280:localhost:51280?timeout_sec=0' wss://my.server.com:443
+```
+
+change your wireguard client config to something
+```
+[Interface]
+Address = 10.200.0.2/32, fd00:cafe::2/128
+PrivateKey = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=
+# Replace by a dns your server has access to
+dns = 8.8.8.8
+# https://github.com/nitred/nr-wg-mtu-finder to find best mtu for you
+MTU = 1400 
+
+[Peer]
+PublicKey = 9iicV7Stdl/U0RH1BNf3VvlVjaa4Eus6QPEfEz6cR0c=
+AllowedIPs = 0.0.0.0/0, ::/0
+# Should target port where wstunnel client is listenning to
+Endpoint = localhost:51820
+# Should not be necessary if you enable wstunnel client websocket ping
+PersistentKeepalive = 20
+```
+
+Add a default route to your server, as your AllowedIps are catch-all, it is to avoid the traffic looping.
+```bash
+sudo ip route add ip.of.my.server.com dev eth0 via 192.168.0.1
+# replace eth0 (interface) and 192.168.0.1 (router gateway) by the one given by `ip route get ip.of.my.server.com` 
+```
+
+start your wireguard, and it should be working
+```
+sudo wg-quick up wg0
+ping 10.200.0.1 # ping another ip of your vpn network
+```
+
+FAQ
 - Disable default udp tunnel timeout that will auto-close it after 30sec. `i.e: udp://1212:127.0.0.1:5201?timeout_sec=0`
 - If you see some throughput issue, be sure to lower the MTU of your wireguard interface (you can do it via config file) to something like 1300 or you will endup fragmenting udp packet (due to overhead of other layer) which is always causing issues
 - If wstunnel cannot connect to server while wireguard is on, be sure you have added a static route via your main gateway for the ip of wstunnel server.
