@@ -167,12 +167,21 @@ docker pull ghcr.io/erebe/wstunnel:latest
 
 ## Examples <a name="examples"></a>
 
+* [Understand command line syntax](#syntax)
 * [Simplest one with socks5 - Good for browsing internet](#simple)
 * [Proxy SSH](#ssh)
 * [Bypass a corporate proxy](#corporate)
 * [Proxy Wireguard traffic](#wireguard)
 * [Proxy easily any traffic with transparent proxy (linux only)](#tproxy)
 * [How to secure access of your wstunnel server](#secure)
+
+### Understand command line syntax <a name="syntax"></a>
+
+Wstunnel command line mimic ssh tunnel syntax.
+You can take reference to [this article](https://iximiuz.com/en/posts/ssh-tunnels/), or this diagram to understand
+<img src="https://iximiuz.com/ssh-tunnels/ssh-tunnels.png">
+
+---
 
 ### Simplest one <a name="simple"></a>
 On your remote host, start the wstunnel's server by typing this command in your terminal
