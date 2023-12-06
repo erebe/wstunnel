@@ -173,6 +173,7 @@ docker pull ghcr.io/erebe/wstunnel:latest
 * [Bypass a corporate proxy](#corporate)
 * [Proxy Wireguard traffic](#wireguard)
 * [Proxy easily any traffic with transparent proxy (linux only)](#tproxy)
+* [Reverse tunneling](#reverse)
 * [How to secure access of your wstunnel server](#secure)
 
 ### Understand command line syntax <a name="syntax"></a>
@@ -317,6 +318,25 @@ sudo wstunnel client -L 'tproxy+tcp://1080' -L 'tproxy+udp://1080' wss://my.serv
 use this project to route traffic seamlessly https://github.com/NOBLES5E/cproxy. It works with any prgram
 ```
 cproxy --port 1080 --mode tproxy -- curl https://google.com
+```
+
+---
+
+### Reverse tunneling <a name="reverse"></a>
+
+Start wstunnel with
+```
+sudo wstunnel client -R 'tcp://[::]:8000:localhost:8000' wss://my.server.com:443
+```
+
+In another terminal, start a simple webserver on your local machine
+```
+python3 -m http.server
+```
+
+From your my.server.com machine/network you can now do
+```
+curl http://localhost:8000
 ```
 
 ---
