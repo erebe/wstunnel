@@ -156,7 +156,15 @@ docker pull ghcr.io/erebe/wstunnel:latest
 ```
 
 ## Examples
-### Simplest one
+
+* [Simplest one with socks5 - Good for browsing internet](#simple)
+* [Proxy SSH](#ssh)
+* [Bypass a corporate proxy](#corporate)
+* [Proxy Wireguard traffic](#wireguard)
+* [Proxy easily any traffic with transparent proxy (linux only)](#tproxy)
+* [How to secure access of your wstunnel server](#secure)
+
+### Simplest one <a name="simple"></a>
 On your remote host, start the wstunnel's server by typing this command in your terminal
 ```bash
 wstunnel server ws://[::]:8080
@@ -164,7 +172,7 @@ wstunnel server ws://[::]:8080
 This will create a websocket server listening on any interface on port 8080.
 On the client side use this command to forward traffic through the websocket tunnel
 ```bash
-wstunnel client -L socks5://127.0.0.1:8888 --connection-min-idle 10 ws://myRemoteHost:8080
+wstunnel client -L socks5://127.0.0.1:8888 --connection-min-idle 5 ws://myRemoteHost:8080
 ```
 This command will create a socks5 server listening on port 8888 of the loopback interface and will forward traffic dynamically.
 `connection-min-idle 10` is going an optimization to create a pool of 10 connection connected to the server, to speed-up the establishement of new tunnels.
@@ -179,13 +187,13 @@ curl -x socks5h://127.0.0.1:8888 http://google.com/
 #Please note h after the 5, it is to avoid curl resolving DNS name locally
 ```
 
-### As proxy command for SSH
+### As proxy command for SSH <a name="ssh"></a>
 You can specify `stdio` as source port on the client side if you wish to use wstunnel as part of a proxy command for ssh
 ```bash
 ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server
 ```
 
-### When behind a corporate proxy
+### When behind a corporate proxy <a name="corporate"></a>
 An other useful example is when you want to bypass an http proxy (a corporate proxy for example)
 The most reliable way to do it is to use wstunnel as described below
 
@@ -211,23 +219,8 @@ You may now access your server from your local machine on ssh by using
 ssh -p 9999 login@127.0.0.1
 ```
 
-### How to secure the access of your wstunnel server
 
-Generate a secret, let's say `h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd`
-
-Now start you server with the following command
-```bash
-wstunnel server --restrict-http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd  wss://[::]:443 
-```
-
-And start your client with
-```bash
-wstunnel client --http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd ... wss://myRemoteHost
-```
-
-Now your wstunnel server, will only accept connection if the client specify the correct path prefix during the upgrade request.
-
-### Wireguard and wstunnel
+### Wireguard and wstunnel <a name="wireguard"></a>
 
 You have a working wireguard client configuration called `wg0.conf`. Let's say 
 ```
@@ -287,6 +280,34 @@ FAQ
 - If you see some throughput issue, be sure to lower the MTU of your wireguard interface (you can do it via config file) to something like 1300 or you will endup fragmenting udp packet (due to overhead of other layer) which is always causing issues
 - If wstunnel cannot connect to server while wireguard is on, be sure you have added a static route via your main gateway for the ip of wstunnel server.
 Else if you forward all the traffic without putting a static route, you will endup looping your traffic wireguard interface -> wstunnel client -> wireguard interface
+
+### Transparent proxy (linux only) <a name="tproxy"></a>
+
+Start wstunnel with
+```
+sudo wstunnel client -L 'tproxy+tcp://1080' -L 'tproxy+udp://1080' wss://my.server.com:443
+```
+
+use this project to route traffic seamlessly https://github.com/NOBLES5E/cproxy. It works with any prgram
+```
+cproxy --port 1080 --mode tproxy -- curl https://google.com
+```
+
+### How to secure the access of your wstunnel server <a name="secure"></a>
+
+Generate a secret, let's say `h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd`
+
+Now start you server with the following command
+```bash
+wstunnel server --restrict-http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd  wss://[::]:443 
+```
+
+And start your client with
+```bash
+wstunnel client --http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd ... wss://myRemoteHost
+```
+
+Now your wstunnel server, will only accept connection if the client specify the correct path prefix during the upgrade request.
 
 
 ## How to Build
