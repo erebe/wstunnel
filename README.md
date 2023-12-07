@@ -21,9 +21,9 @@
 
 ## Description <a name="description"></a>
 
-Most of the time when you are using a public network, you are behind some kind of firewall or proxy. One of their purpose is to constrain you to only use certain kind of protocols. Nowadays, the most widespread protocol is http and is de facto allowed by third party equipment.
+Most of the time when you are using a public network, you are behind some kind of firewall or proxy. One of their purpose is to constrain you to only use certain kind of protocols and consult only a subset of the web. Nowadays, the most widespread protocol is http and is de facto allowed by third party equipment.
 
-This tool understands this fact and uses the websocket protocol which is compatible with http in order to bypass firewalls and proxies. Wstunnel allows you to tunnel what ever traffic you want.
+Wstunnel uses the websocket protocol which is compatible with http in order to bypass firewalls and proxies. Wstunnel allows you to tunnel whatever traffic you want and access whatever resources/site you need.
 
 My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) but as I don't want to install npm and nodejs to use this tool, I remade it in ~~Haskell~~ Rust and improved it. 
 
