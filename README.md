@@ -175,6 +175,7 @@ docker pull ghcr.io/erebe/wstunnel:latest
 * [Proxy easily any traffic with transparent proxy (linux only)](#tproxy)
 * [Reverse tunneling](#reverse)
 * [How to secure access of your wstunnel server](#secure)
+* [Maximize your stealthiness/Make your traffic discrete](#stealth)
 
 ### Understand command line syntax <a name="syntax"></a>
 
@@ -365,6 +366,16 @@ wstunnel client --http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd 
 Now your wstunnel server, will only accept connection if the client specify the correct path prefix during the upgrade request.
 
 ---
+
+### Maximize your stealthiness/Make your traffic discrete <a name="stealth"></a>
+
+* Use wstunnel with TLS activated (wss://) and use your own certificate
+  * Embedded certificate is self-signed and are the same for everyone, so can be easily fingerprinted/flagged
+  * Use valid certificate (i.e: with Let's Encrypt), self-signed certificate are suspicious
+* Use a custom http path prefix (see `--http-upgrade-path-prefix` option)
+  * To avoid having the same url than every other wstunnel user
+* Change your tls-sni-override to a domain is known to be allowed (i.e: google.com, baidu.com, etc...)
+  * this will not work if your wstunnel server is behind a reverse proxy (i.e: Nginx, Cloudflare, HAProxy, ...)
 
 ## How to Build <a name="build"></a>
 Install the Rust https://www.rust-lang.org/tools/install or if you are a believer
