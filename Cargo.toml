@@ -15,7 +15,7 @@ bb8 = { version = "0.8", features = [] }
 bytes = { version = "1.5.0", features = [] }
 clap = { version = "4.4.10", features = ["derive"] }
 fast-socks5 = { version = "0.9.1", features = [] }
-fastwebsockets = { git = "https://github.com/denoland/fastwebsockets", branch = "main", features = ["upgrade", "simd", "unstable-split"] }
+fastwebsockets = { git = "https://github.com/denoland/fastwebsockets", rev = '35a1930fdbcdfe9034bb531fcd1690ba9f7737ec', features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.29" }
 
 hyper = { version = "0.14.27", features = ["client", "runtime"] }
@@ -40,6 +40,10 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt", "loc
 url = "2.5.0"
 urlencoding = "2.1.3"
 uuid = { version = "1.6.1", features = ["v7", "serde"] }
+
+[target.'cfg(not(target_family = "unix"))'.dependencies]
+crossterm = { version = "0.27.0" }
+tokio-util = { version = "0.7.10", features = ["io"] }
 
 [target.'cfg(target_family = "unix")'.dependencies]
 tokio-fd = "0.3.0"

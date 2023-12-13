@@ -1,6 +1,5 @@
 mod embedded_certificate;
 mod socks5;
-#[cfg(target_family = "unix")]
 mod stdio;
 mod tcp;
 mod tls;
@@ -728,9 +727,8 @@ async fn main() {
                         });
                     }
 
-                    #[cfg(target_family = "unix")]
                     LocalProtocol::Stdio => {
-                        let server = stdio::run_server().await.unwrap_or_else(|err| {
+                        let server = stdio::server::run_server().await.unwrap_or_else(|err| {
                             panic!("Cannot start STDIO server: {}", err);
                         });
                         tokio::spawn(async move {
@@ -744,10 +742,6 @@ async fn main() {
                                 error!("{:?}", err);
                             }
                         });
-                    }
-                    #[cfg(not(target_family = "unix"))]
-                    LocalProtocol::Stdio => {
-                        panic!("stdio is not implemented for non unix platform")
                     }
                     LocalProtocol::ReverseTcp => {}
                     LocalProtocol::ReverseUdp { .. } => {}
