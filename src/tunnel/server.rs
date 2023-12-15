@@ -12,11 +12,12 @@ use std::time::Duration;
 
 use super::{JwtTunnelConfig, JWT_DECODE};
 use crate::{socks5, tcp, tls, udp, LocalProtocol, WsServerConfig};
+use hyper::body::Incoming;
 use hyper::header::COOKIE;
 use hyper::http::HeaderValue;
-use hyper::server::conn::Http;
+use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{http, Body, Request, Response, StatusCode};
+use hyper::{http, Request, Response, StatusCode};
 use jsonwebtoken::TokenData;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -188,8 +189,8 @@ where
 
 async fn server_upgrade(
     server_config: Arc<WsServerConfig>,
-    mut req: Request<Body>,
-) -> Result<Response<Body>, anyhow::Error> {
+    mut req: Request<Incoming>,
+) -> Result<Response<String>, anyhow::Error> {
     if let Some(x) = req.headers().get("X-Forwarded-For") {
         info!("Request X-Forwarded-For: {:?}", x);
         Span::current().record("forwarded_for", x.to_str().unwrap_or_default());
@@ -199,8 +200,8 @@ async fn server_upgrade(
         warn!("Rejecting connection with bad upgrade request: {}", req.uri());
         return Ok(http::Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .body(Body::from("Invalid upgrade request"))
-            .unwrap_or_default());
+            .body("Invalid upgrade request".into())
+            .unwrap());
     }
 
     if let Some(paths_prefix) = &server_config.restrict_http_upgrade_path_prefix {
@@ -217,8 +218,8 @@ async fn server_upgrade(
             warn!("Rejecting connection with bad path prefix in upgrade request: {}", req.uri());
             return Ok(http::Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Body::from("Invalid upgrade request"))
-                .unwrap_or_default());
+                .body("Invalid upgrade request".to_string())
+                .unwrap());
         }
     }
 
@@ -229,8 +230,8 @@ async fn server_upgrade(
                 warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
                 return Ok(http::Response::builder()
                     .status(StatusCode::BAD_REQUEST)
-                    .body(Body::from(format!("Invalid upgrade request: {:?}", err)))
-                    .unwrap_or_default());
+                    .body("Invalid upgrade request".to_string())
+                    .unwrap());
             }
         };
 
@@ -241,8 +242,8 @@ async fn server_upgrade(
             warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
             return Ok(http::Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(format!("Invalid upgrade request: {:?}", err)))
-                .unwrap_or_default());
+                .body(format!("Invalid upgrade request: {:?}", err))
+                .unwrap());
         }
     };
 
@@ -273,6 +274,8 @@ async fn server_upgrade(
             )?,
         );
     }
+
+    let response = Response::from_parts(response.into_parts().0, "".to_string());
     Ok(response)
 }
 
@@ -280,7 +283,7 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
     info!("Starting wstunnel server listening on {}", server_config.bind);
 
     let config = server_config.clone();
-    let upgrade_fn = move |req: Request<Body>| server_upgrade(config.clone(), req);
+    let upgrade_fn = move |req: Request<Incoming>| server_upgrade(config.clone(), req);
 
     let listener = TcpListener::bind(&server_config.bind).await?;
     let tls_acceptor = if let Some(tls) = &server_config.tls {
@@ -310,14 +313,14 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
             let fut = async move {
                 info!("Doing TLS handshake");
                 let tls_stream = match tls_acceptor.accept(stream).await {
-                    Ok(tls_stream) => tls_stream,
+                    Ok(tls_stream) => hyper_util::rt::TokioIo::new(tls_stream),
                     Err(err) => {
                         error!("error while accepting TLS connection {}", err);
                         return;
                     }
                 };
-                let conn_fut = Http::new()
-                    .http1_only(true)
+
+                let conn_fut = http1::Builder::new()
                     .serve_connection(tls_stream, service_fn(upgrade_fn))
                     .with_upgrades();
 
@@ -330,8 +333,8 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
             tokio::spawn(fut);
             // Normal
         } else {
-            let conn_fut = Http::new()
-                .http1_only(true)
+            let stream = hyper_util::rt::TokioIo::new(stream);
+            let conn_fut = http1::Builder::new()
                 .serve_connection(stream, service_fn(upgrade_fn))
                 .with_upgrades();
 

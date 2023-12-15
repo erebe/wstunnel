@@ -3,12 +3,16 @@ use crate::{LocalToRemote, WsClientConfig};
 use anyhow::{anyhow, Context};
 
 use base64::Engine;
+use bytes::Bytes;
 use fastwebsockets::WebSocket;
 use futures_util::pin_mut;
+use http_body_util::Empty;
+use hyper::body::Incoming;
 use hyper::header::{AUTHORIZATION, COOKIE, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::upgrade::Upgraded;
-use hyper::{Body, Request, Response};
+use hyper::{Request, Response};
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -20,18 +24,6 @@ use tracing::{error, span, Instrument, Level, Span};
 use url::{Host, Url};
 use uuid::Uuid;
 
-struct SpawnExecutor;
-
-impl<Fut> hyper::rt::Executor<Fut> for SpawnExecutor
-where
-    Fut: Future + Send + 'static,
-    Fut::Output: Send + 'static,
-{
-    fn execute(&self, fut: Fut) {
-        tokio::task::spawn(fut);
-    }
-}
-
 fn tunnel_to_jwt_token(request_id: Uuid, tunnel: &LocalToRemote) -> String {
     let cfg = JwtTunnelConfig::new(request_id, tunnel);
     let (alg, secret) = JWT_KEY.deref();
@@ -42,7 +34,7 @@ pub async fn connect(
     request_id: Uuid,
     client_cfg: &WsClientConfig,
     tunnel_cfg: &LocalToRemote,
-) -> anyhow::Result<(WebSocket<Upgraded>, Response<Body>)> {
+) -> anyhow::Result<(WebSocket<TokioIo<Upgraded>>, Response<Incoming>)> {
     let mut pooled_cnx = match client_cfg.cnx_pool().get().await {
         Ok(tcp_stream) => tcp_stream,
         Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}"))?,
@@ -69,7 +61,7 @@ pub async fn connect(
         req = req.header(AUTHORIZATION, auth);
     }
 
-    let req = req.body(Body::empty()).with_context(|| {
+    let req = req.body(Empty::<Bytes>::new()).with_context(|| {
         format!(
             "failed to build HTTP request to contact the server {:?}",
             client_cfg.remote_addr
@@ -77,7 +69,7 @@ pub async fn connect(
     })?;
     debug!("with HTTP upgrade request {:?}", req);
     let transport = pooled_cnx.deref_mut().take().unwrap();
-    let (ws, response) = fastwebsockets::handshake::client(&SpawnExecutor, req, transport)
+    let (ws, response) = fastwebsockets::handshake::client(&TokioExecutor::new(), req, transport)
         .await
         .with_context(|| format!("failed to do websocket handshake with the server {:?}", client_cfg.remote_addr))?;
 

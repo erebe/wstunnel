@@ -2,6 +2,7 @@ use fastwebsockets::{Frame, OpCode, Payload, WebSocketError, WebSocketRead, WebS
 use futures_util::{pin_mut, FutureExt};
 use hyper::upgrade::Upgraded;
 
+use hyper_util::rt::TokioIo;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::select;
@@ -12,7 +13,7 @@ use tracing::{error, info, trace, warn};
 
 pub(super) async fn propagate_read(
     local_rx: impl AsyncRead,
-    mut ws_tx: WebSocketWrite<WriteHalf<Upgraded>>,
+    mut ws_tx: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
     mut close_tx: oneshot::Sender<()>,
     ping_frequency: Option<Duration>,
 ) -> Result<(), WebSocketError> {
@@ -84,7 +85,7 @@ pub(super) async fn propagate_read(
 
 pub(super) async fn propagate_write(
     local_tx: impl AsyncWrite,
-    mut ws_rx: WebSocketRead<ReadHalf<Upgraded>>,
+    mut ws_rx: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>,
     mut close_rx: oneshot::Receiver<()>,
 ) -> Result<(), WebSocketError> {
     let _guard = scopeguard::guard((), |_| {
