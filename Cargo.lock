@@ -1847,7 +1847,7 @@ checksum = "dff9641d1cd4be8d1a070daf9e3773c5f67e78b4d9d42263020c057706765c04"
 
 [[package]]
 name = "wstunnel"
-version = "8.2.1"
+version = "8.3.0"
 dependencies = [
  "ahash",
  "anyhow",
