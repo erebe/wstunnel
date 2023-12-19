@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context};
 use std::{io, vec};
 
+use crate::dns::DnsResolver;
 use base64::Engine;
 use bytes::BytesMut;
 use log::warn;
@@ -41,14 +42,15 @@ pub async fn connect(
     port: u16,
     so_mark: Option<u32>,
     connect_timeout: Duration,
+    dns_resolver: &DnsResolver,
 ) -> Result<TcpStream, anyhow::Error> {
     info!("Opening TCP connection to {}:{}", host, port);
 
     let socket_addrs: Vec<SocketAddr> = match host {
-        Host::Domain(domain) => tokio::net::lookup_host(format!("{}:{}", domain, port))
+        Host::Domain(domain) => dns_resolver
+            .lookup_host(domain.as_str(), port)
             .await
-            .with_context(|| format!("cannot resolve domain: {}", domain))?
-            .collect(),
+            .with_context(|| format!("cannot resolve domain: {}", domain))?,
         Host::Ipv4(ip) => vec![SocketAddr::V4(SocketAddrV4::new(*ip, port))],
         Host::Ipv6(ip) => vec![SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))],
     };
@@ -104,7 +106,7 @@ pub async fn connect_with_http_proxy(
     let proxy_host = proxy.host().context("Cannot parse proxy host")?.to_owned();
     let proxy_port = proxy.port_or_known_default().unwrap_or(80);
 
-    let mut socket = connect(&proxy_host, proxy_port, so_mark, connect_timeout).await?;
+    let mut socket = connect(&proxy_host, proxy_port, so_mark, connect_timeout, &DnsResolver::System).await?;
     info!("Connected to http proxy {}:{}", proxy_host, proxy_port);
 
     let authorization = if let Some((user, password)) = proxy.password().map(|p| (proxy.username(), p)) {

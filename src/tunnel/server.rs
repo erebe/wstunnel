@@ -67,7 +67,13 @@ async fn from_query(
     match jwt.claims.p {
         LocalProtocol::Udp { timeout, .. } => {
             let host = Host::parse(&jwt.claims.r)?;
-            let cnx = udp::connect(&host, jwt.claims.rp, timeout.unwrap_or(Duration::from_secs(10))).await?;
+            let cnx = udp::connect(
+                &host,
+                jwt.claims.rp,
+                timeout.unwrap_or(Duration::from_secs(10)),
+                &server_config.dns_resolver,
+            )
+            .await?;
             Ok((
                 LocalProtocol::Udp { timeout: None },
                 host,
@@ -79,9 +85,15 @@ async fn from_query(
         LocalProtocol::Tcp => {
             let host = Host::parse(&jwt.claims.r)?;
             let port = jwt.claims.rp;
-            let (rx, tx) = tcp::connect(&host, port, server_config.socket_so_mark, Duration::from_secs(10))
-                .await?
-                .into_split();
+            let (rx, tx) = tcp::connect(
+                &host,
+                port,
+                server_config.socket_so_mark,
+                Duration::from_secs(10),
+                &server_config.dns_resolver,
+            )
+            .await?
+            .into_split();
 
             Ok((jwt.claims.p, host, port, Box::pin(rx), Box::pin(tx)))
         }

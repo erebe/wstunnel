@@ -1,3 +1,4 @@
+mod dns;
 mod embedded_certificate;
 mod socks5;
 mod stdio;
@@ -9,13 +10,14 @@ mod udp;
 use base64::Engine;
 use clap::Parser;
 use futures_util::{stream, TryStreamExt};
+use hickory_resolver::config::{NameServerConfig, ResolverConfig, ResolverOpts};
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::io::ErrorKind;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -27,6 +29,7 @@ use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
 
 use tracing::{error, info, Level};
 
+use crate::dns::DnsResolver;
 use crate::tunnel::to_host_port;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
@@ -156,6 +159,16 @@ struct Server {
     /// Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
     #[arg(long, value_name = "DEST:PORT", verbatim_doc_comment)]
     restrict_to: Option<Vec<String>>,
+
+    /// Dns resolver to use to lookup ips of domain name
+    /// This option is not going to work if you use transparent proxy
+    /// Can be specified multiple time
+    /// Example:
+    ///  dns://1.1.1.1 for using udp
+    ///  dns+https://1.1.1.1 for using dns over HTTPS
+    ///  dns+tls://8.8.8.8 for using dns over TLS
+    #[arg(long, verbatim_doc_comment)]
+    dns_resolver: Option<Vec<Url>>,
 
     /// Server will only accept connection from if this specific path prefix is used during websocket upgrade.
     /// Useful if you specify in the client a custom path prefix and you want the server to only allow this one.
@@ -445,6 +458,7 @@ pub struct WsServerConfig {
     pub timeout_connect: Duration,
     pub websocket_mask_frame: bool,
     pub tls: Option<TlsServerConfig>,
+    pub dns_resolver: DnsResolver,
 }
 
 impl Debug for WsServerConfig {
@@ -592,7 +606,14 @@ async fn main() {
                             let remote = tunnel.remote.clone();
                             let cfg = client_config.clone();
                             let connect_to_dest = |_| async {
-                                tcp::connect(&remote.0, remote.1, cfg.socket_so_mark, cfg.timeout_connect).await
+                                tcp::connect(
+                                    &remote.0,
+                                    remote.1,
+                                    cfg.socket_so_mark,
+                                    cfg.timeout_connect,
+                                    &DnsResolver::System,
+                                )
+                                .await
                             };
 
                             if let Err(err) =
@@ -608,8 +629,9 @@ async fn main() {
                         tokio::spawn(async move {
                             let cfg = client_config.clone();
                             let remote = tunnel.remote.clone();
-                            let connect_to_dest =
-                                |_| async { udp::connect(&remote.0, remote.1, cfg.timeout_connect).await };
+                            let connect_to_dest = |_| async {
+                                udp::connect(&remote.0, remote.1, cfg.timeout_connect, &DnsResolver::System).await
+                            };
 
                             if let Err(err) =
                                 tunnel::client::run_reverse_tunnel(client_config, tunnel, connect_to_dest).await
@@ -625,7 +647,9 @@ async fn main() {
                             let connect_to_dest = |remote: (Host, u16)| {
                                 let so_mark = cfg.socket_so_mark;
                                 let timeout = cfg.timeout_connect;
-                                async move { tcp::connect(&remote.0, remote.1, so_mark, timeout).await }
+                                async move {
+                                    tcp::connect(&remote.0, remote.1, so_mark, timeout, &DnsResolver::System).await
+                                }
                             };
 
                             if let Err(err) =
@@ -770,6 +794,29 @@ async fn main() {
                 None
             };
 
+            let dns_resolver = match args.dns_resolver {
+                None => DnsResolver::System,
+                Some(resolvers) => {
+                    let mut cfg = ResolverConfig::new();
+                    for resolver in resolvers {
+                        let (protocol, port) = match resolver.scheme() {
+                            "dns" => (hickory_resolver::config::Protocol::Udp, resolver.port().unwrap_or(53)),
+                            "dns+https" => (hickory_resolver::config::Protocol::Https, resolver.port().unwrap_or(853)),
+                            "dns+tls" => (hickory_resolver::config::Protocol::Tls, resolver.port().unwrap_or(12)),
+                            _ => panic!("invalid protocol for dns resolver"),
+                        };
+                        let sock = match resolver.host().unwrap() {
+                            Host::Domain(_) => panic!("Dns resolver must be an ip address"),
+                            Host::Ipv4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
+                            Host::Ipv6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
+                        };
+                        cfg.add_name_server(NameServerConfig::new(sock, protocol))
+                    }
+
+                    let opts = ResolverOpts::default();
+                    DnsResolver::TrustDns(hickory_resolver::AsyncResolver::tokio(cfg, opts))
+                }
+            };
             let server_config = WsServerConfig {
                 socket_so_mark: args.socket_so_mark,
                 bind: args.remote_addr.socket_addrs(|| Some(8080)).unwrap()[0],
@@ -779,6 +826,7 @@ async fn main() {
                 timeout_connect: Duration::from_secs(10),
                 websocket_mask_frame: args.websocket_mask_frame,
                 tls: tls_config,
+                dns_resolver,
             };
 
             info!(

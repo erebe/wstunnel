@@ -18,6 +18,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::futures::Notified;
 
+use crate::dns::DnsResolver;
 use tokio::sync::Notify;
 use tokio::time::{timeout, Interval};
 use tracing::{debug, error, info};
@@ -295,16 +296,21 @@ impl AsyncWrite for MyUdpSocket {
     }
 }
 
-pub async fn connect(host: &Host<String>, port: u16, connect_timeout: Duration) -> anyhow::Result<MyUdpSocket> {
+pub async fn connect(
+    host: &Host<String>,
+    port: u16,
+    connect_timeout: Duration,
+    dns_resolver: &DnsResolver,
+) -> anyhow::Result<MyUdpSocket> {
     info!("Opening UDP connection to {}:{}", host, port);
 
     let socket_addrs: Vec<SocketAddr> = match host {
-        Host::Domain(domain) => timeout(connect_timeout, tokio::net::lookup_host(format!("{}:{}", domain, port)))
-            .await
-            .with_context(|| format!("cannot resolve domain: {}", domain))??
-            .collect(),
         Host::Ipv4(ip) => vec![SocketAddr::V4(SocketAddrV4::new(*ip, port))],
         Host::Ipv6(ip) => vec![SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))],
+        Host::Domain(domain) => dns_resolver
+            .lookup_host(domain.as_str(), port)
+            .await
+            .with_context(|| format!("cannot resolve domain: {}", domain))?,
     };
 
     let mut cnx = None;
