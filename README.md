@@ -142,6 +142,14 @@ Options:
           Server will only accept connection from the specified tunnel information.
           Can be specified multiple time
           Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
+      --dns-resolver <DNS_RESOLVER>
+          Dns resolver to use to lookup ips of domain name
+          This option is not going to work if you use transparent proxy
+          Can be specified multiple time
+          Example:
+           dns://1.1.1.1 for using udp
+           dns+https://1.1.1.1 for using dns over HTTPS
+           dns+tls://8.8.8.8 for using dns over TLS
   -r, --restrict-http-upgrade-path-prefix <RESTRICT_HTTP_UPGRADE_PATH_PREFIX>
           Server will only accept connection from if this specific path prefix is used during websocket upgrade.
           Useful if you specify in the client a custom path prefix and you want the server to only allow this one.
