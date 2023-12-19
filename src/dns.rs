@@ -10,9 +10,7 @@ pub enum DnsResolver {
 impl DnsResolver {
     pub async fn lookup_host(&self, domain: &str, port: u16) -> anyhow::Result<Vec<SocketAddr>> {
         let addrs: Vec<SocketAddr> = match self {
-            DnsResolver::System => tokio::net::lookup_host(format!("{}:{}", domain, port))
-                .await?
-                .collect(),
+            DnsResolver::System => tokio::net::lookup_host(format!("{}:{}", domain, port)).await?.collect(),
             DnsResolver::TrustDns(dns_resolver) => dns_resolver
                 .lookup_ip(domain)
                 .await?
