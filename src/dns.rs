@@ -1,4 +1,3 @@
-use anyhow::Context;
 use hickory_resolver::TokioAsyncResolver;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
@@ -12,13 +11,11 @@ impl DnsResolver {
     pub async fn lookup_host(&self, domain: &str, port: u16) -> anyhow::Result<Vec<SocketAddr>> {
         let addrs: Vec<SocketAddr> = match self {
             DnsResolver::System => tokio::net::lookup_host(format!("{}:{}", domain, port))
-                .await
-                .with_context(|| format!("cannot resolve domain: {}", domain))?
+                .await?
                 .collect(),
             DnsResolver::TrustDns(dns_resolver) => dns_resolver
                 .lookup_ip(domain)
-                .await
-                .with_context(|| format!("cannot resolve domain: {}", domain))?
+                .await?
                 .into_iter()
                 .map(|ip| match ip {
                     IpAddr::V4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
