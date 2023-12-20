@@ -2115,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "wstunnel"
-version = "8.4.1"
+version = "8.4.2"
 dependencies = [
  "ahash",
  "anyhow",
