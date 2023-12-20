@@ -42,6 +42,22 @@ use url::{Host, Url};
 struct Wstunnel {
     #[command(subcommand)]
     commands: Commands,
+
+    /// Disable color output in logs
+    #[arg(long, global = true, verbatim_doc_comment, env = "NO_COLOR")]
+    no_color: Option<String>,
+
+    /// *WARNING* The flag does nothing, you need to set the env variable *WARNING*
+    /// Control the number of threads that will be used.
+    /// By default it is equal the number of cpus
+    #[arg(
+        long,
+        global = true,
+        value_name = "INT",
+        verbatim_doc_comment,
+        env = "TOKIO_WORKER_THREADS"
+    )]
+    nb_worker_threads: Option<u32>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -546,7 +562,7 @@ async fn main() {
                 > 0 => {}
         _ => {
             tracing_subscriber::fmt()
-                .with_ansi(true)
+                .with_ansi(args.no_color.is_none())
                 .with_env_filter(
                     EnvFilter::builder()
                         .with_default_directive(Level::INFO.into())
