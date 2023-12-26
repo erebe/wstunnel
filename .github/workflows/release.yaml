@@ -114,7 +114,7 @@ jobs:
         echo "target flag is: ${{ env.BUILD_ARGS }}"
 
     - name: Build ${{ matrix.platform.name }} binary
-      if: ${{ !contains(matrix.platform.target, 'apple') }}
+      #if: ${{ !contains(matrix.platform.target, 'apple') }}
       uses: actions-rs/cargo@v1
       # We use cross-rs if not running on x86_64 architecture on Linux
       with:
@@ -123,12 +123,12 @@ jobs:
         args: ${{ env.BUILD_ARGS }} --target ${{ matrix.platform.target }}
 
     # Mac OS
-    - name: Build ${{ matrix.platform.name }} binary
-      if: contains(matrix.platform.target, 'apple')
-      # We use a dedicated Rust image containing required Apple libraries to cross-compile on multiple archs
-      run: |
-        docker run --rm --volume "${PWD}":/root/src --workdir /root/src joseluisq/rust-linux-darwin-builder:$RUST_VERSION \
-        sh -c "CC=o64-clang CXX=o64-clang++ cargo build $BUILD_ARGS --target ${{ matrix.platform.target }}"
+    #- name: Build ${{ matrix.platform.name }} binary
+    #  if: contains(matrix.platform.target, 'apple')
+    #  # We use a dedicated Rust image containing required Apple libraries to cross-compile on multiple archs
+    #  run: |
+    #    docker run --rm --volume "${PWD}":/root/src --workdir /root/src joseluisq/rust-linux-darwin-builder:$RUST_VERSION \
+    #    sh -c "CC=o64-clang CXX=o64-clang++ cargo build $BUILD_ARGS --target ${{ matrix.platform.target }}"
     
     - name: Store artifact
       uses: actions/upload-artifact@v3
