@@ -80,7 +80,7 @@ jobs:
 
     # Linux & Windows
     - name: Install rust toolchain for Linux
-      if: ${{ !contains(matrix.platform.target, 'apple') && !contains(matrix.platform.target, 'android') }}
+      #if: ${{ !contains(matrix.platform.target, 'apple') && !contains(matrix.platform.target, 'android') }}
       uses: actions-rs/toolchain@v1
       with:
         # We setup Rust toolchain and the desired target
