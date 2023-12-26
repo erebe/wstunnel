@@ -49,6 +49,7 @@ impl JwtTunnelConfig {
     }
 }
 
+static JWT_HEADER_PREFIX: &str = "authorization.bearer.";
 static JWT_SECRET: &[u8; 15] = b"champignonfrais";
 static JWT_KEY: Lazy<(Header, EncodingKey)> =
     Lazy::new(|| (Header::new(Algorithm::HS256), EncodingKey::from_secret(JWT_SECRET)));

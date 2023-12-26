@@ -1,4 +1,4 @@
-use super::{to_host_port, JwtTunnelConfig, JWT_KEY};
+use super::{to_host_port, JwtTunnelConfig, JWT_HEADER_PREFIX, JWT_KEY};
 use crate::{LocalToRemote, WsClientConfig};
 use anyhow::{anyhow, Context};
 
@@ -8,7 +8,7 @@ use fastwebsockets::WebSocket;
 use futures_util::pin_mut;
 use http_body_util::Empty;
 use hyper::body::Incoming;
-use hyper::header::{AUTHORIZATION, COOKIE, SEC_WEBSOCKET_VERSION, UPGRADE};
+use hyper::header::{AUTHORIZATION, COOKIE, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::upgrade::Upgraded;
 use hyper::{Request, Response};
@@ -42,16 +42,16 @@ pub async fn connect(
 
     let mut req = Request::builder()
         .method("GET")
-        .uri(format!(
-            "/{}/events?bearer={}",
-            &client_cfg.http_upgrade_path_prefix,
-            tunnel_to_jwt_token(request_id, tunnel_cfg)
-        ))
+        .uri(format!("/{}/events", &client_cfg.http_upgrade_path_prefix,))
         .header(HOST, &client_cfg.http_header_host)
         .header(UPGRADE, "websocket")
         .header(CONNECTION, "upgrade")
         .header(SEC_WEBSOCKET_KEY, fastwebsockets::handshake::generate_key())
         .header(SEC_WEBSOCKET_VERSION, "13")
+        .header(
+            SEC_WEBSOCKET_PROTOCOL,
+            format!("v1, {}{}", JWT_HEADER_PREFIX, tunnel_to_jwt_token(request_id, tunnel_cfg)),
+        )
         .version(hyper::Version::HTTP_11);
 
     for (k, v) in &client_cfg.http_headers {
