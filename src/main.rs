@@ -136,7 +136,7 @@ struct Client {
     /// Useful if you need to route requests server side but don't have vhosts
     #[arg(
         long,
-        default_value = "morille",
+        default_value = "v1",
         verbatim_doc_comment,
         env = "WSTUNNEL_HTTP_UPGRADE_PATH_PREFIX"
     )]
