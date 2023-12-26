@@ -102,6 +102,19 @@ jobs:
         target: ${{ matrix.platform.target }}
         components: rustfmt, clippy
 
+    - name: Use Cross
+        shell: bash
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+          echo "CARGO=cross" >> $GITHUB_ENV
+          echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+    - name: Show command used for Cargo
+        run: |
+          echo "cargo command is: ${{ env.CARGO }}"
+          echo "target flag is: ${{ env.BUILD_ARGS }}"
+
     - name: Build ${{ matrix.platform.name }} binary
       if: ${{ !contains(matrix.platform.target, 'apple') }}
       uses: actions-rs/cargo@v1
