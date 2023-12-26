@@ -27,10 +27,11 @@ use std::{fmt, io};
 use tokio_rustls::rustls::server::DnsName;
 use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
 
-use tracing::{error, info, Level};
+use tracing::{error, info};
 
 use crate::dns::DnsResolver;
 use crate::tunnel::to_host_port;
+use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
 
@@ -58,6 +59,18 @@ struct Wstunnel {
         env = "TOKIO_WORKER_THREADS"
     )]
     nb_worker_threads: Option<u32>,
+
+    /// Control the log verbosity. i.e: TRACE, DEBUG, INFO, WARNING, ERROR
+    /// for more details: https://docs.rs/env_logger/0.10.1/env_logger/#enabling-logging
+    #[arg(
+        long,
+        global = true,
+        value_name = "LOG_LEVEL",
+        verbatim_doc_comment,
+        env = "RUST_LOG",
+        default_value = "INFO"
+    )]
+    log_lvl: Directive,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -565,7 +578,7 @@ async fn main() {
                 .with_ansi(args.no_color.is_none())
                 .with_env_filter(
                     EnvFilter::builder()
-                        .with_default_directive(Level::INFO.into())
+                        .with_default_directive(args.log_lvl)
                         .from_env_lossy(),
                 )
                 .init();
