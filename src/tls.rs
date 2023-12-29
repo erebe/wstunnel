@@ -92,7 +92,7 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
     let mut config = rustls::ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(tls_cfg.tls_certificate.clone(), tls_cfg.tls_key.clone())
+        .with_single_cert(tls_cfg.tls_certificate.lock().clone(), tls_cfg.tls_key.lock().clone())
         .with_context(|| "invalid tls certificate or private key")?;
 
     if let Some(alpn_protocols) = alpn_protocols {

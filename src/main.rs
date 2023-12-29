@@ -13,6 +13,7 @@ use futures_util::{stream, TryStreamExt};
 use hickory_resolver::config::{NameServerConfig, ResolverConfig, ResolverOpts};
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Formatter};
@@ -217,10 +218,12 @@ struct Server {
     restrict_http_upgrade_path_prefix: Option<Vec<String>>,
 
     /// [Optional] Use custom certificate (.crt) instead of the default embedded self signed certificate.
+    /// The certificate will be automatically reloaded if it changes
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
     tls_certificate: Option<PathBuf>,
 
     /// [Optional] Use a custom tls key (.key) that the server will use instead of the default embedded one
+    /// The private key will be automatically reloaded if it changes
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
     tls_private_key: Option<PathBuf>,
 }
@@ -481,13 +484,14 @@ pub struct TlsClientConfig {
     pub tls_verify_certificate: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct TlsServerConfig {
-    pub tls_certificate: Vec<Certificate>,
-    pub tls_key: PrivateKey,
+    pub tls_certificate: Mutex<Vec<Certificate>>,
+    pub tls_key: Mutex<PrivateKey>,
+    pub tls_certificate_path: Option<PathBuf>,
+    pub tls_key_path: Option<PathBuf>,
 }
 
-#[derive(Clone)]
 pub struct WsServerConfig {
     pub socket_so_mark: Option<u32>,
     pub bind: SocketAddr,
@@ -814,20 +818,23 @@ async fn main() {
         }
         Commands::Server(args) => {
             let tls_config = if args.remote_addr.scheme() == "wss" {
-                let tls_certificate = if let Some(cert_path) = args.tls_certificate {
-                    tls::load_certificates_from_pem(&cert_path).expect("Cannot load tls certificate")
+                let tls_certificate = if let Some(cert_path) = &args.tls_certificate {
+                    tls::load_certificates_from_pem(cert_path).expect("Cannot load tls certificate")
                 } else {
                     embedded_certificate::TLS_CERTIFICATE.clone()
                 };
 
-                let tls_key = if let Some(key_path) = args.tls_private_key {
-                    tls::load_private_key_from_file(&key_path).expect("Cannot load tls private key")
+                let tls_key = if let Some(key_path) = &args.tls_private_key {
+                    tls::load_private_key_from_file(key_path).expect("Cannot load tls private key")
                 } else {
                     embedded_certificate::TLS_PRIVATE_KEY.clone()
                 };
+
                 Some(TlsServerConfig {
-                    tls_certificate,
-                    tls_key,
+                    tls_certificate: Mutex::new(tls_certificate),
+                    tls_key: Mutex::new(tls_key),
+                    tls_certificate_path: args.tls_certificate,
+                    tls_key_path: args.tls_private_key,
                 })
             } else {
                 None

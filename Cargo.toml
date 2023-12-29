@@ -28,6 +28,7 @@ nix = { version = "0.27.1", features = ["socket", "net", "uio"] }
 once_cell = { version = "1.19.0", features = [] }
 parking_lot = "0.12.1"
 pin-project = "1"
+notify = { version = "6.1.1", features = [] }
 
 rustls-native-certs = { version = "0.7.0", features = [] }
 rustls-pemfile = { version = "2.0.0", features = [] }
