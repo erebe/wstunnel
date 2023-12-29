@@ -1,6 +1,7 @@
 pub mod client;
 mod io;
 pub mod server;
+mod tls_reloader;
 
 use crate::dns::DnsResolver;
 use crate::{tcp, tls, LocalProtocol, LocalToRemote, WsClientConfig};
