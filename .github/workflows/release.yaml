@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 env:
-  RUST_VERSION: 1.74.1
+  RUST_VERSION: 1.75.0
   BUILD_ARGS: "--release"
   BIN_NAME: "wstunnel"
 
