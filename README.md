@@ -157,8 +157,10 @@ Options:
           Disabled by default. Accept all path prefix. Can be specified multiple time
       --tls-certificate <FILE_PATH>
           [Optional] Use custom certificate (.crt) instead of the default embedded self signed certificate.
+          The certificate will be automatically reloaded if it changes 
       --tls-private-key <FILE_PATH>
           [Optional] Use a custom tls key (.key) that the server will use instead of the default embedded one
+          The certificate will be automatically reloaded if it changes
   -h, --help
           Print help
 ```
