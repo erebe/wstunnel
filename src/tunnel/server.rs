@@ -7,7 +7,6 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::ops::{Deref, Not};
 use std::pin::Pin;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -376,7 +375,7 @@ struct TlsContext<'a> {
 }
 impl TlsContext<'_> {
     pub fn tls_acceptor(&mut self) -> &Arc<TlsAcceptor> {
-        if self.tls_reloader.tls_reload_certificate.swap(false, Ordering::Relaxed) {
+        if self.tls_reloader.should_reload_certificate() {
             match tls::tls_acceptor(self.tls_config, Some(vec![b"http/1.1".to_vec()])) {
                 Ok(acceptor) => self.tls_acceptor = Arc::new(acceptor),
                 Err(err) => error!("Cannot reload TLS certificate {:?}", err),
