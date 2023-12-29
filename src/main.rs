@@ -61,7 +61,7 @@ struct Wstunnel {
     )]
     nb_worker_threads: Option<u32>,
 
-    /// Control the log verbosity. i.e: TRACE, DEBUG, INFO, WARNING, ERROR
+    /// Control the log verbosity. i.e: TRACE, DEBUG, INFO, WARN, ERROR, OFF
     /// for more details: https://docs.rs/env_logger/0.10.1/env_logger/#enabling-logging
     #[arg(
         long,
