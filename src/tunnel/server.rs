@@ -374,6 +374,7 @@ struct TlsContext<'a> {
     tls_config: &'a TlsServerConfig,
 }
 impl TlsContext<'_> {
+    #[inline]
     pub fn tls_acceptor(&mut self) -> &Arc<TlsAcceptor> {
         if self.tls_reloader.should_reload_certificate() {
             match tls::tls_acceptor(self.tls_config, Some(vec![b"http/1.1".to_vec()])) {

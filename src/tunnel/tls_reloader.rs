@@ -56,6 +56,7 @@ impl TlsReloader {
         Ok(Self { state: Some(this) })
     }
 
+    #[inline]
     pub fn should_reload_certificate(&self) -> bool {
         match &self.state {
             None => false,
