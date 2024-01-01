@@ -1,3 +1,4 @@
+use std::cmp::max;
 use fastwebsockets::{Frame, OpCode, Payload, WebSocketError, WebSocketRead, WebSocketWrite};
 use futures_util::{pin_mut, FutureExt};
 use hyper::upgrade::Upgraded;
@@ -22,7 +23,7 @@ pub(super) async fn propagate_read(
     });
 
     static MAX_PACKET_LENGTH: usize = 64 * 1024;
-    let mut buffer = vec![0u8; MAX_PACKET_LENGTH];
+    let mut buffer = vec![0u8; MAX_PACKET_LENGTH * 1];
 
     // We do our own pin_mut! to avoid shadowing timeout and be able to reset it, on next loop iteration
     // We reuse the future to avoid creating a timer in the tight loop
@@ -59,7 +60,7 @@ pub(super) async fn propagate_read(
             }
         };
 
-        trace!("read {} bytes", read_len);
+        //debug!("read {} wasted {}% usable {} capa {}", read_len, 100 - (read_len * 100 / buffer.capacity()), buffer.as_slice().len(), buffer.capacity());
         if let Err(err) = ws_tx
             .write_frame(Frame::binary(Payload::BorrowedMut(&mut buffer[..read_len])))
             .await
@@ -73,7 +74,10 @@ pub(super) async fn propagate_read(
         // For udp, the buffer will never grows.
         if buffer.capacity() == read_len {
             buffer.clear();
-            buffer.resize(buffer.capacity() * 2, 0);
+            let new_size = buffer.capacity() + (buffer.capacity() / 4); // grow buffer by 1.25 %
+            buffer.reserve_exact(new_size);
+            buffer.resize(buffer.capacity(), 0);
+            //info!("Buffer {} Mb {} {} {}", buffer.capacity() as f64 / 1024.0 / 1024.0, new_size, buffer.as_slice().len(), buffer.capacity())
         }
     }
 
