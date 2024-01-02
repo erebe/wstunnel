@@ -351,7 +351,7 @@ async fn server_upgrade(server_config: Arc<WsServerConfig>, mut req: Request<Inc
 
     if protocol == LocalProtocol::ReverseSocks5 {
         let Ok(header_val) = HeaderValue::from_str(
-            &base64::engine::general_purpose::STANDARD.encode(format!("fake://{}:{}", dest, port)),
+            &base64::engine::general_purpose::STANDARD.encode(format!("https://{}:{}", dest, port)),
         ) else {
             error!("Bad headervalue for reverse socks5: {} {}", dest, port);
             return http::Response::builder()

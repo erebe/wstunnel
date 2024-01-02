@@ -852,7 +852,13 @@ async fn main() {
                             _ => panic!("invalid protocol for dns resolver"),
                         };
                         let sock = match resolver.host().unwrap() {
-                            Host::Domain(_) => panic!("Dns resolver must be an ip address"),
+                            Host::Domain(host) => match Host::parse(host) {
+                                Ok(Host::Ipv4(ip)) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
+                                Ok(Host::Ipv6(ip)) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
+                                Ok(Host::Domain(_)) | Err(_) => {
+                                    panic!("Dns resolver must be an ip address, got {}", host)
+                                }
+                            },
                             Host::Ipv4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
                             Host::Ipv6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
                         };

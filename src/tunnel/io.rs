@@ -1,4 +1,3 @@
-use std::cmp::max;
 use fastwebsockets::{Frame, OpCode, Payload, WebSocketError, WebSocketRead, WebSocketWrite};
 use futures_util::{pin_mut, FutureExt};
 use hyper::upgrade::Upgraded;
@@ -23,7 +22,7 @@ pub(super) async fn propagate_read(
     });
 
     static MAX_PACKET_LENGTH: usize = 64 * 1024;
-    let mut buffer = vec![0u8; MAX_PACKET_LENGTH * 1];
+    let mut buffer = vec![0u8; MAX_PACKET_LENGTH];
 
     // We do our own pin_mut! to avoid shadowing timeout and be able to reset it, on next loop iteration
     // We reuse the future to avoid creating a timer in the tight loop
@@ -77,7 +76,13 @@ pub(super) async fn propagate_read(
             let new_size = buffer.capacity() + (buffer.capacity() / 4); // grow buffer by 1.25 %
             buffer.reserve_exact(new_size);
             buffer.resize(buffer.capacity(), 0);
-            //info!("Buffer {} Mb {} {} {}", buffer.capacity() as f64 / 1024.0 / 1024.0, new_size, buffer.as_slice().len(), buffer.capacity())
+            trace!(
+                "Buffer {} Mb {} {} {}",
+                buffer.capacity() as f64 / 1024.0 / 1024.0,
+                new_size,
+                buffer.as_slice().len(),
+                buffer.capacity()
+            )
         }
     }
 
