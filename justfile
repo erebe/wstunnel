@@ -10,7 +10,7 @@ make_release $VERSION $FORCE="":
    git add Cargo.*
    git commit -m 'Bump version v'$VERSION
    git tag $FORCE v$VERSION -m 'version v'$VERSION
-   git push
+   git push $FORCE
    git push $FORCE origin v$VERSION
    @just docker_release v$VERSION
 

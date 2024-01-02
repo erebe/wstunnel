@@ -3,7 +3,6 @@ mod io;
 pub mod server;
 mod tls_reloader;
 
-use crate::dns::DnsResolver;
 use crate::{tcp, tls, LocalProtocol, LocalToRemote, WsClientConfig};
 use async_trait::async_trait;
 use bb8::ManageConnection;
@@ -127,9 +126,9 @@ impl ManageConnection for WsClientConfig {
         let timeout = self.timeout_connect;
 
         let tcp_stream = if let Some(http_proxy) = &self.http_proxy {
-            tcp::connect_with_http_proxy(http_proxy, host, *port, so_mark, timeout).await?
+            tcp::connect_with_http_proxy(http_proxy, host, *port, so_mark, timeout, &self.dns_resolver).await?
         } else {
-            tcp::connect(host, *port, so_mark, timeout, &DnsResolver::System).await?
+            tcp::connect(host, *port, so_mark, timeout, &self.dns_resolver).await?
         };
 
         match &self.tls {

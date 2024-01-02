@@ -13,6 +13,7 @@ use futures_util::{stream, TryStreamExt};
 use hickory_resolver::config::{NameServerConfig, ResolverConfig, ResolverOpts};
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
+use log::{debug, warn};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -202,6 +203,8 @@ struct Server {
     ///  dns://1.1.1.1 for using udp
     ///  dns+https://1.1.1.1 for using dns over HTTPS
     ///  dns+tls://8.8.8.8 for using dns over TLS
+    /// To use libc resolver, use
+    /// system://0.0.0.0
     #[arg(long, verbatim_doc_comment)]
     dns_resolver: Option<Vec<Url>>,
 
@@ -519,7 +522,7 @@ impl Debug for WsServerConfig {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WsClientConfig {
     pub remote_addr: (Host<String>, u16),
     pub socket_so_mark: Option<u32>,
@@ -533,6 +536,7 @@ pub struct WsClientConfig {
     pub websocket_mask_frame: bool,
     pub http_proxy: Option<Url>,
     cnx_pool: Option<bb8::Pool<WsClientConfig>>,
+    pub dns_resolver: DnsResolver,
 }
 
 impl WsClientConfig {
@@ -626,6 +630,12 @@ async fn main() {
                 websocket_mask_frame: args.websocket_mask_frame,
                 http_proxy: args.http_proxy,
                 cnx_pool: None,
+                dns_resolver: if let Ok(resolver) = hickory_resolver::AsyncResolver::tokio_from_system_conf() {
+                    DnsResolver::TrustDns(resolver)
+                } else {
+                    debug!("Fall-backing to system dns resolver");
+                    DnsResolver::System
+                },
             };
 
             let pool = bb8::Pool::builder()
@@ -654,7 +664,7 @@ async fn main() {
                                     remote.1,
                                     cfg.socket_so_mark,
                                     cfg.timeout_connect,
-                                    &DnsResolver::System,
+                                    &cfg.dns_resolver,
                                 )
                                 .await
                             };
@@ -673,7 +683,7 @@ async fn main() {
                             let cfg = client_config.clone();
                             let remote = tunnel.remote.clone();
                             let connect_to_dest = |_| async {
-                                udp::connect(&remote.0, remote.1, cfg.timeout_connect, &DnsResolver::System).await
+                                udp::connect(&remote.0, remote.1, cfg.timeout_connect, &cfg.dns_resolver).await
                             };
 
                             if let Err(err) =
@@ -690,9 +700,8 @@ async fn main() {
                             let connect_to_dest = |remote: (Host, u16)| {
                                 let so_mark = cfg.socket_so_mark;
                                 let timeout = cfg.timeout_connect;
-                                async move {
-                                    tcp::connect(&remote.0, remote.1, so_mark, timeout, &DnsResolver::System).await
-                                }
+                                let dns_resolver = &cfg.dns_resolver;
+                                async move { tcp::connect(&remote.0, remote.1, so_mark, timeout, dns_resolver).await }
                             };
 
                             if let Err(err) =
@@ -841,32 +850,45 @@ async fn main() {
             };
 
             let dns_resolver = match args.dns_resolver {
-                None => DnsResolver::System,
-                Some(resolvers) => {
-                    let mut cfg = ResolverConfig::new();
-                    for resolver in resolvers {
-                        let (protocol, port) = match resolver.scheme() {
-                            "dns" => (hickory_resolver::config::Protocol::Udp, resolver.port().unwrap_or(53)),
-                            "dns+https" => (hickory_resolver::config::Protocol::Https, resolver.port().unwrap_or(853)),
-                            "dns+tls" => (hickory_resolver::config::Protocol::Tls, resolver.port().unwrap_or(12)),
-                            _ => panic!("invalid protocol for dns resolver"),
-                        };
-                        let sock = match resolver.host().unwrap() {
-                            Host::Domain(host) => match Host::parse(host) {
-                                Ok(Host::Ipv4(ip)) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
-                                Ok(Host::Ipv6(ip)) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
-                                Ok(Host::Domain(_)) | Err(_) => {
-                                    panic!("Dns resolver must be an ip address, got {}", host)
-                                }
-                            },
-                            Host::Ipv4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
-                            Host::Ipv6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
-                        };
-                        cfg.add_name_server(NameServerConfig::new(sock, protocol))
+                None => {
+                    if let Ok(resolver) = hickory_resolver::AsyncResolver::tokio_from_system_conf() {
+                        DnsResolver::TrustDns(resolver)
+                    } else {
+                        warn!("Fall-backing to system dns resolver. You should consider specifying a dns resolver. To avoid performance issue");
+                        DnsResolver::System
                     }
+                }
+                Some(resolvers) => {
+                    if resolvers.iter().any(|r| r.scheme() == "system") {
+                        DnsResolver::System
+                    } else {
+                        let mut cfg = ResolverConfig::new();
+                        for resolver in resolvers {
+                            let (protocol, port) = match resolver.scheme() {
+                                "dns" => (hickory_resolver::config::Protocol::Udp, resolver.port().unwrap_or(53)),
+                                "dns+https" => {
+                                    (hickory_resolver::config::Protocol::Https, resolver.port().unwrap_or(443))
+                                }
+                                "dns+tls" => (hickory_resolver::config::Protocol::Tls, resolver.port().unwrap_or(853)),
+                                _ => panic!("invalid protocol for dns resolver"),
+                            };
+                            let sock = match resolver.host().unwrap() {
+                                Host::Domain(host) => match Host::parse(host) {
+                                    Ok(Host::Ipv4(ip)) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
+                                    Ok(Host::Ipv6(ip)) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
+                                    Ok(Host::Domain(_)) | Err(_) => {
+                                        panic!("Dns resolver must be an ip address, got {}", host)
+                                    }
+                                },
+                                Host::Ipv4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
+                                Host::Ipv6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
+                            };
+                            cfg.add_name_server(NameServerConfig::new(sock, protocol))
+                        }
 
-                    let opts = ResolverOpts::default();
-                    DnsResolver::TrustDns(hickory_resolver::AsyncResolver::tokio(cfg, opts))
+                        let opts = ResolverOpts::default();
+                        DnsResolver::TrustDns(hickory_resolver::AsyncResolver::tokio(cfg, opts))
+                    }
                 }
             };
             let server_config = WsServerConfig {

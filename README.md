@@ -150,6 +150,8 @@ Options:
            dns://1.1.1.1 for using udp
            dns+https://1.1.1.1 for using dns over HTTPS
            dns+tls://8.8.8.8 for using dns over TLS
+          To use libc resolver, use
+           system://0.0.0.0
   -r, --restrict-http-upgrade-path-prefix <RESTRICT_HTTP_UPGRADE_PATH_PREFIX>
           Server will only accept connection from if this specific path prefix is used during websocket upgrade.
           Useful if you specify in the client a custom path prefix and you want the server to only allow this one.
