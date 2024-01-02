@@ -233,6 +233,7 @@ mod tests {
             1236,
             None,
             Duration::from_secs(1),
+            &DnsResolver::System,
         )
         .await
         .unwrap();
