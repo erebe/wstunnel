@@ -179,7 +179,7 @@ where
             .and_then(|h| h.to_str().ok())
             .and_then(|h| base64::engine::general_purpose::STANDARD.decode(h).ok())
             .and_then(|h| Url::parse(&String::from_utf8_lossy(&h)).ok())
-            .and_then(|url| match (url.host(), url.port()) {
+            .and_then(|url| match (url.host(), url.port_or_known_default()) {
                 (Some(h), Some(p)) => Some((h.to_owned(), p)),
                 _ => None,
             })
