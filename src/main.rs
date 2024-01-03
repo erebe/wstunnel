@@ -220,12 +220,12 @@ struct Server {
     )]
     restrict_http_upgrade_path_prefix: Option<Vec<String>>,
 
-    /// [Optional] Use custom certificate (.crt) instead of the default embedded self signed certificate.
+    /// [Optional] Use custom certificate (.pem) instead of the default embedded self signed certificate.
     /// The certificate will be automatically reloaded if it changes
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
     tls_certificate: Option<PathBuf>,
 
-    /// [Optional] Use a custom tls key (.key) that the server will use instead of the default embedded one
+    /// [Optional] Use a custom tls key (.pem) that the server will use instead of the default embedded one
     /// The private key will be automatically reloaded if it changes
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
     tls_private_key: Option<PathBuf>,
