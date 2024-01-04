@@ -158,10 +158,10 @@ Options:
           The path prefix act as a secret to authenticate clients
           Disabled by default. Accept all path prefix. Can be specified multiple time
       --tls-certificate <FILE_PATH>
-          [Optional] Use custom certificate (.pem) instead of the default embedded self signed certificate.
+          [Optional] Use custom certificate (pem) instead of the default embedded self signed certificate.
           The certificate will be automatically reloaded if it changes 
       --tls-private-key <FILE_PATH>
-          [Optional] Use a custom tls key (.pem) that the server will use instead of the default embedded one
+          [Optional] Use a custom tls key (pem, ec, rsa) that the server will use instead of the default embedded one
           The private key will be automatically reloaded if it changes
   -h, --help
           Print help
