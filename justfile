@@ -15,6 +15,6 @@ make_release $VERSION $FORCE="":
    @just docker_release v$VERSION
 
 docker_release $TAG:
-  docker login -u erebe ghcr.io
+  #docker login -u erebe ghcr.io
   ~/.depot/bin/depot build --project v4z5w7md33 --platform linux/arm/v7,linux/arm64,linux/amd64 -t ghcr.io/erebe/wstunnel:$TAG -t ghcr.io/erebe/wstunnel:latest --push .
 

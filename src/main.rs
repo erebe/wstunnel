@@ -794,7 +794,7 @@ async fn main() {
                         let server = socks5::run_server(tunnel.local)
                             .await
                             .unwrap_or_else(|err| panic!("Cannot start Socks5 server on {}: {}", tunnel.local, err))
-                            .map_ok(|(stream, remote_dest)| (stream.into_split(), remote_dest));
+                            .map_ok(|(stream, remote_dest)| (tokio::io::split(stream), remote_dest));
 
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {

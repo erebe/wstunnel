@@ -1,23 +1,29 @@
+use crate::udp::UdpStream;
 use anyhow::Context;
 use fast_socks5::server::{Config, DenyAuthentication, Socks5Server};
 use fast_socks5::util::target_addr::TargetAddr;
 use fast_socks5::{consts, ReplyError};
 use futures_util::{stream, Stream, StreamExt};
+use std::io::{Error, IoSlice};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::task::Poll;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tracing::{info, warn};
 use url::Host;
 
 #[allow(clippy::type_complexity)]
 pub struct Socks5Listener {
-    stream: Pin<Box<dyn Stream<Item = anyhow::Result<(TcpStream, (Host, u16))>> + Send>>,
+    stream: Pin<Box<dyn Stream<Item = anyhow::Result<(Socks5Protocol, (Host, u16))>> + Send>>,
 }
 
+pub enum Socks5Protocol {
+    Tcp(TcpStream),
+    Udp(UdpStream),
+}
 impl Stream for Socks5Listener {
-    type Item = anyhow::Result<(TcpStream, (Host, u16))>;
+    type Item = anyhow::Result<(Socks5Protocol, (Host, u16))>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
         unsafe { self.map_unchecked_mut(|x| &mut x.stream) }.poll_next(cx)
@@ -35,6 +41,7 @@ pub async fn run_server(bind: SocketAddr) -> Result<Socks5Listener, anyhow::Erro
     cfg.set_allow_no_auth(true);
     cfg.set_dns_resolve(false);
     cfg.set_execute_command(false);
+    cfg.set_udp_support(true);
 
     let server = server.with_config(cfg);
     let stream = stream::unfold(server, move |server| async {
@@ -61,6 +68,10 @@ pub async fn run_server(bind: SocketAddr) -> Result<Socks5Listener, anyhow::Erro
                 warn!("Rejecting socks5 cnx: no target addr");
                 continue;
             };
+            let Some(cmd) = cnx.cmd() else {
+                warn!("Rejecting socks5 cnx: no command");
+                continue;
+            };
 
             let (host, port) = match target {
                 TargetAddr::Ip(SocketAddr::V4(ip)) => (Host::Ipv4(*ip.ip()), ip.port()),
@@ -82,7 +93,7 @@ pub async fn run_server(bind: SocketAddr) -> Result<Socks5Listener, anyhow::Erro
             }
 
             drop(acceptor);
-            return Some((Ok((cnx, (host, port))), server));
+            return Some((Ok((Socks5Protocol::Tcp(cnx), (host, port))), server));
         }
     });
 
@@ -117,6 +128,61 @@ fn new_reply(error: &ReplyError, sock_addr: SocketAddr) -> Vec<u8> {
     reply.append(&mut port);
 
     reply
+}
+
+impl Unpin for Socks5Protocol {}
+impl AsyncRead for Socks5Protocol {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Socks5Protocol::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_read(cx, buf),
+            Socks5Protocol::Udp(s) => unsafe { Pin::new_unchecked(s) }.poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for Socks5Protocol {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
+        match self.get_mut() {
+            Socks5Protocol::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_write(cx, buf),
+            Socks5Protocol::Udp(s) => unsafe { Pin::new_unchecked(s) }.poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
+        match self.get_mut() {
+            Socks5Protocol::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_flush(cx),
+            Socks5Protocol::Udp(s) => unsafe { Pin::new_unchecked(s) }.poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
+        match self.get_mut() {
+            Socks5Protocol::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_shutdown(cx),
+            Socks5Protocol::Udp(s) => unsafe { Pin::new_unchecked(s) }.poll_shutdown(cx),
+        }
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<Result<usize, Error>> {
+        match self.get_mut() {
+            Socks5Protocol::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_write_vectored(cx, bufs),
+            Socks5Protocol::Udp(s) => unsafe { Pin::new_unchecked(s) }.poll_write_vectored(cx, bufs),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            Socks5Protocol::Tcp(s) => s.is_write_vectored(),
+            Socks5Protocol::Udp(s) => s.is_write_vectored(),
+        }
+    }
 }
 
 //#[cfg(test)]
