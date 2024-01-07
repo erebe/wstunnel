@@ -773,7 +773,7 @@ async fn main() {
                                 .map_ok(move |stream| {
                                     // In TProxy mode local destination is the final ip:port destination
                                     let (host, port) = to_host_port(stream.local_addr().unwrap());
-                                    (tokio::io::split(stream), (LocalProtocol::Udp { timeout: timeout }, host, port))
+                                    (tokio::io::split(stream), (LocalProtocol::Udp { timeout }, host, port))
                                 });
 
                         tokio::spawn(async move {
@@ -789,7 +789,7 @@ async fn main() {
                     LocalProtocol::Udp { timeout } => {
                         let (host, port) = tunnel.remote.clone();
                         let timeout = *timeout;
-                        let server = udp::run_server(tunnel.local, timeout.clone(), |_| Ok(()), |s| Ok(s.clone()))
+                        let server = udp::run_server(tunnel.local, timeout, |_| Ok(()), |s| Ok(s.clone()))
                             .await
                             .unwrap_or_else(|err| panic!("Cannot start UDP server on {}: {}", tunnel.local, err))
                             .map_err(anyhow::Error::new)

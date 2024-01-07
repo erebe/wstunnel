@@ -241,7 +241,7 @@ pub async fn run_server(
 
                 match server.peers.get(&destination_addr) {
                     Some(io) => {
-                        if let Err(_) = io.sender.send(data).await {
+                        if io.sender.send(data).await.is_err() {
                             server.peers.remove(&destination_addr);
                         }
                     }
