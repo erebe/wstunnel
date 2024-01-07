@@ -111,10 +111,11 @@ async fn run_tunnel(
             let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
             let listening_server = socks5::run_server(bind.parse()?, None);
-            let (tcp, local_srv) = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
-            let (local_rx, local_tx) = tokio::io::split(tcp);
+            let (stream, local_srv) = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
+            let proto = stream.local_protocol();
+            let (local_rx, local_tx) = tokio::io::split(stream);
 
-            Ok((jwt.claims.p, local_srv.0, local_srv.1, Box::pin(local_rx), Box::pin(local_tx)))
+            Ok((proto, local_srv.0, local_srv.1, Box::pin(local_rx), Box::pin(local_tx)))
         }
         _ => Err(anyhow::anyhow!("Invalid upgrade request")),
     }
