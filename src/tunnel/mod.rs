@@ -3,7 +3,7 @@ mod io;
 pub mod server;
 mod tls_reloader;
 
-use crate::{tcp, tls, LocalProtocol, LocalToRemote, WsClientConfig};
+use crate::{tcp, tls, LocalProtocol, WsClientConfig};
 use async_trait::async_trait;
 use bb8::ManageConnection;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{Error, IoSlice};
 use std::net::{IpAddr, SocketAddr};
+use std::ops::Deref;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -29,24 +30,30 @@ struct JwtTunnelConfig {
 }
 
 impl JwtTunnelConfig {
-    fn new(request_id: Uuid, tunnel: &LocalToRemote) -> Self {
+    fn new(request_id: Uuid, dest: &RemoteAddr) -> Self {
         Self {
             id: request_id.to_string(),
-            p: match tunnel.local_protocol {
+            p: match dest.protocol {
                 LocalProtocol::Tcp => LocalProtocol::Tcp,
-                LocalProtocol::Udp { .. } => tunnel.local_protocol,
+                LocalProtocol::Udp { .. } => dest.protocol,
                 LocalProtocol::Stdio => LocalProtocol::Tcp,
                 LocalProtocol::Socks5 { .. } => LocalProtocol::Tcp,
                 LocalProtocol::ReverseTcp => LocalProtocol::ReverseTcp,
-                LocalProtocol::ReverseUdp { .. } => tunnel.local_protocol,
+                LocalProtocol::ReverseUdp { .. } => dest.protocol,
                 LocalProtocol::ReverseSocks5 => LocalProtocol::ReverseSocks5,
                 LocalProtocol::TProxyTcp => LocalProtocol::Tcp,
                 LocalProtocol::TProxyUdp { timeout } => LocalProtocol::Udp { timeout },
             },
-            r: tunnel.remote.0.to_string(),
-            rp: tunnel.remote.1,
+            r: dest.host.to_string(),
+            rp: dest.port,
         }
     }
+}
+
+fn tunnel_to_jwt_token(request_id: Uuid, tunnel: &RemoteAddr) -> String {
+    let cfg = JwtTunnelConfig::new(request_id, tunnel);
+    let (alg, secret) = JWT_KEY.deref();
+    jsonwebtoken::encode(alg, &cfg, secret).unwrap_or_default()
 }
 
 static JWT_HEADER_PREFIX: &str = "authorization.bearer.";
@@ -59,6 +66,13 @@ static JWT_DECODE: Lazy<(Validation, DecodingKey)> = Lazy::new(|| {
     validation.required_spec_claims = HashSet::with_capacity(0);
     (validation, DecodingKey::from_secret(JWT_SECRET))
 });
+
+#[derive(Debug)]
+pub struct RemoteAddr {
+    pub protocol: LocalProtocol,
+    pub host: Host,
+    pub port: u16,
+}
 
 pub enum TransportStream {
     Plain(TcpStream),

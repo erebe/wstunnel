@@ -58,7 +58,7 @@ pub async fn run_server(bind: SocketAddr, timeout: Option<Duration>) -> Result<S
     cfg.set_execute_command(false);
     cfg.set_udp_support(true);
 
-    let udp_server = socks5_udp::run_server(bind, timeout, |_| Ok(()), |s| Ok(s.clone())).await?;
+    let udp_server = socks5_udp::run_server(bind, timeout).await?;
     let server = server.with_config(cfg);
     let stream = stream::unfold((server, Box::pin(udp_server)), move |(server, mut udp_server)| async move {
         let mut acceptor = server.incoming();

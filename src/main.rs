@@ -8,6 +8,7 @@ mod tls;
 mod tunnel;
 mod udp;
 
+use anyhow::anyhow;
 use base64::Engine;
 use clap::Parser;
 use futures_util::{stream, TryStreamExt};
@@ -26,6 +27,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, io};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpStream;
 
 use tokio_rustls::rustls::server::DnsName;
 use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
@@ -33,7 +36,8 @@ use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
 use tracing::{error, info};
 
 use crate::dns::DnsResolver;
-use crate::tunnel::to_host_port;
+use crate::tunnel::{to_host_port, RemoteAddr};
+use crate::udp::MyUdpSocket;
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
@@ -656,11 +660,10 @@ async fn main() {
             let client_config = Arc::new(client_config);
 
             // Start tunnels
-            for mut tunnel in args.remote_to_local.into_iter() {
+            for tunnel in args.remote_to_local.into_iter() {
                 let client_config = client_config.clone();
                 match &tunnel.local_protocol {
                     LocalProtocol::Tcp => {
-                        tunnel.local_protocol = LocalProtocol::ReverseTcp;
                         tokio::spawn(async move {
                             let remote = tunnel.remote.clone();
                             let cfg = client_config.clone();
@@ -675,43 +678,82 @@ async fn main() {
                                 .await
                             };
 
+                            let (host, port) = to_host_port(tunnel.local);
+                            let remote = RemoteAddr {
+                                protocol: LocalProtocol::ReverseTcp,
+                                host,
+                                port,
+                            };
                             if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, tunnel, connect_to_dest).await
+                                tunnel::client::run_reverse_tunnel(client_config, remote, connect_to_dest).await
                             {
                                 error!("{:?}", err);
                             }
                         });
                     }
                     LocalProtocol::Udp { timeout } => {
-                        tunnel.local_protocol = LocalProtocol::ReverseUdp { timeout: *timeout };
+                        let timeout = *timeout;
 
                         tokio::spawn(async move {
                             let cfg = client_config.clone();
-                            let remote = tunnel.remote.clone();
+                            let (host, port) = to_host_port(tunnel.local);
+                            let remote = RemoteAddr {
+                                protocol: LocalProtocol::ReverseUdp { timeout },
+                                host,
+                                port,
+                            };
                             let connect_to_dest = |_| async {
-                                udp::connect(&remote.0, remote.1, cfg.timeout_connect, &cfg.dns_resolver).await
+                                udp::connect(&tunnel.remote.0, tunnel.remote.1, cfg.timeout_connect, &cfg.dns_resolver)
+                                    .await
                             };
 
                             if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, tunnel, connect_to_dest).await
+                                tunnel::client::run_reverse_tunnel(client_config, remote, connect_to_dest).await
                             {
                                 error!("{:?}", err);
                             }
                         });
                     }
                     LocalProtocol::Socks5 { .. } => {
-                        tunnel.local_protocol = LocalProtocol::ReverseSocks5;
+                        trait T: AsyncWrite + AsyncRead + Unpin + Send {}
+                        impl T for TcpStream {}
+                        impl T for MyUdpSocket {}
+
                         tokio::spawn(async move {
                             let cfg = client_config.clone();
-                            let connect_to_dest = |remote: (Host, u16)| {
+                            let (host, port) = to_host_port(tunnel.local);
+                            let remote = RemoteAddr {
+                                protocol: LocalProtocol::ReverseSocks5,
+                                host,
+                                port,
+                            };
+                            let connect_to_dest = |remote: Option<RemoteAddr>| {
                                 let so_mark = cfg.socket_so_mark;
                                 let timeout = cfg.timeout_connect;
                                 let dns_resolver = &cfg.dns_resolver;
-                                async move { tcp::connect(&remote.0, remote.1, so_mark, timeout, dns_resolver).await }
+                                async move {
+                                    let Some(remote) = remote else {
+                                        return Err(anyhow!("Missing remote destination for reverse socks5"));
+                                    };
+
+                                    match remote.protocol {
+                                        LocalProtocol::Tcp => {
+                                            tcp::connect(&remote.host, remote.port, so_mark, timeout, dns_resolver)
+                                                .await
+                                                .map(|s| Box::new(s) as Box<dyn T>)
+                                        }
+                                        LocalProtocol::Udp { .. } => {
+                                            udp::connect(&remote.host, remote.port, timeout, dns_resolver)
+                                                .await
+                                                .map(|s| Box::new(s) as Box<dyn T>)
+                                        }
+                                        _ => Err(anyhow!("Invalid protocol for reverse socks5 {:?}", remote.protocol)),
+                                    }
+                                }
                             };
 
                             if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, tunnel, connect_to_dest).await
+                                tunnel::client::run_reverse_tunnel(client_config, remote, connect_to_dest).await
                             {
                                 error!("{:?}", err);
                             }
@@ -732,12 +774,16 @@ async fn main() {
                             .unwrap_or_else(|err| panic!("Cannot start TCP server on {}: {}", tunnel.local, err))
                             .map_err(anyhow::Error::new)
                             .map_ok(move |stream| {
-                                let remote = remote.clone();
-                                (stream.into_split(), (LocalProtocol::Tcp, remote.0, remote.1))
+                                let remote = RemoteAddr {
+                                    protocol: LocalProtocol::Tcp,
+                                    host: remote.0.clone(),
+                                    port: remote.1,
+                                };
+                                (stream.into_split(), remote)
                             });
 
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -751,11 +797,16 @@ async fn main() {
                             .map_ok(move |stream| {
                                 // In TProxy mode local destination is the final ip:port destination
                                 let (host, port) = to_host_port(stream.local_addr().unwrap());
-                                (stream.into_split(), (LocalProtocol::Tcp, host, port))
+                                let remote = RemoteAddr {
+                                    protocol: LocalProtocol::Tcp,
+                                    host,
+                                    port,
+                                };
+                                (stream.into_split(), remote)
                             });
 
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -773,11 +824,16 @@ async fn main() {
                                 .map_ok(move |stream| {
                                     // In TProxy mode local destination is the final ip:port destination
                                     let (host, port) = to_host_port(stream.local_addr().unwrap());
-                                    (tokio::io::split(stream), (LocalProtocol::Udp { timeout }, host, port))
+                                    let remote = RemoteAddr {
+                                        protocol: LocalProtocol::Udp { timeout },
+                                        host,
+                                        port,
+                                    };
+                                    (tokio::io::split(stream), remote)
                                 });
 
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -794,11 +850,16 @@ async fn main() {
                             .unwrap_or_else(|err| panic!("Cannot start UDP server on {}: {}", tunnel.local, err))
                             .map_err(anyhow::Error::new)
                             .map_ok(move |stream| {
-                                (tokio::io::split(stream), (LocalProtocol::Udp { timeout }, host.clone(), port))
+                                let remote = RemoteAddr {
+                                    protocol: LocalProtocol::Udp { timeout },
+                                    host: host.clone(),
+                                    port,
+                                };
+                                (tokio::io::split(stream), remote)
                             });
 
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -808,12 +869,16 @@ async fn main() {
                             .await
                             .unwrap_or_else(|err| panic!("Cannot start Socks5 server on {}: {}", tunnel.local, err))
                             .map_ok(|(stream, (host, port))| {
-                                let proto = stream.local_protocol();
-                                (tokio::io::split(stream), (proto, host, port))
+                                let remote = RemoteAddr {
+                                    protocol: stream.local_protocol(),
+                                    host,
+                                    port,
+                                };
+                                (tokio::io::split(stream), remote)
                             });
 
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -826,9 +891,13 @@ async fn main() {
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(
                                 client_config,
-                                tunnel.clone(),
                                 stream::once(async move {
-                                    Ok((server, (LocalProtocol::Tcp, tunnel.remote.0, tunnel.remote.1)))
+                                    let remote = RemoteAddr {
+                                        protocol: LocalProtocol::Tcp,
+                                        host: tunnel.remote.0,
+                                        port: tunnel.remote.1,
+                                    };
+                                    Ok((server, remote))
                                 }),
                             )
                             .await

@@ -1,6 +1,5 @@
 use ahash::{HashMap, HashMapExt};
 use anyhow::anyhow;
-use base64::Engine;
 use futures_util::{pin_mut, FutureExt, Stream, StreamExt};
 use std::cmp::min;
 use std::fmt::Debug;
@@ -10,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{JwtTunnelConfig, JWT_DECODE, JWT_HEADER_PREFIX};
+use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
 use crate::{socks5, tcp, tls, udp, LocalProtocol, TlsServerConfig, WsServerConfig};
 use hyper::body::Incoming;
 use hyper::header::{COOKIE, SEC_WEBSOCKET_PROTOCOL};
@@ -32,17 +31,12 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_rustls::TlsAcceptor;
 use tracing::{error, info, span, warn, Instrument, Level, Span};
 use url::Host;
+use uuid::Uuid;
 
 async fn run_tunnel(
     server_config: &WsServerConfig,
     jwt: TokenData<JwtTunnelConfig>,
-) -> anyhow::Result<(
-    LocalProtocol,
-    Host,
-    u16,
-    Pin<Box<dyn AsyncRead + Send>>,
-    Pin<Box<dyn AsyncWrite + Send>>,
-)> {
+) -> anyhow::Result<(RemoteAddr, Pin<Box<dyn AsyncRead + Send>>, Pin<Box<dyn AsyncWrite + Send>>)> {
     match jwt.claims.p {
         LocalProtocol::Udp { timeout, .. } => {
             let host = Host::parse(&jwt.claims.r)?;
@@ -53,13 +47,13 @@ async fn run_tunnel(
                 &server_config.dns_resolver,
             )
             .await?;
-            Ok((
-                LocalProtocol::Udp { timeout: None },
+
+            let remote = RemoteAddr {
+                protocol: jwt.claims.p,
                 host,
-                jwt.claims.rp,
-                Box::pin(cnx.clone()),
-                Box::pin(cnx),
-            ))
+                port: jwt.claims.rp,
+            };
+            Ok((remote, Box::pin(cnx.clone()), Box::pin(cnx)))
         }
         LocalProtocol::Tcp => {
             let host = Host::parse(&jwt.claims.r)?;
@@ -74,7 +68,12 @@ async fn run_tunnel(
             .await?
             .into_split();
 
-            Ok((jwt.claims.p, host, port, Box::pin(rx), Box::pin(tx)))
+            let remote = RemoteAddr {
+                protocol: jwt.claims.p,
+                host,
+                port,
+            };
+            Ok((remote, Box::pin(rx), Box::pin(tx)))
         }
         LocalProtocol::ReverseTcp => {
             #[allow(clippy::type_complexity)]
@@ -87,7 +86,12 @@ async fn run_tunnel(
             let tcp = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let (local_rx, local_tx) = tcp.into_split();
 
-            Ok((jwt.claims.p, local_srv.0, local_srv.1, Box::pin(local_rx), Box::pin(local_tx)))
+            let remote = RemoteAddr {
+                protocol: jwt.claims.p,
+                host: local_srv.0,
+                port: local_srv.1,
+            };
+            Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
         }
         LocalProtocol::ReverseUdp { timeout } => {
             #[allow(clippy::type_complexity)]
@@ -101,7 +105,12 @@ async fn run_tunnel(
             let udp = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let (local_rx, local_tx) = tokio::io::split(udp);
 
-            Ok((jwt.claims.p, local_srv.0, local_srv.1, Box::pin(local_rx), Box::pin(local_tx)))
+            let remote = RemoteAddr {
+                protocol: jwt.claims.p,
+                host: local_srv.0,
+                port: local_srv.1,
+            };
+            Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
         }
         LocalProtocol::ReverseSocks5 => {
             #[allow(clippy::type_complexity)]
@@ -112,10 +121,15 @@ async fn run_tunnel(
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
             let listening_server = socks5::run_server(bind.parse()?, None);
             let (stream, local_srv) = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
-            let proto = stream.local_protocol();
+            let protocol = stream.local_protocol();
             let (local_rx, local_tx) = tokio::io::split(stream);
 
-            Ok((proto, local_srv.0, local_srv.1, Box::pin(local_rx), Box::pin(local_tx)))
+            let remote = RemoteAddr {
+                protocol,
+                host: local_srv.0,
+                port: local_srv.1,
+            };
+            Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
         }
         _ => Err(anyhow::anyhow!("Invalid upgrade request")),
     }
@@ -308,6 +322,7 @@ async fn server_upgrade(server_config: Arc<WsServerConfig>, mut req: Request<Inc
         return err;
     }
 
+    let req_protocol = jwt.claims.p;
     let tunnel = match run_tunnel(&server_config, jwt).await {
         Ok(ret) => ret,
         Err(err) => {
@@ -319,8 +334,11 @@ async fn server_upgrade(server_config: Arc<WsServerConfig>, mut req: Request<Inc
         }
     };
 
-    let (protocol, dest, port, local_rx, local_tx) = tunnel;
-    info!("connected to {:?} {:?} {:?}", protocol, dest, port);
+    let (remote_addr, local_rx, local_tx) = tunnel;
+    info!(
+        "connected to {:?} {:?} {:?}",
+        remote_addr.protocol, remote_addr.host, remote_addr.port
+    );
     let (mut response, fut) = match fastwebsockets::upgrade::upgrade(&mut req) {
         Ok(ret) => ret,
         Err(err) => {
@@ -351,11 +369,9 @@ async fn server_upgrade(server_config: Arc<WsServerConfig>, mut req: Request<Inc
         .instrument(Span::current()),
     );
 
-    if protocol == LocalProtocol::ReverseSocks5 {
-        let Ok(header_val) = HeaderValue::from_str(
-            &base64::engine::general_purpose::STANDARD.encode(format!("https://{}:{}", dest, port)),
-        ) else {
-            error!("Bad headervalue for reverse socks5: {} {}", dest, port);
+    if req_protocol == LocalProtocol::ReverseSocks5 {
+        let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), &remote_addr)) else {
+            error!("Bad headervalue for reverse socks5: {} {}", remote_addr.host, remote_addr.port);
             return http::Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid upgrade request".to_string())
