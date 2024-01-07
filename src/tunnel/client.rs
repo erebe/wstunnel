@@ -1,5 +1,5 @@
 use super::{to_host_port, JwtTunnelConfig, JWT_HEADER_PREFIX, JWT_KEY};
-use crate::{LocalToRemote, WsClientConfig};
+use crate::{LocalProtocol, LocalToRemote, WsClientConfig};
 use anyhow::{anyhow, Context};
 
 use base64::Engine;
@@ -111,7 +111,7 @@ pub async fn run_tunnel<T, R, W>(
     incoming_cnx: T,
 ) -> anyhow::Result<()>
 where
-    T: Stream<Item = anyhow::Result<((R, W), (Host, u16))>>,
+    T: Stream<Item = anyhow::Result<((R, W), (LocalProtocol, Host, u16))>>,
     R: AsyncRead + Send + 'static,
     W: AsyncWrite + Send + 'static,
 {
@@ -122,10 +122,11 @@ where
             Level::INFO,
             "tunnel",
             id = request_id.to_string(),
-            remote = format!("{}:{}", remote_dest.0, remote_dest.1)
+            remote = format!("{}:{}", remote_dest.1, remote_dest.2)
         );
         let mut tunnel_cfg = tunnel_cfg.clone();
-        tunnel_cfg.remote = remote_dest;
+        tunnel_cfg.local_protocol = remote_dest.0;
+        tunnel_cfg.remote = (remote_dest.1, remote_dest.2);
         let client_config = client_config.clone();
 
         let tunnel = async move {

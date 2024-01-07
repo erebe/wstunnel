@@ -36,7 +36,7 @@ impl JwtTunnelConfig {
                 LocalProtocol::Tcp => LocalProtocol::Tcp,
                 LocalProtocol::Udp { .. } => tunnel.local_protocol,
                 LocalProtocol::Stdio => LocalProtocol::Tcp,
-                LocalProtocol::Socks5 => LocalProtocol::Tcp,
+                LocalProtocol::Socks5 { .. } => LocalProtocol::Tcp,
                 LocalProtocol::ReverseTcp => LocalProtocol::ReverseTcp,
                 LocalProtocol::ReverseUdp { .. } => tunnel.local_protocol,
                 LocalProtocol::ReverseSocks5 => LocalProtocol::ReverseSocks5,

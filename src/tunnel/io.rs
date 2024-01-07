@@ -1,7 +1,6 @@
 use fastwebsockets::{Frame, OpCode, Payload, WebSocketError, WebSocketRead, WebSocketWrite};
 use futures_util::{pin_mut, FutureExt};
 use hyper::upgrade::Upgraded;
-use std::cmp::max;
 
 use hyper_util::rt::TokioIo;
 use std::time::Duration;

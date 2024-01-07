@@ -1,6 +1,7 @@
 mod dns;
 mod embedded_certificate;
 mod socks5;
+mod socks5_udp;
 mod stdio;
 mod tcp;
 mod tls;
@@ -236,7 +237,7 @@ enum LocalProtocol {
     Tcp,
     Udp { timeout: Option<Duration> },
     Stdio,
-    Socks5,
+    Socks5 { timeout: Option<Duration> },
     TProxyTcp,
     TProxyUdp { timeout: Option<Duration> },
     ReverseTcp,
@@ -368,9 +369,14 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
             "socks5:/" => {
                 let (local_bind, remaining) = parse_local_bind(&arg[9..])?;
                 let x = format!("0.0.0.0:0?{}", remaining);
-                let (dest_host, dest_port, _options) = parse_tunnel_dest(&x)?;
+                let (dest_host, dest_port, options) = parse_tunnel_dest(&x)?;
+                let timeout = options
+                    .get("timeout_sec")
+                    .and_then(|x| x.parse::<u64>().ok())
+                    .map(|d| if d == 0 { None } else { Some(Duration::from_secs(d)) })
+                    .unwrap_or(Some(Duration::from_secs(30)));
                 Ok(LocalToRemote {
-                    local_protocol: LocalProtocol::Socks5,
+                    local_protocol: LocalProtocol::Socks5 { timeout },
                     local: local_bind,
                     remote: (dest_host, dest_port),
                 })
@@ -693,7 +699,7 @@ async fn main() {
                             }
                         });
                     }
-                    LocalProtocol::Socks5 => {
+                    LocalProtocol::Socks5 { .. } => {
                         tunnel.local_protocol = LocalProtocol::ReverseSocks5;
                         tokio::spawn(async move {
                             let cfg = client_config.clone();
@@ -725,7 +731,10 @@ async fn main() {
                             .await
                             .unwrap_or_else(|err| panic!("Cannot start TCP server on {}: {}", tunnel.local, err))
                             .map_err(anyhow::Error::new)
-                            .map_ok(move |stream| (stream.into_split(), remote.clone()));
+                            .map_ok(move |stream| {
+                                let remote = remote.clone();
+                                (stream.into_split(), (LocalProtocol::Tcp, remote.0, remote.1))
+                            });
 
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
@@ -741,8 +750,8 @@ async fn main() {
                             .map_err(anyhow::Error::new)
                             .map_ok(move |stream| {
                                 // In TProxy mode local destination is the final ip:port destination
-                                let dest = to_host_port(stream.local_addr().unwrap());
-                                (stream.into_split(), dest)
+                                let (host, port) = to_host_port(stream.local_addr().unwrap());
+                                (stream.into_split(), (LocalProtocol::Tcp, host, port))
                             });
 
                         tokio::spawn(async move {
@@ -753,8 +762,9 @@ async fn main() {
                     }
                     #[cfg(target_os = "linux")]
                     LocalProtocol::TProxyUdp { timeout } => {
+                        let timeout = *timeout;
                         let server =
-                            udp::run_server(tunnel.local, *timeout, udp::configure_tproxy, udp::mk_send_socket_tproxy)
+                            udp::run_server(tunnel.local, timeout, udp::configure_tproxy, udp::mk_send_socket_tproxy)
                                 .await
                                 .unwrap_or_else(|err| {
                                     panic!("Cannot start TProxy UDP server on {}: {}", tunnel.local, err)
@@ -762,8 +772,8 @@ async fn main() {
                                 .map_err(anyhow::Error::new)
                                 .map_ok(move |stream| {
                                     // In TProxy mode local destination is the final ip:port destination
-                                    let dest = to_host_port(stream.local_addr().unwrap());
-                                    (tokio::io::split(stream), dest)
+                                    let (host, port) = to_host_port(stream.local_addr().unwrap());
+                                    (tokio::io::split(stream), (LocalProtocol::Udp { timeout: timeout }, host, port))
                                 });
 
                         tokio::spawn(async move {
@@ -777,12 +787,15 @@ async fn main() {
                         panic!("Transparent proxy is not available for non Linux platform")
                     }
                     LocalProtocol::Udp { timeout } => {
-                        let remote = tunnel.remote.clone();
-                        let server = udp::run_server(tunnel.local, *timeout, |_| Ok(()), |s| Ok(s.clone()))
+                        let (host, port) = tunnel.remote.clone();
+                        let timeout = *timeout;
+                        let server = udp::run_server(tunnel.local, timeout.clone(), |_| Ok(()), |s| Ok(s.clone()))
                             .await
                             .unwrap_or_else(|err| panic!("Cannot start UDP server on {}: {}", tunnel.local, err))
                             .map_err(anyhow::Error::new)
-                            .map_ok(move |stream| (tokio::io::split(stream), remote.clone()));
+                            .map_ok(move |stream| {
+                                (tokio::io::split(stream), (LocalProtocol::Udp { timeout }, host.clone(), port))
+                            });
 
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
@@ -790,11 +803,14 @@ async fn main() {
                             }
                         });
                     }
-                    LocalProtocol::Socks5 => {
-                        let server = socks5::run_server(tunnel.local)
+                    LocalProtocol::Socks5 { timeout } => {
+                        let server = socks5::run_server(tunnel.local, *timeout)
                             .await
                             .unwrap_or_else(|err| panic!("Cannot start Socks5 server on {}: {}", tunnel.local, err))
-                            .map_ok(|(stream, remote_dest)| (tokio::io::split(stream), remote_dest));
+                            .map_ok(|(stream, (host, port))| {
+                                let proto = stream.local_protocol();
+                                (tokio::io::split(stream), (proto, host, port))
+                            });
 
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, tunnel, server).await {
@@ -811,7 +827,9 @@ async fn main() {
                             if let Err(err) = tunnel::client::run_tunnel(
                                 client_config,
                                 tunnel.clone(),
-                                stream::once(async move { Ok((server, tunnel.remote)) }),
+                                stream::once(async move {
+                                    Ok((server, (LocalProtocol::Tcp, tunnel.remote.0, tunnel.remote.1)))
+                                }),
                             )
                             .await
                             {

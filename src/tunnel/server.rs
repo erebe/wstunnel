@@ -22,7 +22,7 @@ use jsonwebtoken::TokenData;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 
-use crate::socks5::Socks5Protocol;
+use crate::socks5::Socks5Stream;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::udp::UdpStream;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -105,12 +105,12 @@ async fn run_tunnel(
         }
         LocalProtocol::ReverseSocks5 => {
             #[allow(clippy::type_complexity)]
-            static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<(Socks5Protocol, (Host, u16))>>>> =
+            static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<(Socks5Stream, (Host, u16))>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
             let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
-            let listening_server = socks5::run_server(bind.parse()?);
+            let listening_server = socks5::run_server(bind.parse()?, None);
             let (tcp, local_srv) = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let (local_rx, local_tx) = tokio::io::split(tcp);
 
