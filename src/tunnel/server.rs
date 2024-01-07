@@ -335,10 +335,7 @@ async fn server_upgrade(server_config: Arc<WsServerConfig>, mut req: Request<Inc
     };
 
     let (remote_addr, local_rx, local_tx) = tunnel;
-    info!(
-        "connected to {:?} {:?} {:?}",
-        remote_addr.protocol, remote_addr.host, remote_addr.port
-    );
+    info!("connected to {:?} {}:{}", req_protocol, remote_addr.host, remote_addr.port);
     let (mut response, fut) = match fastwebsockets::upgrade::upgrade(&mut req) {
         Ok(ret) => ret,
         Err(err) => {
