@@ -196,12 +196,6 @@ pub async fn run_server(
     bind: SocketAddr,
     timeout: Option<Duration>,
 ) -> Result<impl Stream<Item = io::Result<Socks5UdpStream>>, anyhow::Error> {
-    info!(
-        "Starting SOCKS5 UDP server listening cnx on {} with cnx timeout of {}s",
-        bind,
-        timeout.unwrap_or(Duration::from_secs(0)).as_secs()
-    );
-
     let listener = UdpSocket::bind(bind)
         .await
         .with_context(|| format!("Cannot create UDP server {:?}", bind))?;

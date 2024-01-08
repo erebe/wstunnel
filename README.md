@@ -29,11 +29,11 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 
 **What to expect:**
 
-* Good error messages and debug informations
+* Good error messages and debug information
 * Static forward and reverse tunneling (TCP and UDP)
 * Dynamic tunneling (Socks5 proxy and Transparent Proxy)
 * Support for http proxy (when behind one)
-* Support for tls/https server (with embedded self-signed certificate, see comment in the example section)
+* Support for tls/https server with certificates auto-reload (with embedded self-signed certificate, or your own)
 * Support IPv6
 * **Standalone binaries** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
 
@@ -329,7 +329,7 @@ Start wstunnel with
 sudo wstunnel client -L 'tproxy+tcp://1080' -L 'tproxy+udp://1080' wss://my.server.com:443
 ```
 
-use this project to route traffic seamlessly https://github.com/NOBLES5E/cproxy. It works with any prgram
+use this project to route traffic seamlessly https://github.com/NOBLES5E/cproxy. It works with any program
 ```
 cproxy --port 1080 --mode tproxy -- curl https://google.com
 ```
