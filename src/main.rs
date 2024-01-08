@@ -142,6 +142,7 @@ struct Client {
     /// Use a specific prefix that will show up in the http path during the upgrade request.
     /// Useful if you need to route requests server side but don't have vhosts
     #[arg(
+        short = 'P',
         long,
         default_value = "v1",
         verbatim_doc_comment,
