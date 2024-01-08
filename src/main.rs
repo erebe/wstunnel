@@ -136,8 +136,27 @@ struct Client {
     tls_verify_certificate: bool,
 
     /// If set, will use this http proxy to connect to the server
-    #[arg(short = 'p', long, value_name = "http://USER:PASS@HOST:PORT", verbatim_doc_comment)]
-    http_proxy: Option<Url>,
+    #[arg(
+        short = 'p',
+        long,
+        value_name = "USER:PASS@HOST:PORT",
+        verbatim_doc_comment,
+        env = "HTTP_PROXY"
+    )]
+    http_proxy: Option<String>,
+
+    /// If set, will use this login to connect to the http proxy. Override the one from --http-proxy
+    #[arg(long, value_name = "LOGIN", verbatim_doc_comment, env = "WSTUNNEL_HTTP_PROXY_LOGIN")]
+    http_proxy_login: Option<String>,
+
+    /// If set, will use this password to connect to the http proxy. Override the one from --http-proxy
+    #[arg(
+        long,
+        value_name = "PASSWORD",
+        verbatim_doc_comment,
+        env = "WSTUNNEL_HTTP_PROXY_PASSWORD"
+    )]
+    http_proxy_password: Option<String>,
 
     /// Use a specific prefix that will show up in the http path during the upgrade request.
     /// Useful if you need to route requests server side but don't have vhosts
@@ -639,7 +658,25 @@ async fn main() {
                 timeout_connect: Duration::from_secs(10),
                 websocket_ping_frequency: args.websocket_ping_frequency_sec.unwrap_or(Duration::from_secs(30)),
                 websocket_mask_frame: args.websocket_mask_frame,
-                http_proxy: args.http_proxy,
+                http_proxy: if let Some(proxy) = args.http_proxy {
+                    let mut proxy = if proxy.starts_with("http://") {
+                        Url::parse(&proxy).expect("Invalid http proxy url")
+                    } else {
+                        Url::parse(&format!("http://{}", proxy)).expect("Invalid http proxy url")
+                    };
+
+                    if let Some(login) = args.http_proxy_login {
+                        proxy.set_username(login.as_str()).expect("Cannot set http proxy login");
+                    }
+                    if let Some(password) = args.http_proxy_password {
+                        proxy
+                            .set_password(Some(password.as_str()))
+                            .expect("Cannot set http proxy password");
+                    }
+                    Some(proxy)
+                } else {
+                    None
+                },
                 cnx_pool: None,
                 dns_resolver: if let Ok(resolver) = hickory_resolver::AsyncResolver::tokio_from_system_conf() {
                     DnsResolver::TrustDns(resolver)
