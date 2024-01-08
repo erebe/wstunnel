@@ -82,7 +82,7 @@ Options:
                                                     linux only and requires sudo/CAP_NET_ADMIN
 
           'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
-  -R, --remote-to-local <{tcp,udp}://[BIND:]PORT:HOST:PORT>
+  -R, --remote-to-local <{tcp,udp,socks5}://[BIND:]PORT:HOST:PORT>
           Listen on remote and forwards traffic from local. Can be specified multiple times.
           examples:
           'tcp://1212:google.com:443'      =>     listen on server for incoming tcp cnx on port 1212 and forward to google.com on port 443 from local machine
