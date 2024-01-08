@@ -29,8 +29,8 @@ struct IoInner {
 }
 struct Socks5UdpServer {
     listener: Arc<UdpSocket>,
-    peers: HashMap<TargetAddr, Pin<Arc<IoInner>>, ahash::RandomState>,
-    keys_to_delete: Arc<RwLock<Vec<TargetAddr>>>,
+    peers: HashMap<(SocketAddr, TargetAddr), Pin<Arc<IoInner>>, ahash::RandomState>,
+    keys_to_delete: Arc<RwLock<Vec<(SocketAddr, TargetAddr)>>>,
     cnx_timeout: Option<Duration>,
 }
 
@@ -82,14 +82,14 @@ pub struct Socks5UdpStream {
     pub watchdog_deadline: Option<Interval>,
     data_read_before_deadline: bool,
     io: Pin<Arc<IoInner>>,
-    keys_to_delete: Weak<RwLock<Vec<TargetAddr>>>,
+    keys_to_delete: Weak<RwLock<Vec<(SocketAddr, TargetAddr)>>>,
 }
 
 #[pinned_drop]
 impl PinnedDrop for Socks5UdpStream {
     fn drop(self: Pin<&mut Self>) {
         if let Some(keys_to_delete) = self.keys_to_delete.upgrade() {
-            keys_to_delete.write().push(self.destination.clone());
+            keys_to_delete.write().push((self.peer, self.destination.clone()));
         }
     }
 }
@@ -100,7 +100,7 @@ impl Socks5UdpStream {
         peer: SocketAddr,
         destination: TargetAddr,
         watchdog_deadline: Option<Duration>,
-        keys_to_delete: Weak<RwLock<Vec<TargetAddr>>>,
+        keys_to_delete: Weak<RwLock<Vec<(SocketAddr, TargetAddr)>>>,
     ) -> (Self, Pin<Arc<IoInner>>) {
         let (tx, rx) = mpsc::channel(1024);
         let io = Arc::pin(IoInner { sender: tx });
@@ -223,28 +223,30 @@ pub async fn run_server(
                 let (frag, destination_addr, data) = fast_socks5::parse_udp_request(payload.chunk()).await.unwrap();
                 // We don't support udp fragmentation
                 if frag != 0 {
+                    warn!("dropping UDP socks5 fragmented");
                     continue;
                 }
                 (destination_addr, payload.slice_ref(data))
             };
 
-            match server.peers.get(&destination_addr) {
+            let addr = (peer_addr, destination_addr);
+            match server.peers.get(&addr) {
                 Some(io) => {
                     if io.sender.send(data).await.is_err() {
-                        server.peers.remove(&destination_addr);
+                        server.peers.remove(&addr);
                     }
                 }
                 None => {
-                    info!("New UDP connection for {}", destination_addr);
+                    info!("New UDP connection for {}", addr.1);
                     let (udp_client, io) = Socks5UdpStream::new(
                         server.listener.clone(),
-                        peer_addr,
-                        destination_addr.clone(),
+                        addr.0,
+                        addr.1.clone(),
                         server.cnx_timeout,
                         Arc::downgrade(&server.keys_to_delete),
                     );
                     let _ = io.sender.send(data).await;
-                    server.peers.insert(destination_addr, io);
+                    server.peers.insert(addr, io);
                     return Some((Ok(udp_client), (server, buf)));
                 }
             }
