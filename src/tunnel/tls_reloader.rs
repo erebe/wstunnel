@@ -3,12 +3,11 @@ use anyhow::Context;
 use log::trace;
 use notify::{EventKind, RecommendedWatcher, Watcher};
 use parking_lot::Mutex;
-use std::fs::File;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tracing::{error, info, warn};
 
 struct TlsReloaderState {
@@ -83,13 +82,13 @@ impl TlsReloader {
             };
             drop(watcher);
 
-            let Ok(file) = File::open(&path) else {
-                return;
+            // Generate a fake event to force-reload the certificate
+            let event = notify::Event {
+                kind: EventKind::Create(notify::event::CreateKind::Any),
+                paths: vec![path],
+                attrs: Default::default(),
             };
-            let _ = file.set_modified(SystemTime::now()).map_err(|err| {
-                error!("Cannot force reload TLS file {:?}:  {:?}", path, err);
-                error!("Old certificate will be used until the next change");
-            });
+            Self::handle_fs_event(&this, Ok(event));
         });
     }
 
@@ -116,6 +115,7 @@ impl TlsReloader {
                     }
                     Err(err) => {
                         warn!("Error while loading TLS certificate {:?}", err);
+                        Self::try_rewatch_certificate(this.clone(), path.to_path_buf());
                     }
                 },
                 EventKind::Remove(_) => {
@@ -137,6 +137,7 @@ impl TlsReloader {
                     }
                     Err(err) => {
                         warn!("Error while loading TLS private key {:?}", err);
+                        Self::try_rewatch_certificate(this.clone(), path.to_path_buf());
                     }
                 },
                 EventKind::Remove(_) => {
