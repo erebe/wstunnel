@@ -24,13 +24,15 @@ use tokio::time::Interval;
 use tracing::{debug, error, info};
 use url::Host;
 
+type PeerMapKey = (SocketAddr, TargetAddr);
+
 struct IoInner {
     sender: mpsc::Sender<Bytes>,
 }
 struct Socks5UdpServer {
     listener: Arc<UdpSocket>,
-    peers: HashMap<(SocketAddr, TargetAddr), Pin<Arc<IoInner>>, ahash::RandomState>,
-    keys_to_delete: Arc<RwLock<Vec<(SocketAddr, TargetAddr)>>>,
+    peers: HashMap<PeerMapKey, Pin<Arc<IoInner>>, ahash::RandomState>,
+    keys_to_delete: Arc<RwLock<Vec<PeerMapKey>>>,
     cnx_timeout: Option<Duration>,
 }
 
@@ -82,7 +84,7 @@ pub struct Socks5UdpStream {
     pub watchdog_deadline: Option<Interval>,
     data_read_before_deadline: bool,
     io: Pin<Arc<IoInner>>,
-    keys_to_delete: Weak<RwLock<Vec<(SocketAddr, TargetAddr)>>>,
+    keys_to_delete: Weak<RwLock<Vec<PeerMapKey>>>,
 }
 
 #[pinned_drop]
@@ -100,7 +102,7 @@ impl Socks5UdpStream {
         peer: SocketAddr,
         destination: TargetAddr,
         watchdog_deadline: Option<Duration>,
-        keys_to_delete: Weak<RwLock<Vec<(SocketAddr, TargetAddr)>>>,
+        keys_to_delete: Weak<RwLock<Vec<PeerMapKey>>>,
     ) -> (Self, Pin<Arc<IoInner>>) {
         let (tx, rx) = mpsc::channel(1024);
         let io = Arc::pin(IoInner { sender: tx });
