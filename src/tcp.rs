@@ -11,8 +11,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::time::timeout;
 use tokio_stream::wrappers::TcpListenerStream;
-use tracing::debug;
 use tracing::log::info;
+use tracing::{debug, instrument};
 use url::{Host, Url};
 
 fn configure_socket(socket: &mut TcpSocket, so_mark: &Option<u32>) -> Result<(), anyhow::Error> {
@@ -58,7 +58,7 @@ pub async fn connect(
     let mut cnx = None;
     let mut last_err = None;
     for addr in socket_addrs {
-        debug!("connecting to {}", addr);
+        debug!("Connecting to {}", addr);
 
         let mut socket = match &addr {
             SocketAddr::V4(_) => TcpSocket::new_v4()?,
@@ -96,6 +96,7 @@ pub async fn connect(
     }
 }
 
+#[instrument(level = "info", name = "http_proxy", skip_all)]
 pub async fn connect_with_http_proxy(
     proxy: &Url,
     host: &Host<String>,
@@ -107,8 +108,9 @@ pub async fn connect_with_http_proxy(
     let proxy_host = proxy.host().context("Cannot parse proxy host")?.to_owned();
     let proxy_port = proxy.port_or_known_default().unwrap_or(80);
 
+    info!("Connecting to http proxy {}:{}", proxy_host, proxy_port);
     let mut socket = connect(&proxy_host, proxy_port, so_mark, connect_timeout, dns_resolver).await?;
-    info!("Connected to http proxy {}:{}", proxy_host, proxy_port);
+    debug!("Connected to http proxy {}", socket.peer_addr().unwrap());
 
     let authorization = if let Some((user, password)) = proxy.password().map(|p| (proxy.username(), p)) {
         let user = urlencoding::decode(user).with_context(|| format!("Cannot urldecode proxy user: {}", user))?;
@@ -121,6 +123,7 @@ pub async fn connect_with_http_proxy(
     };
 
     let connect_request = format!("CONNECT {host}:{port} HTTP/1.0\r\nHost: {host}:{port}\r\n{authorization}\r\n");
+    debug!("Sending request:\n{}", connect_request);
     socket.write_all(connect_request.as_bytes()).await?;
 
     let mut buf = BytesMut::with_capacity(1024);
@@ -163,7 +166,8 @@ pub async fn connect_with_http_proxy(
         ));
     }
 
-    info!("http proxy connected to remote host {}:{}", host, port);
+    debug!("Got response from proxy:\n{}", String::from_utf8_lossy(&buf));
+    info!("Http proxy accepted connection to remote host {}:{}", host, port);
     Ok(socket)
 }
 

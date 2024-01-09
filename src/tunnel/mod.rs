@@ -18,6 +18,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
+use tracing::instrument;
 use url::Host;
 use uuid::Uuid;
 
@@ -134,6 +135,7 @@ impl ManageConnection for WsClientConfig {
     type Connection = Option<TransportStream>;
     type Error = anyhow::Error;
 
+    #[instrument(level = "trace", name = "cnx_server", skip_all)]
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
         let (host, port) = &self.remote_addr;
         let so_mark = self.socket_so_mark;
