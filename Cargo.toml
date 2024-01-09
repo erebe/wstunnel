@@ -6,21 +6,22 @@ repository = "https://github.com/erebe/wstunnel.git"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ahash = { version = "0.8.6", features = [] }
-anyhow = "1.0.75"
-async-trait = "0.1.74"
-base64 = "0.21.5"
+ahash = { version = "0.8.7", features = [] }
+anyhow = "1.0.79"
+async-trait = "0.1.77"
+base64 = "0.21.6"
 
 bb8 = { version = "0.8", features = [] }
 bytes = { version = "1.5.0", features = [] }
-clap = { version = "4.4.11", features = ["derive", "env"] }
+clap = { version = "4.4.14", features = ["derive", "env"] }
 fast-socks5 = { git = "https://github.com/erebe/fast-socks5.git", branch = "master", features = [] }
 fastwebsockets = { version = "0.6.0", features = ["upgrade", "simd", "unstable-split"] }
-futures-util = { version = "0.3.29" }
+futures-util = { version = "0.3.30" }
 hickory-resolver = { version = "0.24.0", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls"] }
+ppp = {  version = "2.2.0", features = [] }
 
-hyper = { version = "1.0.1", features = ["client", "http1"] }
-hyper-util = { version = "0.1.0", features = ["tokio"] }
+hyper = { version = "1.1.0", features = ["client", "http1"] }
+hyper-util = { version = "0.1.2", features = ["tokio"] }
 http-body-util = { version = "0.1.0" }
 jsonwebtoken = { version = "9.2.0", default-features = false }
 log = "0.4.20"
@@ -33,9 +34,9 @@ notify = { version = "6.1.1", features = [] }
 rustls-native-certs = { version = "0.7.0", features = [] }
 rustls-pemfile = { version = "2.0.0", features = [] }
 scopeguard = "1.2.0"
-serde = { version = "1.0.193", features = ["derive"] }
+serde = { version = "1.0.195", features = ["derive"] }
 socket2 = { version = "0.5.5", features = [] }
-tokio = { version = "1.35.0", features = ["full"] }
+tokio = { version = "1.35.1", features = ["full"] }
 tokio-rustls = { version = "0.24.1", features = ["tls12", "dangerous_configuration", "early-data"] }
 tokio-stream = { version = "0.1.14", features = ["net"] }
 
