@@ -16,6 +16,7 @@
 * [Examples](#examples)
 * [Release](#release)
 * [Note](#note)
+* [Benchmark](#bench)
 * [How to build](#build)
 
 
@@ -388,6 +389,10 @@ Now your wstunnel server, will only accept connection if the client specify the 
   * To avoid having the same url than every other wstunnel user
 * Change your tls-sni-override to a domain is known to be allowed (i.e: google.com, baidu.com, etc...)
   * this will not work if your wstunnel server is behind a reverse proxy (i.e: Nginx, Cloudflare, HAProxy, ...)
+
+## Benchmark <a name="bench"></a>
+![image](https://github.com/erebe/wstunnel/assets/854278/6e3580b0-c4f8-449e-881e-64d1df56b0ce)
+
 
 ## How to Build <a name="build"></a>
 Install the Rust https://www.rust-lang.org/tools/install or if you are a believer
