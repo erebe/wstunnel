@@ -24,10 +24,10 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct JwtTunnelConfig {
-    pub id: String,
-    pub p: LocalProtocol,
-    pub r: String,
-    pub rp: u16,
+    pub id: String,       // tunnel id
+    pub p: LocalProtocol, // protocol to use
+    pub r: String,        // remote host
+    pub rp: u16,          // remote port
 }
 
 impl JwtTunnelConfig {
@@ -35,14 +35,14 @@ impl JwtTunnelConfig {
         Self {
             id: request_id.to_string(),
             p: match dest.protocol {
-                LocalProtocol::Tcp => LocalProtocol::Tcp,
+                LocalProtocol::Tcp { .. } => dest.protocol,
                 LocalProtocol::Udp { .. } => dest.protocol,
-                LocalProtocol::Stdio => LocalProtocol::Tcp,
-                LocalProtocol::Socks5 { .. } => LocalProtocol::Tcp,
+                LocalProtocol::Stdio => LocalProtocol::Tcp { proxy_protocol: false },
+                LocalProtocol::Socks5 { .. } => LocalProtocol::Tcp { proxy_protocol: false },
                 LocalProtocol::ReverseTcp => LocalProtocol::ReverseTcp,
                 LocalProtocol::ReverseUdp { .. } => dest.protocol,
                 LocalProtocol::ReverseSocks5 => LocalProtocol::ReverseSocks5,
-                LocalProtocol::TProxyTcp => LocalProtocol::Tcp,
+                LocalProtocol::TProxyTcp => LocalProtocol::Tcp { proxy_protocol: false },
                 LocalProtocol::TProxyUdp { timeout } => LocalProtocol::Udp { timeout },
             },
             r: dest.host.to_string(),
@@ -73,6 +73,17 @@ pub struct RemoteAddr {
     pub protocol: LocalProtocol,
     pub host: Host,
     pub port: u16,
+}
+
+impl TryFrom<JwtTunnelConfig> for RemoteAddr {
+    type Error = anyhow::Error;
+    fn try_from(jwt: JwtTunnelConfig) -> anyhow::Result<Self> {
+        Ok(Self {
+            protocol: jwt.p,
+            host: Host::parse(&jwt.r)?,
+            port: jwt.rp,
+        })
+    }
 }
 
 pub enum TransportStream {

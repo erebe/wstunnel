@@ -29,7 +29,7 @@ pub enum Socks5Stream {
 impl Socks5Stream {
     pub fn local_protocol(&self) -> LocalProtocol {
         match self {
-            Socks5Stream::Tcp(_) => LocalProtocol::Tcp,
+            Socks5Stream::Tcp(_) => LocalProtocol::Tcp { proxy_protocol: false },
             Socks5Stream::Udp(s) => LocalProtocol::Udp {
                 timeout: s.watchdog_deadline.as_ref().map(|x| x.period()),
             },

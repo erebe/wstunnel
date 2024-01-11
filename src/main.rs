@@ -90,6 +90,8 @@ struct Client {
     /// Listen on local and forwards traffic from remote. Can be specified multiple times
     /// examples:
     /// 'tcp://1212:google.com:443'      =>       listen locally on tcp on port 1212 and forward to google.com on port 443
+    /// 'tcp://2:n.lan:4?proxy_protocol' =>       listen locally on tcp on port 2 and forward to n.lan on port 4
+    ///                                           Send a proxy protocol header v2 when establishing connection to n.lan
     ///
     /// 'udp://1212:1.1.1.1:53'          =>       listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
     /// 'udp://1212:1.1.1.1:53?timeout_sec=10'    timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
@@ -258,7 +260,7 @@ struct Server {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum LocalProtocol {
-    Tcp,
+    Tcp { proxy_protocol: bool },
     Udp { timeout: Option<Duration> },
     Stdio,
     Socks5 { timeout: Option<Duration> },
@@ -367,9 +369,10 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
     match &arg[..6] {
         "tcp://" => {
             let (local_bind, remaining) = parse_local_bind(&arg[6..])?;
-            let (dest_host, dest_port, _options) = parse_tunnel_dest(remaining)?;
+            let (dest_host, dest_port, options) = parse_tunnel_dest(remaining)?;
+            let proxy_protocol = options.contains_key("proxy_protocol");
             Ok(LocalToRemote {
-                local_protocol: LocalProtocol::Tcp,
+                local_protocol: LocalProtocol::Tcp { proxy_protocol },
                 local: local_bind,
                 remote: (dest_host, dest_port),
             })
@@ -701,7 +704,7 @@ async fn main() {
             for tunnel in args.remote_to_local.into_iter() {
                 let client_config = client_config.clone();
                 match &tunnel.local_protocol {
-                    LocalProtocol::Tcp => {
+                    LocalProtocol::Tcp { proxy_protocol: _ } => {
                         tokio::spawn(async move {
                             let remote = tunnel.remote.clone();
                             let cfg = client_config.clone();
@@ -775,7 +778,7 @@ async fn main() {
                                     };
 
                                     match remote.protocol {
-                                        LocalProtocol::Tcp => {
+                                        LocalProtocol::Tcp { proxy_protocol: _ } => {
                                             tcp::connect(&remote.host, remote.port, so_mark, timeout, dns_resolver)
                                                 .await
                                                 .map(|s| Box::new(s) as Box<dyn T>)
@@ -805,7 +808,8 @@ async fn main() {
                 let client_config = client_config.clone();
 
                 match &tunnel.local_protocol {
-                    LocalProtocol::Tcp => {
+                    LocalProtocol::Tcp { proxy_protocol } => {
+                        let proxy_protocol = *proxy_protocol;
                         let remote = tunnel.remote.clone();
                         let server = tcp::run_server(tunnel.local, false)
                             .await
@@ -813,7 +817,7 @@ async fn main() {
                             .map_err(anyhow::Error::new)
                             .map_ok(move |stream| {
                                 let remote = RemoteAddr {
-                                    protocol: LocalProtocol::Tcp,
+                                    protocol: LocalProtocol::Tcp { proxy_protocol },
                                     host: remote.0.clone(),
                                     port: remote.1,
                                 };
@@ -836,7 +840,7 @@ async fn main() {
                                 // In TProxy mode local destination is the final ip:port destination
                                 let (host, port) = to_host_port(stream.local_addr().unwrap());
                                 let remote = RemoteAddr {
-                                    protocol: LocalProtocol::Tcp,
+                                    protocol: LocalProtocol::Tcp { proxy_protocol: false },
                                     host,
                                     port,
                                 };
@@ -931,7 +935,7 @@ async fn main() {
                                 client_config,
                                 stream::once(async move {
                                     let remote = RemoteAddr {
-                                        protocol: LocalProtocol::Tcp,
+                                        protocol: LocalProtocol::Tcp { proxy_protocol: false },
                                         host: tunnel.remote.0,
                                         port: tunnel.remote.1,
                                     };
