@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
-use crate::{socks5, tcp, tls, udp, LocalProtocol, TlsServerConfig, WsServerConfig};
+use crate::{socks5, tcp, tls, udp, unix_socket, LocalProtocol, TlsServerConfig, WsServerConfig};
 use hyper::body::Incoming;
 use hyper::header::{COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::http::HeaderValue;
@@ -26,7 +26,7 @@ use crate::socks5::Socks5Stream;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::udp::UdpStream;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpStream, UnixStream};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tokio_rustls::TlsAcceptor;
@@ -133,7 +133,37 @@ async fn run_tunnel(
             };
             Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
         }
-        _ => Err(anyhow::anyhow!("Invalid upgrade request")),
+        #[cfg(unix)]
+        LocalProtocol::ReverseUnix { ref path } => {
+            #[allow(clippy::type_complexity)]
+            static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<UnixStream>>>> =
+                Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
+
+            let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
+            let listening_server = unix_socket::run_server(path);
+            let stream = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
+            let (local_rx, local_tx) = stream.into_split();
+
+            let remote = RemoteAddr {
+                protocol: jwt.claims.p.clone(),
+                host: local_srv.0,
+                port: local_srv.1,
+            };
+            Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
+        }
+        #[cfg(not(unix))]
+        LocalProtocol::ReverseUnix { ref path } => {
+            error!("Received an unsupported target protocol {:?}", jwt.claims);
+            Err(anyhow::anyhow!("Invalid upgrade request"))
+        }
+        LocalProtocol::Stdio
+        | LocalProtocol::Socks5 { .. }
+        | LocalProtocol::TProxyTcp
+        | LocalProtocol::TProxyUdp { .. }
+        | LocalProtocol::Unix { .. } => {
+            error!("Received an unsupported target protocol {:?}", jwt.claims);
+            Err(anyhow::anyhow!("Invalid upgrade request"))
+        }
     }
 }
 
@@ -333,7 +363,7 @@ async fn server_upgrade(
         return err;
     }
 
-    let req_protocol = jwt.claims.p;
+    let req_protocol = jwt.claims.p.clone();
     let tunnel = match run_tunnel(&server_config, jwt, client_addr).await {
         Ok(ret) => ret,
         Err(err) => {

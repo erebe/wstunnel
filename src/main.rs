@@ -7,6 +7,8 @@ mod tcp;
 mod tls;
 mod tunnel;
 mod udp;
+#[cfg(unix)]
+mod unix_socket;
 
 use anyhow::anyhow;
 use base64::Engine;
@@ -258,7 +260,7 @@ struct Server {
     tls_private_key: Option<PathBuf>,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum LocalProtocol {
     Tcp { proxy_protocol: bool },
     Udp { timeout: Option<Duration> },
@@ -269,6 +271,8 @@ enum LocalProtocol {
     ReverseTcp,
     ReverseUdp { timeout: Option<Duration> },
     ReverseSocks5,
+    ReverseUnix { path: PathBuf },
+    Unix { path: PathBuf },
 }
 
 #[derive(Clone, Debug)]
@@ -389,6 +393,22 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
             Ok(LocalToRemote {
                 local_protocol: LocalProtocol::Udp { timeout },
                 local: local_bind,
+                remote: (dest_host, dest_port),
+            })
+        }
+        "unix:/" => {
+            let Some((path, remote)) = arg[7..].split_once(':') else {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("cannot parse unix socket path from {}", arg),
+                ));
+            };
+            let (dest_host, dest_port, _options) = parse_tunnel_dest(remote)?;
+            Ok(LocalToRemote {
+                local_protocol: LocalProtocol::Unix {
+                    path: PathBuf::from(path),
+                },
+                local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
                 remote: (dest_host, dest_port),
             })
         }
@@ -800,7 +820,44 @@ async fn main() {
                             }
                         });
                     }
-                    _ => panic!("Invalid protocol for reverse tunnel"),
+                    LocalProtocol::Unix { path } => {
+                        let path = path.clone();
+                        tokio::spawn(async move {
+                            let remote = tunnel.remote.clone();
+                            let cfg = client_config.clone();
+                            let connect_to_dest = |_| async {
+                                tcp::connect(
+                                    &remote.0,
+                                    remote.1,
+                                    cfg.socket_so_mark,
+                                    cfg.timeout_connect,
+                                    &cfg.dns_resolver,
+                                )
+                                .await
+                            };
+
+                            let (host, port) = to_host_port(tunnel.local);
+                            let remote = RemoteAddr {
+                                protocol: LocalProtocol::ReverseUnix { path: path.clone() },
+                                host,
+                                port,
+                            };
+                            if let Err(err) =
+                                tunnel::client::run_reverse_tunnel(client_config, remote, connect_to_dest).await
+                            {
+                                error!("{:?}", err);
+                            }
+                        });
+                    }
+                    LocalProtocol::Stdio
+                    | LocalProtocol::TProxyTcp
+                    | LocalProtocol::TProxyUdp { .. }
+                    | LocalProtocol::ReverseTcp
+                    | LocalProtocol::ReverseUdp { .. }
+                    | LocalProtocol::ReverseSocks5
+                    | LocalProtocol::ReverseUnix { .. } => {
+                        panic!("Invalid protocol for reverse tunnel");
+                    }
                 }
             }
 
@@ -853,6 +910,35 @@ async fn main() {
                             }
                         });
                     }
+                    #[cfg(unix)]
+                    LocalProtocol::Unix { path } => {
+                        let remote = tunnel.remote.clone();
+                        let server = unix_socket::run_server(path)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("Cannot start Unix domain server on {}: {}", tunnel.local, err)
+                            })
+                            .map_err(anyhow::Error::new)
+                            .map_ok(move |stream| {
+                                let remote = RemoteAddr {
+                                    protocol: LocalProtocol::Tcp { proxy_protocol: false },
+                                    host: remote.0.clone(),
+                                    port: remote.1,
+                                };
+                                (stream.into_split(), remote)
+                            });
+
+                        tokio::spawn(async move {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
+                                error!("{:?}", err);
+                            }
+                        });
+                    }
+                    #[cfg(not(unix))]
+                    LocalProtocol::Unix => {
+                        panic!("Unix socket is not available for non Unix platform")
+                    }
+
                     #[cfg(target_os = "linux")]
                     LocalProtocol::TProxyUdp { timeout } => {
                         let timeout = *timeout;
@@ -951,6 +1037,7 @@ async fn main() {
                     LocalProtocol::ReverseTcp => {}
                     LocalProtocol::ReverseUdp { .. } => {}
                     LocalProtocol::ReverseSocks5 => {}
+                    LocalProtocol::ReverseUnix { .. } => {}
                 }
             }
         }
