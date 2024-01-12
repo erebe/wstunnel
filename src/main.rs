@@ -823,6 +823,7 @@ async fn main() {
                             }
                         });
                     }
+                    #[cfg(unix)]
                     LocalProtocol::Unix { path } => {
                         let path = path.clone();
                         tokio::spawn(async move {
@@ -851,6 +852,10 @@ async fn main() {
                                 error!("{:?}", err);
                             }
                         });
+                    }
+                    #[cfg(not(unix))]
+                    LocalProtocol::Unix { path } => {
+                        panic!("Unix socket is not available for non Unix platform")
                     }
                     LocalProtocol::Stdio
                     | LocalProtocol::TProxyTcp
@@ -938,7 +943,7 @@ async fn main() {
                         });
                     }
                     #[cfg(not(unix))]
-                    LocalProtocol::Unix => {
+                    LocalProtocol::Unix { .. } => {
                         panic!("Unix socket is not available for non Unix platform")
                     }
 

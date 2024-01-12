@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
-use crate::{socks5, tcp, tls, udp, unix_socket, LocalProtocol, TlsServerConfig, WsServerConfig};
+use crate::{socks5, tcp, tls, udp, LocalProtocol, TlsServerConfig, WsServerConfig};
 use hyper::body::Incoming;
 use hyper::header::{COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::http::HeaderValue;
@@ -26,7 +26,7 @@ use crate::socks5::Socks5Stream;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::udp::UdpStream;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream, UnixStream};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tokio_rustls::TlsAcceptor;
@@ -135,6 +135,9 @@ async fn run_tunnel(
         }
         #[cfg(unix)]
         LocalProtocol::ReverseUnix { ref path } => {
+            use crate::unix_socket;
+            use tokio::net::UnixStream;
+
             #[allow(clippy::type_complexity)]
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<UnixStream>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
