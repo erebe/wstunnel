@@ -1,4 +1,4 @@
-use crate::{TlsClientConfig, TlsServerConfig, WsClientConfig};
+use crate::{TlsServerConfig, WsClientConfig};
 use anyhow::{anyhow, Context};
 use std::fs::File;
 
@@ -11,6 +11,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::client::{ServerCertVerified, ServerCertVerifier};
 
+use crate::tunnel::TransportAddr;
 use tokio_rustls::rustls::{Certificate, ClientConfig, PrivateKey, ServerName};
 use tokio_rustls::{rustls, TlsAcceptor, TlsConnector};
 use tracing::info;
@@ -62,7 +63,10 @@ pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKey> {
     Ok(PrivateKey(private_key.secret_der().to_vec()))
 }
 
-fn tls_connector(tls_cfg: &TlsClientConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsConnector> {
+pub fn tls_connector(
+    tls_verify_certificate: bool,
+    alpn_protocols: Option<Vec<Vec<u8>>>,
+) -> anyhow::Result<TlsConnector> {
     let mut root_store = rustls::RootCertStore::empty();
 
     // Load system certificates and add them to the root store
@@ -77,7 +81,7 @@ fn tls_connector(tls_cfg: &TlsClientConfig, alpn_protocols: Option<Vec<Vec<u8>>>
         .with_no_client_auth();
 
     // To bypass certificate verification
-    if !tls_cfg.tls_verify_certificate {
+    if !tls_verify_certificate {
         config.dangerous().set_certificate_verifier(Arc::new(NullVerifier));
     }
 
@@ -101,22 +105,31 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
-pub async fn connect(
-    client_cfg: &WsClientConfig,
-    tls_cfg: &TlsClientConfig,
-    tcp_stream: TcpStream,
-) -> anyhow::Result<TlsStream<TcpStream>> {
+pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
     let sni = client_cfg.tls_server_name();
     info!(
         "Doing TLS handshake using sni {sni:?} with the server {}:{}",
-        client_cfg.remote_addr.0, client_cfg.remote_addr.1
+        client_cfg.remote_addr.host(),
+        client_cfg.remote_addr.port()
     );
 
-    let tls_connector = tls_connector(tls_cfg, Some(vec![b"http/1.1".to_vec()]))?;
-    let tls_stream = tls_connector
-        .connect(sni, tcp_stream)
-        .await
-        .with_context(|| format!("failed to do TLS handshake with the server {:?}", client_cfg.remote_addr))?;
+    let tls_connector = match &client_cfg.remote_addr {
+        TransportAddr::WSS { tls, .. } => &tls.tls_connector,
+        TransportAddr::HTTPS { tls, .. } => &tls.tls_connector,
+        TransportAddr::HTTP { .. } | TransportAddr::WS { .. } => {
+            return Err(anyhow!(
+                "Transport does not support TLS: {}",
+                client_cfg.remote_addr.scheme_name()
+            ))
+        }
+    };
+    let tls_stream = tls_connector.connect(sni, tcp_stream).await.with_context(|| {
+        format!(
+            "failed to do TLS handshake with the server {}:{}",
+            client_cfg.remote_addr.host(),
+            client_cfg.remote_addr.port()
+        )
+    })?;
 
     Ok(tls_stream)
 }

@@ -3,13 +3,14 @@ mod io;
 pub mod server;
 mod tls_reloader;
 
-use crate::{tcp, tls, LocalProtocol, WsClientConfig};
+use crate::{tcp, tls, LocalProtocol, TlsClientConfig, WsClientConfig};
 use async_trait::async_trait;
 use bb8::ManageConnection;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::fmt::{Debug, Formatter};
 use std::io::{Error, IoSlice};
 use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
@@ -75,6 +76,97 @@ pub struct RemoteAddr {
     pub protocol: LocalProtocol,
     pub host: Host,
     pub port: u16,
+}
+
+#[derive(Clone)]
+pub enum TransportAddr {
+    WSS {
+        tls: TlsClientConfig,
+        host: Host,
+        port: u16,
+    },
+    WS {
+        host: Host,
+        port: u16,
+    },
+    HTTPS {
+        tls: TlsClientConfig,
+        host: Host,
+        port: u16,
+    },
+    HTTP {
+        host: Host,
+        port: u16,
+    },
+}
+
+impl Debug for TransportAddr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}://{}:{}", self.scheme_name(), self.host(), self.port()))
+    }
+}
+
+impl TransportAddr {
+    pub fn from_str(scheme: &str, host: Host, port: u16, tls: Option<TlsClientConfig>) -> Option<Self> {
+        match scheme {
+            "https" => {
+                let Some(tls) = tls else { return None };
+
+                Some(TransportAddr::HTTPS { tls, host, port })
+            }
+            "http" => Some(TransportAddr::HTTP { host, port }),
+            "wss" => {
+                let Some(tls) = tls else { return None };
+
+                Some(TransportAddr::WSS { tls, host, port })
+            }
+            "ws" => Some(TransportAddr::WS { host, port }),
+            _ => None,
+        }
+    }
+    pub fn is_websocket(&self) -> bool {
+        matches!(self, TransportAddr::WS { .. } | TransportAddr::WSS { .. })
+    }
+
+    pub fn is_http2(&self) -> bool {
+        matches!(self, TransportAddr::HTTP { .. } | TransportAddr::HTTPS { .. })
+    }
+
+    pub fn tls(&self) -> Option<&TlsClientConfig> {
+        match self {
+            TransportAddr::WSS { tls, .. } => Some(tls),
+            TransportAddr::HTTPS { tls, .. } => Some(tls),
+            TransportAddr::WS { .. } => None,
+            TransportAddr::HTTP { .. } => None,
+        }
+    }
+
+    pub fn host(&self) -> &Host {
+        match self {
+            TransportAddr::WSS { host, .. } => host,
+            TransportAddr::WS { host, .. } => host,
+            TransportAddr::HTTPS { host, .. } => host,
+            TransportAddr::HTTP { host, .. } => host,
+        }
+    }
+
+    pub fn port(&self) -> u16 {
+        match self {
+            TransportAddr::WSS { port, .. } => *port,
+            TransportAddr::WS { port, .. } => *port,
+            TransportAddr::HTTPS { port, .. } => *port,
+            TransportAddr::HTTP { port, .. } => *port,
+        }
+    }
+
+    pub fn scheme_name(&self) -> &str {
+        match self {
+            TransportAddr::WSS { .. } => "wss",
+            TransportAddr::WS { .. } => "ws",
+            TransportAddr::HTTPS { .. } => "https",
+            TransportAddr::HTTP { .. } => "http",
+        }
+    }
 }
 
 impl TryFrom<JwtTunnelConfig> for RemoteAddr {
@@ -150,22 +242,35 @@ impl ManageConnection for WsClientConfig {
 
     #[instrument(level = "trace", name = "cnx_server", skip_all)]
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        let (host, port) = &self.remote_addr;
         let so_mark = self.socket_so_mark;
         let timeout = self.timeout_connect;
 
         let tcp_stream = if let Some(http_proxy) = &self.http_proxy {
-            tcp::connect_with_http_proxy(http_proxy, host, *port, so_mark, timeout, &self.dns_resolver).await?
+            tcp::connect_with_http_proxy(
+                http_proxy,
+                self.remote_addr.host(),
+                self.remote_addr.port(),
+                so_mark,
+                timeout,
+                &self.dns_resolver,
+            )
+            .await?
         } else {
-            tcp::connect(host, *port, so_mark, timeout, &self.dns_resolver).await?
+            tcp::connect(
+                self.remote_addr.host(),
+                self.remote_addr.port(),
+                so_mark,
+                timeout,
+                &self.dns_resolver,
+            )
+            .await?
         };
 
-        match &self.tls {
-            None => Ok(Some(TransportStream::Plain(tcp_stream))),
-            Some(tls_cfg) => {
-                let tls_stream = tls::connect(self, tls_cfg, tcp_stream).await?;
-                Ok(Some(TransportStream::Tls(tls_stream)))
-            }
+        if self.remote_addr.tls().is_some() {
+            let tls_stream = tls::connect(self, tcp_stream).await?;
+            Ok(Some(TransportStream::Tls(tls_stream)))
+        } else {
+            Ok(Some(TransportStream::Plain(tcp_stream)))
         }
     }
 

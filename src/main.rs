@@ -18,6 +18,7 @@ use hickory_resolver::config::{NameServerConfig, ResolverConfig, ResolverOpts};
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
 use log::{debug, warn};
+use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -34,11 +35,12 @@ use tokio::net::TcpStream;
 
 use tokio_rustls::rustls::server::DnsName;
 use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
+use tokio_rustls::TlsConnector;
 
 use tracing::{error, info};
 
 use crate::dns::DnsResolver;
-use crate::tunnel::{to_host_port, RemoteAddr};
+use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr};
 use crate::udp::MyUdpSocket;
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
@@ -197,7 +199,7 @@ struct Client {
 
     /// Address of the wstunnel server
     /// Example: With TLS wss://wstunnel.example.com or without ws://wstunnel.example.com
-    #[arg(value_name = "ws[s]://wstunnel.server.com[:port]", value_parser = parse_server_url, verbatim_doc_comment)]
+    #[arg(value_name = "ws[s]|http[s]://wstunnel.server.com[:port]", value_parser = parse_server_url, verbatim_doc_comment)]
     remote_addr: Url,
 }
 
@@ -537,10 +539,11 @@ fn parse_server_url(arg: &str) -> Result<Url, io::Error> {
     Ok(url)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TlsClientConfig {
     pub tls_sni_override: Option<DnsName>,
     pub tls_verify_certificate: bool,
+    pub tls_connector: TlsConnector,
 }
 
 #[derive(Debug)]
@@ -580,9 +583,8 @@ impl Debug for WsServerConfig {
 
 #[derive(Clone)]
 pub struct WsClientConfig {
-    pub remote_addr: (Host<String>, u16),
+    pub remote_addr: TransportAddr,
     pub socket_so_mark: Option<u32>,
-    pub tls: Option<TlsClientConfig>,
     pub http_upgrade_path_prefix: String,
     pub http_upgrade_credentials: Option<HeaderValue>,
     pub http_headers: HashMap<HeaderName, HeaderValue>,
@@ -597,9 +599,9 @@ pub struct WsClientConfig {
 
 impl WsClientConfig {
     pub fn websocket_scheme(&self) -> &'static str {
-        match self.tls {
-            None => "ws",
-            Some(_) => "wss",
+        match self.remote_addr.tls().is_some() {
+            false => "ws",
+            true => "wss",
         }
     }
 
@@ -608,13 +610,18 @@ impl WsClientConfig {
     }
 
     pub fn websocket_host_url(&self) -> String {
-        format!("{}:{}", self.remote_addr.0, self.remote_addr.1)
+        format!("{}:{}", self.remote_addr.host(), self.remote_addr.port())
     }
 
     pub fn tls_server_name(&self) -> ServerName {
-        match self.tls.as_ref().and_then(|tls| tls.tls_sni_override.as_ref()) {
-            None => match &self.remote_addr.0 {
-                Host::Domain(domain) => ServerName::DnsName(DnsName::try_from(domain.clone()).unwrap()),
+        static INVALID_DNS_NAME: Lazy<DnsName> =
+            Lazy::new(|| DnsName::try_from_ascii(b"dns-name-invalid.com").unwrap());
+
+        match self.remote_addr.tls().and_then(|tls| tls.tls_sni_override.as_ref()) {
+            None => match &self.remote_addr.host() {
+                Host::Domain(domain) => {
+                    ServerName::DnsName(DnsName::try_from(domain.clone()).unwrap_or_else(|_| INVALID_DNS_NAME.clone()))
+                }
                 Host::Ipv4(ip) => ServerName::IpAddress(IpAddr::V4(*ip)),
                 Host::Ipv6(ip) => ServerName::IpAddress(IpAddr::V6(*ip)),
             },
@@ -654,6 +661,8 @@ async fn main() {
             let tls = match args.remote_addr.scheme() {
                 "ws" => None,
                 "wss" => Some(TlsClientConfig {
+                    tls_connector: tls::tls_connector(args.tls_verify_certificate, Some(vec![b"http/1.1".to_vec()]))
+                        .expect("Cannot create tls connector"),
                     tls_sni_override: args.tls_sni_override,
                     tls_verify_certificate: args.tls_verify_certificate,
                 }),
@@ -671,12 +680,14 @@ async fn main() {
                 HeaderValue::from_str(&host).unwrap()
             };
             let mut client_config = WsClientConfig {
-                remote_addr: (
+                remote_addr: TransportAddr::from_str(
+                    args.remote_addr.scheme(),
                     args.remote_addr.host().unwrap().to_owned(),
                     args.remote_addr.port_or_known_default().unwrap(),
-                ),
+                    tls,
+                )
+                .unwrap(),
                 socket_so_mark: args.socket_so_mark,
-                tls,
                 http_upgrade_path_prefix: args.http_upgrade_path_prefix,
                 http_upgrade_credentials: args.http_upgrade_credentials,
                 http_headers: args.http_headers.into_iter().filter(|(k, _)| k != HOST).collect(),

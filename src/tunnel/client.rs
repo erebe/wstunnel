@@ -24,7 +24,7 @@ use tracing::{error, span, Instrument, Level, Span};
 use url::Host;
 use uuid::Uuid;
 
-pub async fn connect(
+async fn connect(
     request_id: Uuid,
     client_cfg: &WsClientConfig,
     dest_addr: &RemoteAddr,
@@ -69,6 +69,52 @@ pub async fn connect(
 
     Ok((ws, response))
 }
+
+//async fn connect_http2(
+//    request_id: Uuid,
+//    client_cfg: &WsClientConfig,
+//    dest_addr: &RemoteAddr,
+//) -> anyhow::Result<BodyStream<Incoming>> {
+//    let mut pooled_cnx = match client_cfg.cnx_pool().get().await {
+//        Ok(cnx) => Ok(cnx),
+//        Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
+//    }?;
+//
+//    let mut req = Request::builder()
+//        .method("GET")
+//        .uri(format!("/{}/events", &client_cfg.http_upgrade_path_prefix))
+//        .header(HOST, &client_cfg.http_header_host)
+//        .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
+//        .version(hyper::Version::HTTP_2);
+//
+//    for (k, v) in &client_cfg.http_headers {
+//        req = req.header(k, v);
+//    }
+//    if let Some(auth) = &client_cfg.http_upgrade_credentials {
+//        req = req.header(AUTHORIZATION, auth);
+//    }
+//
+//    let x: Vec<u8> = vec![];
+//    //let bosy = StreamBody::new(stream::iter(vec![anyhow::Result::Ok(hyper::body::Frame::data(x.as_slice()))]));
+//    let req = req.body(Empty::<Bytes>::new()).with_context(|| {
+//        format!(
+//            "failed to build HTTP request to contact the server {:?}",
+//            client_cfg.remote_addr
+//        )
+//    })?;
+//    debug!("with HTTP upgrade request {:?}", req);
+//    let transport = pooled_cnx.deref_mut().take().unwrap();
+//    let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new()).handshake(TokioIo::new(transport)).await
+//        .with_context(|| format!("failed to do http2 handshake with the server {:?}", client_cfg.remote_addr))?;
+//    tokio::spawn(cnx);
+//
+//    let response = request_sender.send_request(req)
+//        .await
+//        .with_context(|| format!("failed to send http2 request with the server {:?}", client_cfg.remote_addr))?;
+//
+//    // TODO: verify response is ok
+//    Ok(BodyStream::new(response.into_body()))
+//}
 
 async fn connect_to_server<R, W>(
     request_id: Uuid,
