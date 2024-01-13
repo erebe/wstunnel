@@ -1,24 +1,21 @@
-use fastwebsockets::{Frame, OpCode, Payload, WebSocketError, WebSocketRead, WebSocketWrite};
+use crate::tunnel::transport::{TunnelRead, TunnelWrite};
 use futures_util::{pin_mut, FutureExt};
-use hyper::upgrade::Upgraded;
-
-use hyper_util::rt::TokioIo;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::select;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tracing::log::debug;
 use tracing::{error, info, trace, warn};
 
-pub(super) async fn propagate_read(
+pub async fn propagate_local_to_remote(
     local_rx: impl AsyncRead,
-    mut ws_tx: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
+    mut ws_tx: impl TunnelWrite,
     mut close_tx: oneshot::Sender<()>,
     ping_frequency: Option<Duration>,
-) -> Result<(), WebSocketError> {
+) -> anyhow::Result<()> {
     let _guard = scopeguard::guard((), |_| {
-        info!("Closing local tx ==> websocket tx tunnel");
+        info!("Closing local ==>> remote tunnel");
     });
 
     static MAX_PACKET_LENGTH: usize = 64 * 1024;
@@ -44,8 +41,7 @@ pub(super) async fn propagate_read(
 
             _ = timeout.tick(), if ping_frequency.is_some() => {
                 debug!("sending ping to keep websocket connection alive");
-                ws_tx.write_frame(Frame::new(true, OpCode::Ping, None, Payload::BorrowedMut(&mut []))).await?;
-
+                ws_tx.ping().await?;
                 continue;
             }
         };
@@ -60,10 +56,7 @@ pub(super) async fn propagate_read(
         };
 
         //debug!("read {} wasted {}% usable {} capa {}", read_len, 100 - (read_len * 100 / buffer.capacity()), buffer.as_slice().len(), buffer.capacity());
-        if let Err(err) = ws_tx
-            .write_frame(Frame::binary(Payload::BorrowedMut(&mut buffer[..read_len])))
-            .await
-        {
+        if let Err(err) = ws_tx.write(&buffer[..read_len]).await {
             warn!("error while writing to websocket tx tunnel {}", err);
             break;
         }
@@ -87,51 +80,30 @@ pub(super) async fn propagate_read(
     }
 
     // Send normal close
-    let _ = ws_tx.write_frame(Frame::close(1000, &[])).await;
+    let _ = ws_tx.close().await;
 
     Ok(())
 }
 
-pub(super) async fn propagate_write(
+pub async fn propagate_remote_to_local(
     local_tx: impl AsyncWrite,
-    mut ws_rx: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>,
+    mut ws_rx: impl TunnelRead,
     mut close_rx: oneshot::Receiver<()>,
-) -> Result<(), WebSocketError> {
+) -> anyhow::Result<()> {
     let _guard = scopeguard::guard((), |_| {
-        info!("Closing local rx <== websocket rx tunnel");
+        info!("Closing local <<== remote tunnel");
     });
-    let mut x = |x: Frame<'_>| {
-        debug!("frame {:?} {:?}", x.opcode, x.payload);
-        futures_util::future::ready(anyhow::Ok(()))
-    };
 
     pin_mut!(local_tx);
     loop {
         let msg = select! {
             biased;
-            msg = ws_rx.read_frame(&mut x) => msg,
-
+            msg = ws_rx.copy(&mut local_tx) => msg,
             _ = &mut close_rx => break,
         };
 
-        let msg = match msg {
-            Ok(msg) => msg,
-            Err(err) => {
-                error!("error while reading from websocket rx {}", err);
-                break;
-            }
-        };
-
-        trace!("receive ws frame {:?} {:?}", msg.opcode, msg.payload);
-        let ret = match msg.opcode {
-            OpCode::Continuation | OpCode::Text | OpCode::Binary => local_tx.write_all(msg.payload.as_ref()).await,
-            OpCode::Close => break,
-            OpCode::Ping => Ok(()),
-            OpCode::Pong => Ok(()),
-        };
-
-        if let Err(err) = ret {
-            error!("error while writing bytes to local for rx tunnel {}", err);
+        if let Err(err) = msg {
+            error!("error while reading from websocket rx {}", err);
             break;
         }
     }

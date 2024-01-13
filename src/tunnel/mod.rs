@@ -1,7 +1,7 @@
 pub mod client;
-mod io;
 pub mod server;
 mod tls_reloader;
+mod transport;
 
 use crate::{tcp, tls, LocalProtocol, TlsClientConfig, WsClientConfig};
 use async_trait::async_trait;
@@ -80,21 +80,21 @@ pub struct RemoteAddr {
 
 #[derive(Clone)]
 pub enum TransportAddr {
-    WSS {
+    Wss {
         tls: TlsClientConfig,
         host: Host,
         port: u16,
     },
-    WS {
+    Ws {
         host: Host,
         port: u16,
     },
-    HTTPS {
+    Https {
         tls: TlsClientConfig,
         host: Host,
         port: u16,
     },
-    HTTP {
+    Http {
         host: Host,
         port: u16,
     },
@@ -109,62 +109,54 @@ impl Debug for TransportAddr {
 impl TransportAddr {
     pub fn from_str(scheme: &str, host: Host, port: u16, tls: Option<TlsClientConfig>) -> Option<Self> {
         match scheme {
-            "https" => {
-                let Some(tls) = tls else { return None };
-
-                Some(TransportAddr::HTTPS { tls, host, port })
-            }
-            "http" => Some(TransportAddr::HTTP { host, port }),
-            "wss" => {
-                let Some(tls) = tls else { return None };
-
-                Some(TransportAddr::WSS { tls, host, port })
-            }
-            "ws" => Some(TransportAddr::WS { host, port }),
+            "https" => Some(TransportAddr::Https { tls: tls?, host, port }),
+            "http" => Some(TransportAddr::Http { host, port }),
+            "wss" => Some(TransportAddr::Wss { tls: tls?, host, port }),
+            "ws" => Some(TransportAddr::Ws { host, port }),
             _ => None,
         }
     }
     pub fn is_websocket(&self) -> bool {
-        matches!(self, TransportAddr::WS { .. } | TransportAddr::WSS { .. })
+        matches!(self, TransportAddr::Ws { .. } | TransportAddr::Wss { .. })
     }
 
     pub fn is_http2(&self) -> bool {
-        matches!(self, TransportAddr::HTTP { .. } | TransportAddr::HTTPS { .. })
+        matches!(self, TransportAddr::Http { .. } | TransportAddr::Https { .. })
     }
 
     pub fn tls(&self) -> Option<&TlsClientConfig> {
         match self {
-            TransportAddr::WSS { tls, .. } => Some(tls),
-            TransportAddr::HTTPS { tls, .. } => Some(tls),
-            TransportAddr::WS { .. } => None,
-            TransportAddr::HTTP { .. } => None,
+            TransportAddr::Wss { tls, .. } => Some(tls),
+            TransportAddr::Https { tls, .. } => Some(tls),
+            TransportAddr::Ws { .. } => None,
+            TransportAddr::Http { .. } => None,
         }
     }
 
     pub fn host(&self) -> &Host {
         match self {
-            TransportAddr::WSS { host, .. } => host,
-            TransportAddr::WS { host, .. } => host,
-            TransportAddr::HTTPS { host, .. } => host,
-            TransportAddr::HTTP { host, .. } => host,
+            TransportAddr::Wss { host, .. } => host,
+            TransportAddr::Ws { host, .. } => host,
+            TransportAddr::Https { host, .. } => host,
+            TransportAddr::Http { host, .. } => host,
         }
     }
 
     pub fn port(&self) -> u16 {
         match self {
-            TransportAddr::WSS { port, .. } => *port,
-            TransportAddr::WS { port, .. } => *port,
-            TransportAddr::HTTPS { port, .. } => *port,
-            TransportAddr::HTTP { port, .. } => *port,
+            TransportAddr::Wss { port, .. } => *port,
+            TransportAddr::Ws { port, .. } => *port,
+            TransportAddr::Https { port, .. } => *port,
+            TransportAddr::Http { port, .. } => *port,
         }
     }
 
     pub fn scheme_name(&self) -> &str {
         match self {
-            TransportAddr::WSS { .. } => "wss",
-            TransportAddr::WS { .. } => "ws",
-            TransportAddr::HTTPS { .. } => "https",
-            TransportAddr::HTTP { .. } => "http",
+            TransportAddr::Wss { .. } => "wss",
+            TransportAddr::Ws { .. } => "ws",
+            TransportAddr::Https { .. } => "https",
+            TransportAddr::Http { .. } => "http",
         }
     }
 }

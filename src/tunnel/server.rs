@@ -403,9 +403,11 @@ async fn server_upgrade(
             let (close_tx, close_rx) = oneshot::channel::<()>();
             ws_tx.set_auto_apply_mask(server_config.websocket_mask_frame);
 
-            tokio::task::spawn(super::io::propagate_write(local_tx, ws_rx, close_rx).instrument(Span::current()));
+            tokio::task::spawn(
+                super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).instrument(Span::current()),
+            );
 
-            let _ = super::io::propagate_read(local_rx, ws_tx, close_tx, None).await;
+            let _ = super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, None).await;
         }
         .instrument(Span::current()),
     );

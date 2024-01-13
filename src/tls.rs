@@ -114,9 +114,9 @@ pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyh
     );
 
     let tls_connector = match &client_cfg.remote_addr {
-        TransportAddr::WSS { tls, .. } => &tls.tls_connector,
-        TransportAddr::HTTPS { tls, .. } => &tls.tls_connector,
-        TransportAddr::HTTP { .. } | TransportAddr::WS { .. } => {
+        TransportAddr::Wss { tls, .. } => &tls.tls_connector,
+        TransportAddr::Https { tls, .. } => &tls.tls_connector,
+        TransportAddr::Http { .. } | TransportAddr::Ws { .. } => {
             return Err(anyhow!(
                 "Transport does not support TLS: {}",
                 client_cfg.remote_addr.scheme_name()

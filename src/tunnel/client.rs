@@ -136,11 +136,12 @@ where
     // Forward local tx to websocket tx
     let ping_frequency = client_cfg.websocket_ping_frequency;
     tokio::spawn(
-        super::io::propagate_read(local_rx, ws_tx, close_tx, Some(ping_frequency)).instrument(Span::current()),
+        super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, Some(ping_frequency))
+            .instrument(Span::current()),
     );
 
     // Forward websocket rx to local rx
-    let _ = super::io::propagate_write(local_tx, ws_rx, close_rx).await;
+    let _ = super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).await;
 
     Ok(())
 }
@@ -233,11 +234,12 @@ where
         let tunnel = async move {
             let ping_frequency = client_config.websocket_ping_frequency;
             tokio::spawn(
-                super::io::propagate_read(local_rx, ws_tx, close_tx, Some(ping_frequency)).instrument(Span::current()),
+                super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, Some(ping_frequency))
+                    .instrument(Span::current()),
             );
 
             // Forward websocket rx to local rx
-            let _ = super::io::propagate_write(local_tx, ws_rx, close_rx).await;
+            let _ = super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).await;
         }
         .instrument(span.clone());
         tokio::spawn(tunnel);
