@@ -10,11 +10,12 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::io::{Error, IoSlice};
 use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
@@ -78,23 +79,73 @@ pub struct RemoteAddr {
     pub port: u16,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum TransportScheme {
+    Ws,
+    Wss,
+    Http,
+    Https,
+}
+
+impl TransportScheme {
+    pub fn values() -> &'static [TransportScheme] {
+        &[
+            TransportScheme::Ws,
+            TransportScheme::Wss,
+            TransportScheme::Http,
+            TransportScheme::Https,
+        ]
+    }
+    pub fn to_str(self) -> &'static str {
+        match self {
+            TransportScheme::Ws => "ws",
+            TransportScheme::Wss => "wss",
+            TransportScheme::Http => "http",
+            TransportScheme::Https => "https",
+        }
+    }
+}
+impl FromStr for TransportScheme {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "https" => Ok(TransportScheme::Https),
+            "http" => Ok(TransportScheme::Http),
+            "wss" => Ok(TransportScheme::Wss),
+            "ws" => Ok(TransportScheme::Ws),
+            _ => Err(()),
+        }
+    }
+}
+
+impl Display for TransportScheme {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.to_str())
+    }
+}
+
 #[derive(Clone)]
 pub enum TransportAddr {
     Wss {
         tls: TlsClientConfig,
+        scheme: TransportScheme,
         host: Host,
         port: u16,
     },
     Ws {
+        scheme: TransportScheme,
         host: Host,
         port: u16,
     },
     Https {
+        scheme: TransportScheme,
         tls: TlsClientConfig,
         host: Host,
         port: u16,
     },
     Http {
+        scheme: TransportScheme,
         host: Host,
         port: u16,
     },
@@ -102,18 +153,35 @@ pub enum TransportAddr {
 
 impl Debug for TransportAddr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}://{}:{}", self.scheme_name(), self.host(), self.port()))
+        f.write_fmt(format_args!("{}://{}:{}", self.scheme(), self.host(), self.port()))
     }
 }
 
 impl TransportAddr {
-    pub fn from_str(scheme: &str, host: Host, port: u16, tls: Option<TlsClientConfig>) -> Option<Self> {
+    pub fn new(scheme: TransportScheme, host: Host, port: u16, tls: Option<TlsClientConfig>) -> Option<Self> {
         match scheme {
-            "https" => Some(TransportAddr::Https { tls: tls?, host, port }),
-            "http" => Some(TransportAddr::Http { host, port }),
-            "wss" => Some(TransportAddr::Wss { tls: tls?, host, port }),
-            "ws" => Some(TransportAddr::Ws { host, port }),
-            _ => None,
+            TransportScheme::Https => Some(TransportAddr::Https {
+                scheme: TransportScheme::Https,
+                tls: tls?,
+                host,
+                port,
+            }),
+            TransportScheme::Http => Some(TransportAddr::Http {
+                scheme: TransportScheme::Http,
+                host,
+                port,
+            }),
+            TransportScheme::Wss => Some(TransportAddr::Wss {
+                scheme: TransportScheme::Wss,
+                tls: tls?,
+                host,
+                port,
+            }),
+            TransportScheme::Ws => Some(TransportAddr::Ws {
+                scheme: TransportScheme::Ws,
+                host,
+                port,
+            }),
         }
     }
     pub fn is_websocket(&self) -> bool {
@@ -151,12 +219,12 @@ impl TransportAddr {
         }
     }
 
-    pub fn scheme_name(&self) -> &str {
+    pub fn scheme(&self) -> &TransportScheme {
         match self {
-            TransportAddr::Wss { .. } => "wss",
-            TransportAddr::Ws { .. } => "ws",
-            TransportAddr::Https { .. } => "https",
-            TransportAddr::Http { .. } => "http",
+            TransportAddr::Wss { scheme, .. } => scheme,
+            TransportAddr::Ws { scheme, .. } => scheme,
+            TransportAddr::Https { scheme, .. } => scheme,
+            TransportAddr::Http { scheme, .. } => scheme,
         }
     }
 }

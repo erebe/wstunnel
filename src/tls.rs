@@ -117,10 +117,7 @@ pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyh
         TransportAddr::Wss { tls, .. } => &tls.tls_connector,
         TransportAddr::Https { tls, .. } => &tls.tls_connector,
         TransportAddr::Http { .. } | TransportAddr::Ws { .. } => {
-            return Err(anyhow!(
-                "Transport does not support TLS: {}",
-                client_cfg.remote_addr.scheme_name()
-            ))
+            return Err(anyhow!("Transport does not support TLS: {}", client_cfg.remote_addr.scheme()))
         }
     };
     let tls_stream = tls_connector.connect(sni, tcp_stream).await.with_context(|| {

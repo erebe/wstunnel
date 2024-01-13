@@ -1,74 +1,17 @@
-use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
-use crate::WsClientConfig;
-use anyhow::{anyhow, Context};
-
-use bytes::Bytes;
-use fastwebsockets::WebSocket;
+use super::{JwtTunnelConfig, RemoteAddr, JWT_DECODE};
+use crate::{tunnel, WsClientConfig};
 use futures_util::pin_mut;
-use http_body_util::Empty;
-use hyper::body::Incoming;
-use hyper::header::{AUTHORIZATION, COOKIE, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
-use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
-use hyper::upgrade::Upgraded;
-use hyper::{Request, Response};
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper::header::COOKIE;
 use jsonwebtoken::TokenData;
 use std::future::Future;
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
-use tracing::log::debug;
 use tracing::{error, span, Instrument, Level, Span};
 use url::Host;
 use uuid::Uuid;
-
-async fn connect(
-    request_id: Uuid,
-    client_cfg: &WsClientConfig,
-    dest_addr: &RemoteAddr,
-) -> anyhow::Result<(WebSocket<TokioIo<Upgraded>>, Response<Incoming>)> {
-    let mut pooled_cnx = match client_cfg.cnx_pool().get().await {
-        Ok(cnx) => Ok(cnx),
-        Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
-    }?;
-
-    let mut req = Request::builder()
-        .method("GET")
-        .uri(format!("/{}/events", &client_cfg.http_upgrade_path_prefix,))
-        .header(HOST, &client_cfg.http_header_host)
-        .header(UPGRADE, "websocket")
-        .header(CONNECTION, "upgrade")
-        .header(SEC_WEBSOCKET_KEY, fastwebsockets::handshake::generate_key())
-        .header(SEC_WEBSOCKET_VERSION, "13")
-        .header(
-            SEC_WEBSOCKET_PROTOCOL,
-            format!("v1, {}{}", JWT_HEADER_PREFIX, tunnel_to_jwt_token(request_id, dest_addr)),
-        )
-        .version(hyper::Version::HTTP_11);
-
-    for (k, v) in &client_cfg.http_headers {
-        req = req.header(k, v);
-    }
-    if let Some(auth) = &client_cfg.http_upgrade_credentials {
-        req = req.header(AUTHORIZATION, auth);
-    }
-
-    let req = req.body(Empty::<Bytes>::new()).with_context(|| {
-        format!(
-            "failed to build HTTP request to contact the server {:?}",
-            client_cfg.remote_addr
-        )
-    })?;
-    debug!("with HTTP upgrade request {:?}", req);
-    let transport = pooled_cnx.deref_mut().take().unwrap();
-    let (ws, response) = fastwebsockets::handshake::client(&TokioExecutor::new(), req, transport)
-        .await
-        .with_context(|| format!("failed to do websocket handshake with the server {:?}", client_cfg.remote_addr))?;
-
-    Ok((ws, response))
-}
 
 //async fn connect_http2(
 //    request_id: Uuid,
@@ -126,10 +69,7 @@ where
     R: AsyncRead + Send + 'static,
     W: AsyncWrite + Send + 'static,
 {
-    let (mut ws, _) = connect(request_id, client_cfg, remote_cfg).await?;
-    ws.set_auto_apply_mask(client_cfg.websocket_mask_frame);
-
-    let (ws_rx, ws_tx) = ws.split(tokio::io::split);
+    let ((ws_rx, ws_tx), _) = tunnel::transport::websocket::connect(request_id, client_cfg, remote_cfg).await?;
     let (local_rx, local_tx) = duplex_stream;
     let (close_tx, close_rx) = oneshot::channel::<()>();
 
@@ -198,10 +138,10 @@ where
         let _span = span.enter();
 
         // Correctly configure tunnel cfg
-        let (mut ws, response) = connect(request_id, &client_config, &remote_addr)
-            .instrument(span.clone())
-            .await?;
-        ws.set_auto_apply_mask(client_config.websocket_mask_frame);
+        let ((ws_rx, ws_tx), response) =
+            tunnel::transport::websocket::connect(request_id, &client_config, &remote_addr)
+                .instrument(span.clone())
+                .await?;
 
         // Connect to endpoint
         let remote = response
@@ -228,7 +168,6 @@ where
         };
 
         let (local_rx, local_tx) = tokio::io::split(stream);
-        let (ws_rx, ws_tx) = ws.split(tokio::io::split);
         let (close_tx, close_rx) = oneshot::channel::<()>();
 
         let tunnel = async move {

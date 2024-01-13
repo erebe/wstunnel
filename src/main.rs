@@ -40,7 +40,7 @@ use tokio_rustls::TlsConnector;
 use tracing::{error, info};
 
 use crate::dns::DnsResolver;
-use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr};
+use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
 use crate::udp::MyUdpSocket;
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
@@ -525,7 +525,7 @@ fn parse_server_url(arg: &str) -> Result<Url, io::Error> {
         ));
     };
 
-    if url.scheme() != "ws" && url.scheme() != "wss" {
+    if !TransportScheme::values().iter().any(|x| x.to_str() == url.scheme()) {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
             format!("invalid scheme {}", url.scheme()),
@@ -658,15 +658,21 @@ async fn main() {
 
     match args.commands {
         Commands::Client(args) => {
-            let tls = match args.remote_addr.scheme() {
-                "ws" => None,
-                "wss" => Some(TlsClientConfig {
+            let tls = match TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url")
+            {
+                TransportScheme::Ws | TransportScheme::Http => None,
+                TransportScheme::Wss => Some(TlsClientConfig {
                     tls_connector: tls::tls_connector(args.tls_verify_certificate, Some(vec![b"http/1.1".to_vec()]))
                         .expect("Cannot create tls connector"),
                     tls_sni_override: args.tls_sni_override,
                     tls_verify_certificate: args.tls_verify_certificate,
                 }),
-                _ => panic!("invalid scheme in server url {}", args.remote_addr.scheme()),
+                TransportScheme::Https => Some(TlsClientConfig {
+                    tls_connector: tls::tls_connector(args.tls_verify_certificate, Some(vec![b"h2".to_vec()]))
+                        .expect("Cannot create tls connector"),
+                    tls_sni_override: args.tls_sni_override,
+                    tls_verify_certificate: args.tls_verify_certificate,
+                }),
             };
 
             // Extract host header from http_headers
@@ -680,8 +686,8 @@ async fn main() {
                 HeaderValue::from_str(&host).unwrap()
             };
             let mut client_config = WsClientConfig {
-                remote_addr: TransportAddr::from_str(
-                    args.remote_addr.scheme(),
+                remote_addr: TransportAddr::new(
+                    TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
                     args.remote_addr.host().unwrap().to_owned(),
                     args.remote_addr.port_or_known_default().unwrap(),
                     tls,

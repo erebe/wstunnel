@@ -438,7 +438,7 @@ impl TlsContext<'_> {
     #[inline]
     pub fn tls_acceptor(&mut self) -> &Arc<TlsAcceptor> {
         if self.tls_reloader.should_reload_certificate() {
-            match tls::tls_acceptor(self.tls_config, Some(vec![b"http/1.1".to_vec()])) {
+            match tls::tls_acceptor(self.tls_config, Some(vec![b"h2".to_vec(), b"http/1.1".to_vec()])) {
                 Ok(acceptor) => self.tls_acceptor = Arc::new(acceptor),
                 Err(err) => error!("Cannot reload TLS certificate {:?}", err),
             };
@@ -462,7 +462,7 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
     // Init TLS if needed
     let mut tls_context = if let Some(tls_config) = &server_config.tls {
         let tls_context = TlsContext {
-            tls_acceptor: Arc::new(tls::tls_acceptor(tls_config, Some(vec![b"http/1.1".to_vec()]))?),
+            tls_acceptor: Arc::new(tls::tls_acceptor(tls_config, Some(vec![b"h2".to_vec(), b"http/1.1".to_vec()]))?),
             tls_reloader: TlsReloader::new(server_config.clone())?,
             tls_config,
         };

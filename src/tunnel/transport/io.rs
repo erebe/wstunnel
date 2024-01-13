@@ -15,7 +15,7 @@ pub async fn propagate_local_to_remote(
     ping_frequency: Option<Duration>,
 ) -> anyhow::Result<()> {
     let _guard = scopeguard::guard((), |_| {
-        info!("Closing local ==>> remote tunnel");
+        info!("Closing local => remote tunnel");
     });
 
     static MAX_PACKET_LENGTH: usize = 64 * 1024;
@@ -86,12 +86,12 @@ pub async fn propagate_local_to_remote(
 }
 
 pub async fn propagate_remote_to_local(
-    local_tx: impl AsyncWrite,
+    local_tx: impl AsyncWrite + Send,
     mut ws_rx: impl TunnelRead,
     mut close_rx: oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
     let _guard = scopeguard::guard((), |_| {
-        info!("Closing local <<== remote tunnel");
+        info!("Closing local <= remote tunnel");
     });
 
     pin_mut!(local_tx);
