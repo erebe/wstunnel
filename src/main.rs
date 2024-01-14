@@ -72,7 +72,7 @@ struct Wstunnel {
     nb_worker_threads: Option<u32>,
 
     /// Control the log verbosity. i.e: TRACE, DEBUG, INFO, WARN, ERROR, OFF
-    /// for more details: https://docs.rs/env_logger/0.10.1/env_logger/#enabling-logging
+    /// for more details: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#example-syntax
     #[arg(
         long,
         global = true,
@@ -81,7 +81,7 @@ struct Wstunnel {
         env = "RUST_LOG",
         default_value = "INFO"
     )]
-    log_lvl: Directive,
+    log_lvl: String,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -645,13 +645,14 @@ async fn main() {
                 .count()
                 > 0 => {}
         _ => {
+            let mut env_filter = EnvFilter::builder().parse(&args.log_lvl).expect("Invalid log level");
+            if !(args.log_lvl.contains("h2::") || args.log_lvl.contains("h2=")) {
+                env_filter =
+                    env_filter.add_directive(Directive::from_str("h2::codec=off").expect("Invalid log directive"));
+            }
             tracing_subscriber::fmt()
                 .with_ansi(args.no_color.is_none())
-                .with_env_filter(
-                    EnvFilter::builder()
-                        .with_default_directive(args.log_lvl)
-                        .from_env_lossy(),
-                )
+                .with_env_filter(env_filter)
                 .init();
         }
     }

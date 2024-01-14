@@ -1,4 +1,5 @@
 use crate::tunnel::transport::{TunnelRead, TunnelWrite};
+use bytes::BufMut;
 use futures_util::{pin_mut, FutureExt};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
@@ -6,7 +7,7 @@ use tokio::select;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tracing::log::debug;
-use tracing::{error, info, trace, warn};
+use tracing::{error, info, warn};
 
 pub async fn propagate_local_to_remote(
     local_rx: impl AsyncRead,
@@ -19,7 +20,6 @@ pub async fn propagate_local_to_remote(
     });
 
     static MAX_PACKET_LENGTH: usize = 64 * 1024;
-    let mut buffer = vec![0u8; MAX_PACKET_LENGTH];
 
     // We do our own pin_mut! to avoid shadowing timeout and be able to reset it, on next loop iteration
     // We reuse the future to avoid creating a timer in the tight loop
@@ -32,21 +32,26 @@ pub async fn propagate_local_to_remote(
     pin_mut!(should_close);
     pin_mut!(local_rx);
     loop {
+        debug_assert!(
+            ws_tx.buf_mut().chunk_mut().len() >= MAX_PACKET_LENGTH,
+            "buffer must be large enough to receive a whole packet length"
+        );
+
         let read_len = select! {
             biased;
 
-            read_len = local_rx.read(&mut buffer) => read_len,
+            read_len = local_rx.read_buf(ws_tx.buf_mut()) => read_len,
 
             _ = &mut should_close => break,
 
             _ = timeout.tick(), if ping_frequency.is_some() => {
-                debug!("sending ping to keep websocket connection alive");
+                debug!("sending ping to keep connection alive");
                 ws_tx.ping().await?;
                 continue;
             }
         };
 
-        let read_len = match read_len {
+        let _read_len = match read_len {
             Ok(0) => break,
             Ok(read_len) => read_len,
             Err(err) => {
@@ -56,26 +61,9 @@ pub async fn propagate_local_to_remote(
         };
 
         //debug!("read {} wasted {}% usable {} capa {}", read_len, 100 - (read_len * 100 / buffer.capacity()), buffer.as_slice().len(), buffer.capacity());
-        if let Err(err) = ws_tx.write(&buffer[..read_len]).await {
-            warn!("error while writing to websocket tx tunnel {}", err);
+        if let Err(err) = ws_tx.write().await {
+            warn!("error while writing to tx tunnel {}", err);
             break;
-        }
-
-        // If the buffer has been completely filled with previous read, Double it !
-        // For the buffer to not be a bottleneck when the TCP window scale
-        // For udp, the buffer will never grows.
-        if buffer.capacity() == read_len {
-            buffer.clear();
-            let new_size = buffer.capacity() + (buffer.capacity() / 4); // grow buffer by 1.25 %
-            buffer.reserve_exact(new_size);
-            buffer.resize(buffer.capacity(), 0);
-            trace!(
-                "Buffer {} Mb {} {} {}",
-                buffer.capacity() as f64 / 1024.0 / 1024.0,
-                new_size,
-                buffer.as_slice().len(),
-                buffer.capacity()
-            )
         }
     }
 
@@ -103,7 +91,7 @@ pub async fn propagate_remote_to_local(
         };
 
         if let Err(err) = msg {
-            error!("error while reading from websocket rx {}", err);
+            error!("error while reading from tunnel rx {}", err);
             break;
         }
     }

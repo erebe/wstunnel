@@ -1,6 +1,9 @@
 use ahash::{HashMap, HashMapExt};
 use anyhow::anyhow;
+use bytes::Bytes;
 use futures_util::{pin_mut, FutureExt, Stream, StreamExt};
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyStream, Either, StreamBody};
 use std::cmp::min;
 use std::fmt::Debug;
 use std::future::Future;
@@ -12,24 +15,28 @@ use std::time::Duration;
 
 use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
 use crate::{socks5, tcp, tls, udp, LocalProtocol, TlsServerConfig, WsServerConfig};
-use hyper::body::Incoming;
+use hyper::body::{Frame, Incoming};
 use hyper::header::{COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::http::HeaderValue;
-use hyper::server::conn::http1;
+use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper::{http, Request, Response, StatusCode};
+use hyper_util::rt::TokioExecutor;
 use jsonwebtoken::TokenData;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 
 use crate::socks5::Socks5Stream;
 use crate::tunnel::tls_reloader::TlsReloader;
+use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
+use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
 use crate::udp::UdpStream;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tokio_rustls::TlsAcceptor;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info, span, warn, Instrument, Level, Span};
 use url::Host;
 use uuid::Uuid;
@@ -284,6 +291,7 @@ fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<JwtTunnelCon
         .and_then(|header| header.to_str().ok())
         .and_then(|header| header.split_once(JWT_HEADER_PREFIX))
         .map(|(_prefix, jwt)| jwt)
+        .or_else(|| req.headers().get(COOKIE).and_then(|header| header.to_str().ok()))
         .unwrap_or_default();
 
     let (validation, decode_key) = JWT_DECODE.deref();
@@ -327,7 +335,7 @@ fn validate_destination(
     Ok(())
 }
 
-async fn server_upgrade(
+async fn ws_server_upgrade(
     server_config: Arc<WsServerConfig>,
     mut client_addr: SocketAddr,
     mut req: Request<Incoming>,
@@ -404,10 +412,17 @@ async fn server_upgrade(
             ws_tx.set_auto_apply_mask(server_config.websocket_mask_frame);
 
             tokio::task::spawn(
-                super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).instrument(Span::current()),
+                super::transport::io::propagate_remote_to_local(local_tx, WebsocketTunnelRead::new(ws_rx), close_rx)
+                    .instrument(Span::current()),
             );
 
-            let _ = super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, None).await;
+            let _ = super::transport::io::propagate_local_to_remote(
+                local_rx,
+                WebsocketTunnelWrite::new(ws_tx),
+                close_tx,
+                None,
+            )
+            .await;
         }
         .instrument(Span::current()),
     );
@@ -427,6 +442,92 @@ async fn server_upgrade(
         .insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static("v1"));
 
     Response::from_parts(response.into_parts().0, "".to_string())
+}
+
+async fn http_server_upgrade(
+    server_config: Arc<WsServerConfig>,
+    mut client_addr: SocketAddr,
+    req: Request<Incoming>,
+) -> Response<Either<String, BoxBody<Bytes, anyhow::Error>>> {
+    match extract_x_forwarded_for(&req) {
+        Ok(Some((x_forward_for, x_forward_for_str))) => {
+            info!("Request X-Forwarded-For: {:?}", x_forward_for);
+            Span::current().record("forwarded_for", x_forward_for_str);
+            client_addr.set_ip(x_forward_for);
+        }
+        Ok(_) => {}
+        Err(err) => return err.map(Either::Left),
+    };
+
+    if let Err(err) = validate_url(&req, &server_config.restrict_http_upgrade_path_prefix) {
+        return err.map(Either::Left);
+    }
+
+    let jwt = match extract_tunnel_info(&req) {
+        Ok(jwt) => jwt,
+        Err(err) => return err.map(Either::Left),
+    };
+
+    Span::current().record("id", &jwt.claims.id);
+    Span::current().record("remote", format!("{}:{}", jwt.claims.r, jwt.claims.rp));
+
+    if let Err(err) = validate_destination(&req, &jwt, &server_config.restrict_to) {
+        return err.map(Either::Left);
+    }
+
+    let req_protocol = jwt.claims.p.clone();
+    let tunnel = match run_tunnel(&server_config, jwt, client_addr).await {
+        Ok(ret) => ret,
+        Err(err) => {
+            warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
+            return http::Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Either::Left("Invalid upgrade request".to_string()))
+                .unwrap();
+        }
+    };
+
+    let (remote_addr, local_rx, local_tx) = tunnel;
+    info!("connected to {:?} {}:{}", req_protocol, remote_addr.host, remote_addr.port);
+
+    let ws_rx = BodyStream::new(req.into_body());
+    let (ws_tx, rx) = mpsc::channel::<Bytes>(1024);
+    let body = BoxBody::new(StreamBody::new(
+        ReceiverStream::new(rx).map(|s| -> anyhow::Result<Frame<Bytes>> { Ok(Frame::data(s)) }),
+    ));
+
+    let mut response = Response::builder()
+        .status(StatusCode::OK)
+        .body(Either::Right(body))
+        .expect("bug: failed to build response");
+
+    tokio::spawn(
+        async move {
+            let (close_tx, close_rx) = oneshot::channel::<()>();
+            tokio::task::spawn(
+                super::transport::io::propagate_remote_to_local(local_tx, Http2TunnelRead::new(ws_rx), close_rx)
+                    .instrument(Span::current()),
+            );
+
+            let _ =
+                super::transport::io::propagate_local_to_remote(local_rx, Http2TunnelWrite::new(ws_tx), close_tx, None)
+                    .await;
+        }
+        .instrument(Span::current()),
+    );
+
+    if req_protocol == LocalProtocol::ReverseSocks5 {
+        let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), &remote_addr)) else {
+            error!("Bad header value for reverse socks5: {} {}", remote_addr.host, remote_addr.port);
+            return http::Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Either::Left("Invalid upgrade request".to_string()))
+                .unwrap();
+        };
+        response.headers_mut().insert(COOKIE, header_val);
+    }
+
+    response
 }
 
 struct TlsContext<'a> {
@@ -452,10 +553,32 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
     info!("Starting wstunnel server listening on {}", server_config.bind);
 
     // setup upgrade request handler
-    // FIXME: Avoid double clone of the arc for each request
-    let mk_upgrade_fn = |server_config: Arc<WsServerConfig>, client_addr: SocketAddr| {
+    let mk_websocket_upgrade_fn = |server_config: Arc<WsServerConfig>, client_addr: SocketAddr| {
         move |req: Request<Incoming>| {
-            server_upgrade(server_config.clone(), client_addr, req).map::<anyhow::Result<_>, _>(Ok)
+            ws_server_upgrade(server_config.clone(), client_addr, req).map::<anyhow::Result<_>, _>(Ok)
+        }
+    };
+
+    let mk_http_upgrade_fn = |server_config: Arc<WsServerConfig>, client_addr: SocketAddr| {
+        move |req: Request<Incoming>| {
+            http_server_upgrade(server_config.clone(), client_addr, req).map::<anyhow::Result<_>, _>(Ok)
+        }
+    };
+
+    let mk_auto_upgrade_fn = |server_config: Arc<WsServerConfig>, client_addr: SocketAddr| {
+        move |req: Request<Incoming>| {
+            let server_config = server_config.clone();
+            async move {
+                if !fastwebsockets::upgrade::is_upgrade_request(&req) {
+                    http_server_upgrade(server_config.clone(), client_addr, req)
+                        .map::<anyhow::Result<_>, _>(Ok)
+                        .await
+                } else {
+                    ws_server_upgrade(server_config.clone(), client_addr, req)
+                        .map(|response| Ok::<_, anyhow::Error>(response.map(Either::Left)))
+                        .await
+                }
+            }
         }
     };
 
@@ -493,47 +616,75 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
         );
 
         info!("Accepting connection");
-        let upgrade_fn = mk_upgrade_fn(server_config.clone(), peer_addr);
-        // TLS
-        if let Some(tls) = tls_context.as_mut() {
-            // Reload TLS certificate if needed
-            let tls_acceptor = tls.tls_acceptor().clone();
-            let fut = async move {
-                info!("Doing TLS handshake");
-                let tls_stream = match tls_acceptor.accept(stream).await {
-                    Ok(tls_stream) => hyper_util::rt::TokioIo::new(tls_stream),
-                    Err(err) => {
-                        error!("error while accepting TLS connection {}", err);
-                        return;
+        let server_config = server_config.clone();
+
+        // Check if we need to enable TLS or not
+        match tls_context.as_mut() {
+            Some(tls) => {
+                // Reload TLS certificate if needed
+                let tls_acceptor = tls.tls_acceptor().clone();
+                let fut = async move {
+                    info!("Doing TLS handshake");
+                    let tls_stream = match tls_acceptor.accept(stream).await {
+                        Ok(tls_stream) => hyper_util::rt::TokioIo::new(tls_stream),
+                        Err(err) => {
+                            error!("error while accepting TLS connection {}", err);
+                            return;
+                        }
+                    };
+
+                    match tls_stream.inner().get_ref().1.alpn_protocol() {
+                        // http2
+                        Some(b"h2") => {
+                            let mut conn_builder = http2::Builder::new(TokioExecutor::new());
+                            if let Some(ping) = server_config.websocket_ping_frequency {
+                                conn_builder.keep_alive_interval(ping);
+                            }
+
+                            let http_upgrade_fn = mk_http_upgrade_fn(server_config, peer_addr);
+                            let con_fut = conn_builder.serve_connection(tls_stream, service_fn(http_upgrade_fn));
+                            if let Err(e) = con_fut.await {
+                                error!("Error while upgrading cnx to http: {:?}", e);
+                            }
+                        }
+                        // websocket
+                        _ => {
+                            let websocket_upgrade_fn = mk_websocket_upgrade_fn(server_config, peer_addr);
+                            let conn_fut = http1::Builder::new()
+                                .serve_connection(tls_stream, service_fn(websocket_upgrade_fn))
+                                .with_upgrades();
+
+                            if let Err(e) = conn_fut.await {
+                                error!("Error while upgrading cnx: {:?}", e);
+                            }
+                        }
+                    };
+                }
+                .instrument(span);
+
+                tokio::spawn(fut);
+                // Normal
+            }
+            // HTTP without TLS
+            None => {
+                let fut = async move {
+                    let stream = hyper_util::rt::TokioIo::new(stream);
+                    let mut conn_fut = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+                    if let Some(ping) = server_config.websocket_ping_frequency {
+                        conn_fut.http2().keep_alive_interval(ping);
                     }
-                };
 
-                let conn_fut = http1::Builder::new()
-                    .serve_connection(tls_stream, service_fn(upgrade_fn))
-                    .with_upgrades();
+                    let websocket_upgrade_fn = mk_auto_upgrade_fn(server_config, peer_addr);
+                    let upgradable = conn_fut.serve_connection_with_upgrades(stream, service_fn(websocket_upgrade_fn));
 
-                if let Err(e) = conn_fut.await {
-                    error!("Error while upgrading cnx to websocket: {:?}", e);
+                    if let Err(e) = upgradable.await {
+                        error!("Error while upgrading cnx to websocket: {:?}", e);
+                    }
                 }
+                .instrument(span);
+
+                tokio::spawn(fut);
             }
-            .instrument(span);
-
-            tokio::spawn(fut);
-            // Normal
-        } else {
-            let stream = hyper_util::rt::TokioIo::new(stream);
-            let conn_fut = http1::Builder::new()
-                .serve_connection(stream, service_fn(upgrade_fn))
-                .with_upgrades();
-
-            let fut = async move {
-                if let Err(e) = conn_fut.await {
-                    error!("Error while upgrading cnx to websocket: {:?}", e);
-                }
-            }
-            .instrument(span);
-
-            tokio::spawn(fut);
-        };
+        }
     }
 }

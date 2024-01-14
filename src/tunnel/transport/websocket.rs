@@ -1,40 +1,105 @@
-use crate::tunnel::transport::{TunnelRead, TunnelWrite};
+use crate::tunnel::transport::{TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
 use crate::tunnel::{tunnel_to_jwt_token, RemoteAddr, JWT_HEADER_PREFIX};
 use crate::WsClientConfig;
 use anyhow::{anyhow, Context};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use fastwebsockets::{Frame, OpCode, Payload, WebSocketRead, WebSocketWrite};
 use http_body_util::Empty;
-use hyper::body::Incoming;
 use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
+use hyper::http::response::Parts;
 use hyper::upgrade::Upgraded;
-use hyper::{Request, Response};
+use hyper::Request;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::debug;
+use std::io;
+use std::io::ErrorKind;
 use std::ops::DerefMut;
 use tokio::io::{AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tracing::trace;
 use uuid::Uuid;
 
-impl TunnelWrite for WebSocketWrite<WriteHalf<TokioIo<Upgraded>>> {
-    async fn write(&mut self, buf: &[u8]) -> anyhow::Result<()> {
-        self.write_frame(Frame::binary(Payload::Borrowed(buf)))
-            .await
-            .with_context(|| "cannot send ws frame")
+pub struct WebsocketTunnelWrite {
+    inner: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
+    buf: BytesMut,
+}
+
+impl WebsocketTunnelWrite {
+    pub fn new(ws: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>) -> Self {
+        Self {
+            inner: ws,
+            buf: BytesMut::with_capacity(MAX_PACKET_LENGTH),
+        }
+    }
+}
+
+impl TunnelWrite for WebsocketTunnelWrite {
+    fn buf_mut(&mut self) -> &mut BytesMut {
+        &mut self.buf
     }
 
-    async fn ping(&mut self) -> anyhow::Result<()> {
-        self.write_frame(Frame::new(true, OpCode::Ping, None, Payload::BorrowedMut(&mut [])))
-            .await
-            .with_context(|| "cannot send ws ping")
+    async fn write(&mut self) -> Result<(), io::Error> {
+        let read_len = self.buf.len();
+        let buf = &mut self.buf;
+
+        let ret = self
+            .inner
+            .write_frame(Frame::binary(Payload::BorrowedMut(&mut buf[..read_len])))
+            .await;
+
+        if let Err(err) = ret {
+            return Err(io::Error::new(ErrorKind::ConnectionAborted, err));
+        }
+
+        // If the buffer has been completely filled with previous read, Grows it !
+        // For the buffer to not be a bottleneck when the TCP window scale
+        // For udp, the buffer will never grows.
+        buf.clear();
+        if buf.capacity() == read_len {
+            let new_size = buf.capacity() + (buf.capacity() / 4); // grow buffer by 1.25 %
+            buf.reserve(new_size);
+            buf.resize(buf.capacity(), 0);
+            trace!(
+                "Buffer {} Mb {} {} {}",
+                buf.capacity() as f64 / 1024.0 / 1024.0,
+                new_size,
+                buf.len(),
+                buf.capacity()
+            )
+        }
+
+        Ok(())
     }
 
-    async fn close(&mut self) -> anyhow::Result<()> {
-        self.write_frame(Frame::close(1000, &[]))
+    async fn ping(&mut self) -> Result<(), io::Error> {
+        if let Err(err) = self
+            .inner
+            .write_frame(Frame::new(true, OpCode::Ping, None, Payload::BorrowedMut(&mut [])))
             .await
-            .with_context(|| "cannot close websocket cnx")
+        {
+            return Err(io::Error::new(ErrorKind::BrokenPipe, err));
+        }
+
+        Ok(())
+    }
+
+    async fn close(&mut self) -> Result<(), io::Error> {
+        if let Err(err) = self.inner.write_frame(Frame::close(1000, &[])).await {
+            return Err(io::Error::new(ErrorKind::BrokenPipe, err));
+        }
+
+        Ok(())
+    }
+}
+
+pub struct WebsocketTunnelRead {
+    inner: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>,
+}
+
+impl WebsocketTunnelRead {
+    pub fn new(ws: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>) -> Self {
+        Self { inner: ws }
     }
 }
 
@@ -42,21 +107,24 @@ fn frame_reader(x: Frame<'_>) -> futures_util::future::Ready<anyhow::Result<()>>
     debug!("frame {:?} {:?}", x.opcode, x.payload);
     futures_util::future::ready(anyhow::Ok(()))
 }
-impl TunnelRead for WebSocketRead<ReadHalf<TokioIo<Upgraded>>> {
-    async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> anyhow::Result<()> {
+
+impl TunnelRead for WebsocketTunnelRead {
+    async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> Result<(), io::Error> {
         loop {
-            let msg = self
-                .read_frame(&mut frame_reader)
-                .await
-                .with_context(|| "error while reading from websocket")?;
+            let msg = match self.inner.read_frame(&mut frame_reader).await {
+                Ok(msg) => msg,
+                Err(err) => return Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
+            };
 
             trace!("receive ws frame {:?} {:?}", msg.opcode, msg.payload);
             match msg.opcode {
                 OpCode::Continuation | OpCode::Text | OpCode::Binary => {
-                    writer.write_all(msg.payload.as_ref()).await.with_context(|| "")?;
-                    return Ok(());
+                    return match writer.write_all(msg.payload.as_ref()).await {
+                        Ok(_) => Ok(()),
+                        Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
+                    }
                 }
-                OpCode::Close => return Err(anyhow!("websocket close")),
+                OpCode::Close => return Err(io::Error::new(ErrorKind::NotConnected, "websocket close")),
                 OpCode::Ping => continue,
                 OpCode::Pong => continue,
             };
@@ -68,7 +136,7 @@ pub async fn connect(
     request_id: Uuid,
     client_cfg: &WsClientConfig,
     dest_addr: &RemoteAddr,
-) -> anyhow::Result<((impl TunnelRead, impl TunnelWrite), Response<Incoming>)> {
+) -> anyhow::Result<(WebsocketTunnelRead, WebsocketTunnelWrite, Parts)> {
     let mut pooled_cnx = match client_cfg.cnx_pool().get().await {
         Ok(cnx) => Ok(cnx),
         Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
@@ -76,7 +144,7 @@ pub async fn connect(
 
     let mut req = Request::builder()
         .method("GET")
-        .uri(format!("/{}/events", &client_cfg.http_upgrade_path_prefix,))
+        .uri(format!("/{}/events", &client_cfg.http_upgrade_path_prefix))
         .header(HOST, &client_cfg.http_header_host)
         .header(UPGRADE, "websocket")
         .header(CONNECTION, "upgrade")
@@ -109,5 +177,11 @@ pub async fn connect(
 
     ws.set_auto_apply_mask(client_cfg.websocket_mask_frame);
 
-    Ok((ws.split(tokio::io::split), response))
+    let (ws_rx, ws_tx) = ws.split(tokio::io::split);
+
+    Ok((
+        WebsocketTunnelRead::new(ws_rx),
+        WebsocketTunnelWrite::new(ws_tx),
+        response.into_parts().0,
+    ))
 }

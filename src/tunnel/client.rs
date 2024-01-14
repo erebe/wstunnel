@@ -1,4 +1,5 @@
-use super::{JwtTunnelConfig, RemoteAddr, JWT_DECODE};
+use super::{JwtTunnelConfig, RemoteAddr, TransportScheme, JWT_DECODE};
+use crate::tunnel::transport::{TunnelReader, TunnelWriter};
 use crate::{tunnel, WsClientConfig};
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
@@ -13,52 +14,6 @@ use tracing::{error, span, Instrument, Level, Span};
 use url::Host;
 use uuid::Uuid;
 
-//async fn connect_http2(
-//    request_id: Uuid,
-//    client_cfg: &WsClientConfig,
-//    dest_addr: &RemoteAddr,
-//) -> anyhow::Result<BodyStream<Incoming>> {
-//    let mut pooled_cnx = match client_cfg.cnx_pool().get().await {
-//        Ok(cnx) => Ok(cnx),
-//        Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
-//    }?;
-//
-//    let mut req = Request::builder()
-//        .method("GET")
-//        .uri(format!("/{}/events", &client_cfg.http_upgrade_path_prefix))
-//        .header(HOST, &client_cfg.http_header_host)
-//        .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
-//        .version(hyper::Version::HTTP_2);
-//
-//    for (k, v) in &client_cfg.http_headers {
-//        req = req.header(k, v);
-//    }
-//    if let Some(auth) = &client_cfg.http_upgrade_credentials {
-//        req = req.header(AUTHORIZATION, auth);
-//    }
-//
-//    let x: Vec<u8> = vec![];
-//    //let bosy = StreamBody::new(stream::iter(vec![anyhow::Result::Ok(hyper::body::Frame::data(x.as_slice()))]));
-//    let req = req.body(Empty::<Bytes>::new()).with_context(|| {
-//        format!(
-//            "failed to build HTTP request to contact the server {:?}",
-//            client_cfg.remote_addr
-//        )
-//    })?;
-//    debug!("with HTTP upgrade request {:?}", req);
-//    let transport = pooled_cnx.deref_mut().take().unwrap();
-//    let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new()).handshake(TokioIo::new(transport)).await
-//        .with_context(|| format!("failed to do http2 handshake with the server {:?}", client_cfg.remote_addr))?;
-//    tokio::spawn(cnx);
-//
-//    let response = request_sender.send_request(req)
-//        .await
-//        .with_context(|| format!("failed to send http2 request with the server {:?}", client_cfg.remote_addr))?;
-//
-//    // TODO: verify response is ok
-//    Ok(BodyStream::new(response.into_body()))
-//}
-
 async fn connect_to_server<R, W>(
     request_id: Uuid,
     client_cfg: &WsClientConfig,
@@ -69,7 +24,20 @@ where
     R: AsyncRead + Send + 'static,
     W: AsyncWrite + Send + 'static,
 {
-    let ((ws_rx, ws_tx), _) = tunnel::transport::websocket::connect(request_id, client_cfg, remote_cfg).await?;
+    // Connect to server with the correct protocol
+    let (ws_rx, ws_tx) = match client_cfg.remote_addr.scheme() {
+        TransportScheme::Ws | TransportScheme::Wss => {
+            tunnel::transport::websocket::connect(request_id, client_cfg, remote_cfg)
+                .await
+                .map(|(r, w, _response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w)))?
+        }
+        TransportScheme::Http | TransportScheme::Https => {
+            tunnel::transport::http2::connect(request_id, client_cfg, remote_cfg)
+                .await
+                .map(|(r, w, _response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w)))?
+        }
+    };
+
     let (local_rx, local_tx) = duplex_stream;
     let (close_tx, close_rx) = oneshot::channel::<()>();
 
@@ -117,7 +85,7 @@ where
 }
 
 pub async fn run_reverse_tunnel<F, Fut, T>(
-    client_config: Arc<WsClientConfig>,
+    client_cfg: Arc<WsClientConfig>,
     remote_addr: RemoteAddr,
     connect_to_dest: F,
 ) -> anyhow::Result<()>
@@ -127,7 +95,7 @@ where
     T: AsyncRead + AsyncWrite + Send + 'static,
 {
     loop {
-        let client_config = client_config.clone();
+        let client_config = client_cfg.clone();
         let request_id = Uuid::now_v7();
         let span = span!(
             Level::INFO,
@@ -136,16 +104,25 @@ where
             remote = format!("{}:{}", remote_addr.host, remote_addr.port)
         );
         let _span = span.enter();
-
         // Correctly configure tunnel cfg
-        let ((ws_rx, ws_tx), response) =
-            tunnel::transport::websocket::connect(request_id, &client_config, &remote_addr)
-                .instrument(span.clone())
-                .await?;
+        let (ws_rx, ws_tx, response) = match client_cfg.remote_addr.scheme() {
+            TransportScheme::Ws | TransportScheme::Wss => {
+                tunnel::transport::websocket::connect(request_id, &client_cfg, &remote_addr)
+                    .instrument(span.clone())
+                    .await
+                    .map(|(r, w, response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response))?
+            }
+            TransportScheme::Http | TransportScheme::Https => {
+                tunnel::transport::http2::connect(request_id, &client_cfg, &remote_addr)
+                    .instrument(span.clone())
+                    .await
+                    .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
+            }
+        };
 
         // Connect to endpoint
         let remote = response
-            .headers()
+            .headers
             .get(COOKIE)
             .and_then(|h| h.to_str().ok())
             .and_then(|h| {

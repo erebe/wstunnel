@@ -20,8 +20,8 @@ futures-util = { version = "0.3.30" }
 hickory-resolver = { version = "0.24.0", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls"] }
 ppp = {  version = "2.2.0", features = [] }
 
-hyper = { version = "1.1.0", features = ["client", "http1"] }
-hyper-util = { version = "0.1.2", features = ["tokio"] }
+hyper = { version = "1.1.0", features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1.2", features = ["tokio", "server", "server-auto"] }
 http-body-util = { version = "0.1.0" }
 jsonwebtoken = { version = "9.2.0", default-features = false }
 log = "0.4.20"
