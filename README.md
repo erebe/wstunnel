@@ -68,7 +68,7 @@ Arguments:
                                         Example: With TLS wss://wstunnel.example.com or without ws://wstunnel.example.com
 
 Options:
-  -L, --local-to-remote <{tcp,udp,socks5,stdio}://[BIND:]PORT:HOST:PORT>
+  -L, --local-to-remote <{tcp,udp,socks5,stdio,unix}://[BIND:]PORT:HOST:PORT>
           Listen on local and forwards traffic from remote. Can be specified multiple times
           examples:
           'tcp://1212:google.com:443'      =>       listen locally on tcp on port 1212 and forward to google.com on port 443
@@ -82,13 +82,17 @@ Options:
           'tproxy+udp://[::1]:1212?timeout_sec=10'  listen locally on udp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
                                                     linux only and requires sudo/CAP_NET_ADMIN
 
-          'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
-  -R, --remote-to-local <{tcp,udp,socks5}://[BIND:]PORT:HOST:PORT>
+          'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p
+
+          'unix:///tmp/wstunnel.sock:g.com:443' =>  listen for data from unix socket of path /tmp/wstunnel.sock and forward to g.com:443
+ws://localhost:8080" my-server`
+  -R, --remote-to-local <{tcp,udp,socks5,unix}://[BIND:]PORT:HOST:PORT>
           Listen on remote and forwards traffic from local. Can be specified multiple times.
           examples:
           'tcp://1212:google.com:443'      =>     listen on server for incoming tcp cnx on port 1212 and forward to google.com on port 443 from local machine
           'udp://1212:1.1.1.1:53'          =>     listen on server for incoming udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53 from local machine
-          'socks5://[::1]:1212'             =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine
+          'socks5://[::1]:1212'            =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine
+          'unix://wstunnel.sock:g.com:443' =>     listen on server for incoming data from unix socket of path wstunnel.sock and forward to g.com:443 from local machine
       --socket-so-mark <INT>
           (linux only) Mark network packet with SO_MARK sockoption with the specified value.
           You need to use {root, sudo, capabilities} to run wstunnel when using this option
