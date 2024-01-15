@@ -31,7 +31,7 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 **What to expect:**
 
 * Good error messages and debug information
-* Static forward and reverse tunneling (TCP and UDP)
+* Static forward and reverse tunneling (TCP, UDP, Unix socket)
 * Dynamic tunneling (Socks5 proxy and Transparent Proxy)
 * Support for http proxy (when behind one)
 * Support for tls/https server with certificates auto-reload (with embedded self-signed certificate, or your own)
