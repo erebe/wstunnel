@@ -4,6 +4,7 @@ use crate::{tunnel, WsClientConfig};
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
 use jsonwebtoken::TokenData;
+use log::debug;
 use std::future::Future;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -25,19 +26,20 @@ where
     W: AsyncWrite + Send + 'static,
 {
     // Connect to server with the correct protocol
-    let (ws_rx, ws_tx) = match client_cfg.remote_addr.scheme() {
+    let (ws_rx, ws_tx, response) = match client_cfg.remote_addr.scheme() {
         TransportScheme::Ws | TransportScheme::Wss => {
             tunnel::transport::websocket::connect(request_id, client_cfg, remote_cfg)
                 .await
-                .map(|(r, w, _response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w)))?
+                .map(|(r, w, response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response))?
         }
         TransportScheme::Http | TransportScheme::Https => {
             tunnel::transport::http2::connect(request_id, client_cfg, remote_cfg)
                 .await
-                .map(|(r, w, _response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w)))?
+                .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
         }
     };
 
+    debug!("Server response: {:?}", response);
     let (local_rx, local_tx) = duplex_stream;
     let (close_tx, close_rx) = oneshot::channel::<()>();
 
@@ -121,6 +123,7 @@ where
         };
 
         // Connect to endpoint
+        debug!("Server response: {:?}", response);
         let remote = response
             .headers
             .get(COOKIE)

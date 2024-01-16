@@ -20,7 +20,7 @@ use hyper::header::{COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::http::HeaderValue;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
-use hyper::{http, Request, Response, StatusCode};
+use hyper::{http, Request, Response, StatusCode, Version};
 use hyper_util::rt::TokioExecutor;
 use jsonwebtoken::TokenData;
 use once_cell::sync::Lazy;
@@ -569,14 +569,20 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
         move |req: Request<Incoming>| {
             let server_config = server_config.clone();
             async move {
-                if !fastwebsockets::upgrade::is_upgrade_request(&req) {
+                if fastwebsockets::upgrade::is_upgrade_request(&req) {
+                    ws_server_upgrade(server_config.clone(), client_addr, req)
+                        .map(|response| Ok::<_, anyhow::Error>(response.map(Either::Left)))
+                        .await
+                } else if req.version() == Version::HTTP_2 {
                     http_server_upgrade(server_config.clone(), client_addr, req)
                         .map::<anyhow::Result<_>, _>(Ok)
                         .await
                 } else {
-                    ws_server_upgrade(server_config.clone(), client_addr, req)
-                        .map(|response| Ok::<_, anyhow::Error>(response.map(Either::Left)))
-                        .await
+                    error!("Invalid protocol version request, got {:?} while expecting either websocket http1 upgrade or http2", req.version());
+                    Ok(http::Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Either::Left("Invalid protocol request".to_string()))
+                        .unwrap())
                 }
             }
         }
