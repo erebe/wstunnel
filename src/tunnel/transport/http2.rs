@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use http_body_util::{BodyExt, BodyStream, StreamBody};
 use hyper::body::{Frame, Incoming};
-use hyper::header::{AUTHORIZATION, COOKIE, HOST};
+use hyper::header::{AUTHORIZATION, COOKIE};
 use hyper::http::response::Parts;
 use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
@@ -110,13 +110,11 @@ pub async fn connect(
     let mut req = Request::builder()
         .method("POST")
         .uri(format!(
-            "{}://{}:{}/{}/events",
+            "{}://{}/{}/events",
             client_cfg.remote_addr.scheme(),
-            client_cfg.remote_addr.host(),
-            client_cfg.remote_addr.port(),
+            client_cfg.http_header_host.to_str().unwrap(),
             &client_cfg.http_upgrade_path_prefix
         ))
-        .header(HOST, &client_cfg.http_header_host)
         .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
         .version(hyper::Version::HTTP_2);
 
