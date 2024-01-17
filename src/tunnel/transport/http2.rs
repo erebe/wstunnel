@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use http_body_util::{BodyExt, BodyStream, StreamBody};
 use hyper::body::{Frame, Incoming};
-use hyper::header::{AUTHORIZATION, COOKIE};
+use hyper::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE};
 use hyper::http::response::Parts;
 use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
@@ -116,6 +116,7 @@ pub async fn connect(
             &client_cfg.http_upgrade_path_prefix
         ))
         .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
+        .header(CONTENT_TYPE, "application/grpc+proto")
         .version(hyper::Version::HTTP_2);
 
     for (k, v) in &client_cfg.http_headers {

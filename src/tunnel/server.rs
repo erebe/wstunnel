@@ -16,7 +16,7 @@ use std::time::Duration;
 use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
 use crate::{socks5, tcp, tls, udp, LocalProtocol, TlsServerConfig, WsServerConfig};
 use hyper::body::{Frame, Incoming};
-use hyper::header::{COOKIE, SEC_WEBSOCKET_PROTOCOL};
+use hyper::header::{CONTENT_TYPE, COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::http::HeaderValue;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
@@ -447,7 +447,7 @@ async fn ws_server_upgrade(
 async fn http_server_upgrade(
     server_config: Arc<WsServerConfig>,
     mut client_addr: SocketAddr,
-    req: Request<Incoming>,
+    mut req: Request<Incoming>,
 ) -> Response<Either<String, BoxBody<Bytes, anyhow::Error>>> {
     match extract_x_forwarded_for(&req) {
         Ok(Some((x_forward_for, x_forward_for_str))) => {
@@ -490,6 +490,7 @@ async fn http_server_upgrade(
     let (remote_addr, local_rx, local_tx) = tunnel;
     info!("connected to {:?} {}:{}", req_protocol, remote_addr.host, remote_addr.port);
 
+    let req_content_type = req.headers_mut().remove(CONTENT_TYPE);
     let ws_rx = BodyStream::new(req.into_body());
     let (ws_tx, rx) = mpsc::channel::<Bytes>(1024);
     let body = BoxBody::new(StreamBody::new(
@@ -525,6 +526,10 @@ async fn http_server_upgrade(
                 .unwrap();
         };
         response.headers_mut().insert(COOKIE, header_val);
+    }
+
+    if let Some(content_type) = req_content_type {
+        response.headers_mut().insert(CONTENT_TYPE, content_type);
     }
 
     response
