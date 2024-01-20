@@ -41,12 +41,32 @@ impl Socks5UdpServer {
         let socket = socket2::SockRef::from(&listener);
 
         // Increase receive buffer
-        if let Err(err) = socket.set_recv_buffer_size(64 * 1024 * 1024) {
-            warn!("Cannot set UDP server recv buffer: {}", err);
+        const BUF_SIZES: [usize; 7] = [64usize, 32usize, 16usize, 8usize, 4usize, 2usize, 1usize];
+        for size in BUF_SIZES.iter() {
+            if let Err(err) = socket.set_recv_buffer_size(size * 1024 * 1024) {
+                warn!("Cannot increase UDP server recv buffer to {} Mib: {}", size, err);
+                warn!("This is not fatal, but can lead to packet loss if you have too much throughput. You must monitor packet loss in this case");
+                continue;
+            }
+
+            if *size != BUF_SIZES[0] {
+                info!("Increased UDP server recv buffer to {} Mib", size);
+            }
+
+            break;
         }
 
-        if let Err(err) = socket.set_send_buffer_size(64 * 1024 * 1024) {
-            warn!("Cannot set UDP server recv buffer: {}", err);
+        for size in BUF_SIZES.iter() {
+            if let Err(err) = socket.set_send_buffer_size(size * 1024 * 1024) {
+                warn!("Cannot increase UDP server send buffer to {} Mib: {}", size, err);
+                warn!("This is not fatal, but can lead to packet loss if you have too much throughput. You must monitor packet loss in this case");
+                continue;
+            }
+
+            if *size != BUF_SIZES[0] {
+                info!("Increased UDP server send buffer to {} Mib", size);
+            }
+            break;
         }
 
         Self {
@@ -56,6 +76,7 @@ impl Socks5UdpServer {
             cnx_timeout: timeout,
         }
     }
+
     #[inline]
     pub fn clean_dead_keys(&mut self) {
         let nb_key_to_delete = self.keys_to_delete.read().len();
