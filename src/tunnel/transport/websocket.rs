@@ -17,7 +17,7 @@ use std::io;
 use std::io::ErrorKind;
 use std::ops::DerefMut;
 use tokio::io::{AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
-use tracing::{error, trace};
+use tracing::trace;
 use uuid::Uuid;
 
 pub struct WebsocketTunnelWrite {
@@ -59,7 +59,6 @@ impl TunnelWrite for WebsocketTunnelWrite {
         if buf.capacity() == read_len {
             let new_size = buf.capacity() + (buf.capacity() / 4); // grow buffer by 1.25 %
             buf.reserve(new_size);
-            buf.resize(buf.capacity(), 0);
             trace!(
                 "Buffer {} Mb {} {} {}",
                 buf.capacity() as f64 / 1024.0 / 1024.0,
@@ -103,8 +102,8 @@ impl WebsocketTunnelRead {
     }
 }
 
-fn frame_reader(x: Frame<'_>) -> futures_util::future::Ready<anyhow::Result<()>> {
-    error!("frame {:?} {:?}", x.opcode, x.payload);
+fn frame_reader(_: Frame<'_>) -> futures_util::future::Ready<anyhow::Result<()>> {
+    //error!("frame {:?} {:?}", x.opcode, x.payload);
     futures_util::future::ready(anyhow::Ok(()))
 }
 
@@ -156,12 +155,14 @@ pub async fn connect(
         )
         .version(hyper::Version::HTTP_11);
 
+    let headers = req.headers_mut().unwrap();
     for (k, v) in &client_cfg.http_headers {
-        let _ = req.headers_mut().unwrap().remove(k);
-        req = req.header(k, v);
+        let _ = headers.remove(k);
+        headers.append(k, v.clone());
     }
     if let Some(auth) = &client_cfg.http_upgrade_credentials {
-        req = req.header(AUTHORIZATION, auth);
+        let _ = headers.remove(AUTHORIZATION);
+        headers.append(AUTHORIZATION, auth.clone());
     }
 
     let req = req.body(Empty::<Bytes>::new()).with_context(|| {

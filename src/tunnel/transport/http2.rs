@@ -119,12 +119,14 @@ pub async fn connect(
         .header(CONTENT_TYPE, "application/json")
         .version(hyper::Version::HTTP_2);
 
+    let headers = req.headers_mut().unwrap();
     for (k, v) in &client_cfg.http_headers {
-        let _ = req.headers_mut().unwrap().remove(k);
-        req = req.header(k, v);
+        let _ = headers.remove(k);
+        headers.append(k, v.clone());
     }
     if let Some(auth) = &client_cfg.http_upgrade_credentials {
-        req = req.header(AUTHORIZATION, auth);
+        let _ = headers.remove(AUTHORIZATION);
+        headers.append(AUTHORIZATION, auth.clone());
     }
 
     let (tx, rx) = mpsc::channel::<Bytes>(1024);
