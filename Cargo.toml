@@ -1,6 +1,6 @@
 [package]
 name = "wstunnel"
-version = "9.1.0"
+version = "9.2.0"
 edition = "2021"
 repository = "https://github.com/erebe/wstunnel.git"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
