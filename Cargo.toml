@@ -15,7 +15,7 @@ bb8 = { version = "0.8", features = [] }
 bytes = { version = "1.5.0", features = [] }
 clap = { version = "4.4.14", features = ["derive", "env"] }
 fast-socks5 = { git = "https://github.com/erebe/fast-socks5.git", branch = "master", features = [] }
-fastwebsockets = { version = "0.6.0", features = ["upgrade", "simd", "unstable-split"] }
+fastwebsockets = { git = "https://github.com/erebe/fastwebsockets.git", branch = "main", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.30" }
 hickory-resolver = { version = "0.24.0", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls"] }
 ppp = {  version = "2.2.0", features = [] }

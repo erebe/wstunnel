@@ -116,10 +116,11 @@ pub async fn connect(
             &client_cfg.http_upgrade_path_prefix
         ))
         .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
-        .header(CONTENT_TYPE, "application/grpc+proto")
+        .header(CONTENT_TYPE, "application/json")
         .version(hyper::Version::HTTP_2);
 
     for (k, v) in &client_cfg.http_headers {
+        let _ = req.headers_mut().unwrap().remove(k);
         req = req.header(k, v);
     }
     if let Some(auth) = &client_cfg.http_upgrade_credentials {

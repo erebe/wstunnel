@@ -17,7 +17,7 @@ use std::io;
 use std::io::ErrorKind;
 use std::ops::DerefMut;
 use tokio::io::{AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
-use tracing::trace;
+use tracing::{error, trace};
 use uuid::Uuid;
 
 pub struct WebsocketTunnelWrite {
@@ -104,7 +104,7 @@ impl WebsocketTunnelRead {
 }
 
 fn frame_reader(x: Frame<'_>) -> futures_util::future::Ready<anyhow::Result<()>> {
-    debug!("frame {:?} {:?}", x.opcode, x.payload);
+    error!("frame {:?} {:?}", x.opcode, x.payload);
     futures_util::future::ready(anyhow::Ok(()))
 }
 
@@ -157,6 +157,7 @@ pub async fn connect(
         .version(hyper::Version::HTTP_11);
 
     for (k, v) in &client_cfg.http_headers {
+        let _ = req.headers_mut().unwrap().remove(k);
         req = req.header(k, v);
     }
     if let Some(auth) = &client_cfg.http_upgrade_credentials {
