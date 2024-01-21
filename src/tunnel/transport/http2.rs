@@ -82,7 +82,7 @@ impl TunnelWrite for Http2TunnelWrite {
 
         if self.buf.capacity() < MAX_PACKET_LENGTH {
             //info!("read {} Kb {} Kb", self.buf.capacity() / 1024, old_capa / 1024);
-            self.buf.reserve(MAX_PACKET_LENGTH * 4)
+            self.buf.reserve(MAX_PACKET_LENGTH)
         }
 
         ret
@@ -141,6 +141,7 @@ pub async fn connect(
     let transport = pooled_cnx.deref_mut().take().unwrap();
     let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
         .timer(TokioTimer::new())
+        .adaptive_window(true)
         .keep_alive_interval(client_cfg.websocket_ping_frequency)
         .keep_alive_while_idle(false)
         .handshake(TokioIo::new(transport))
