@@ -3,6 +3,7 @@ builds:
       - linux
       - darwin
       - windows
+      - freebsd
     goarch:
       - "386"
       - amd64
@@ -22,6 +23,10 @@ builds:
         goarch: "386"
       - goos: darwin
         goarch: "386"
+      - goos: freebsd
+        goarch: "arm"
+      - goos: freebsd
+        goarch: "arm64"
     main: goreleaser.go
     hooks:
       #pre:

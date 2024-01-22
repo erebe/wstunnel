@@ -17,6 +17,7 @@ case $go_os in
     linux) rust_os='linux' ;;
     darwin) rust_os='apple-darwin' ;;
     windows) rust_os='windows' ;;
+    freebsd) rust_os='freebsd' ;;
     *) echo "unknown os: $go_os" && exit 1 ;;
 esac
 
