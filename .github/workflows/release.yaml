@@ -30,6 +30,12 @@ jobs:
           - name: Linux armv7hf
             target: armv7-unknown-linux-musleabihf
 
+          - name: Freebsd x86_64
+            target: x86_64-unknown-freebsd
+
+          - name: Freebsd x86
+            target: i686-unknown-freebsd
+
           # - name: Android aarch64
           #   target: aarch64-linux-android
 
@@ -113,7 +119,7 @@ jobs:
       # We use cross-rs if not running on x86_64 architecture on Linux
       with:
         command: build
-        use-cross: ${{ !contains(matrix.platform.target, 'x86_64') }}
+        use-cross: ${{ !contains(matrix.platform.target, 'x86_64') || contains(matrix.platform.target, 'freebsd') }}
         args: ${{ env.BUILD_ARGS }} --target ${{ matrix.platform.target }}
 
     # Mac OS
