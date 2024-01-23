@@ -64,8 +64,18 @@ Client:
 Usage: wstunnel client [OPTIONS] <ws[s]://wstunnel.server.com[:port]>
 
 Arguments:
-  <ws[s]://wstunnel.server.com[:port]>  Address of the wstunnel server
-                                        Example: With TLS wss://wstunnel.example.com or without ws://wstunnel.example.com
+  <ws[s]|http[s]://wstunnel.server.com[:port]>
+          Address of the wstunnel server
+          You can either use websocket or http2 as transport protocol. Use websocket if you are unsure.
+          Example: For websocket with TLS wss://wstunnel.example.com or without ws://wstunnel.example.com
+                   For http2 with TLS https://wstunnel.example.com or without http://wstunnel.example.com
+
+          *WARNING* HTTP2 as transport protocol is harder to make it works because:
+            - If you are behind a (reverse) proxy/CDN they are going to buffer the whole request before forwarding it to the server
+              Obviously, this is not going to work for tunneling traffic
+            - if you have wstunnel behind a reverse proxy, most of them (i.e: nginx) are going to turn http2 request into http1
+              This is not going to work, because http1 does not support streaming naturally
+          The only way to make it works with http2 is to have wstunnel directly exposed to the internet without any reverse proxy in front of it
 
 Options:
   -L, --local-to-remote <{tcp,udp,socks5,stdio,unix}://[BIND:]PORT:HOST:PORT>
@@ -108,11 +118,21 @@ ws://localhost:8080" my-server`
       --tls-verify-certificate
           Enable TLS certificate verification.
           Disabled by default. The client will happily connect to any server with self signed certificate.
-  -p, --http-proxy <http://USER:PASS@HOST:PORT>
+  -p, --http-proxy <USER:PASS@HOST:PORT>
           If set, will use this http proxy to connect to the server
-      --http-upgrade-path-prefix <HTTP_UPGRADE_PATH_PREFIX>
+          [env: HTTP_PROXY=]
+      --http-proxy-login <LOGIN>
+          If set, will use this login to connect to the http proxy. Override the one from --http-proxy
+          [env: WSTUNNEL_HTTP_PROXY_LOGIN=]
+      --http-proxy-password <PASSWORD>
+          If set, will use this password to connect to the http proxy. Override the one from --http-proxy
+          [env: WSTUNNEL_HTTP_PROXY_PASSWORD=]
+  -P, --http-upgrade-path-prefix <HTTP_UPGRADE_PATH_PREFIX>
           Use a specific prefix that will show up in the http path during the upgrade request.
-          Useful if you need to route requests server side but don't have vhosts [default: morille]
+          Useful if you need to route requests server side but don't have vhosts
+
+          [env: WSTUNNEL_HTTP_UPGRADE_PATH_PREFIX=]
+          [default: v1]
       --http-upgrade-credentials <USER[:PASS]>
           Pass authorization header with basic auth credentials during the upgrade request.
           If you need more customization, you can use the http_headers option.
@@ -133,6 +153,7 @@ Usage: wstunnel server [OPTIONS] <ws[s]://0.0.0.0[:port]>
 Arguments:
   <ws[s]://0.0.0.0[:port]>  Address of the wstunnel server to bind to
                             Example: With TLS wss://0.0.0.0:8080 or without ws://[::]:8080
+                            The server is capable of detecting by itself if the request is Websocket or Http2. So you don't need to specify it.
 
 Options:
       --socket-so-mark <INT>
@@ -192,6 +213,7 @@ docker pull ghcr.io/erebe/wstunnel:latest
 * [Proxy easily any traffic with transparent proxy (linux only)](#tproxy)
 * [Reverse tunneling](#reverse)
 * [How to secure access of your wstunnel server](#secure)
+* [Use HTTP2 instead of websocket for transport protocol](#http2)
 * [Maximize your stealthiness/Make your traffic discrete](#stealth)
 
 ### Understand command line syntax <a name="syntax"></a>
@@ -383,6 +405,31 @@ wstunnel client --http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd 
 Now your wstunnel server, will only accept connection if the client specify the correct path prefix during the upgrade request.
 
 ---
+
+### Use HTTP2 instead of websocket for the transport protocol <a name="http2"></a>
+
+Use this only if websocket is blocked by your firewall/proxy. Otherwise, it is less performant than websocket.
+
+Start your wstunnel server as usual with
+```bash
+wstunnel server wss://[::]:8080
+```
+
+On the client the only difference is to specify https:// instead of wss://
+```bash
+wstunnel client -L socks5://127.0.0.1:8888 https://myRemoteHost:8080
+```
+
+**WARNING** HTTP2 as transport protocol is harder to make it works because:
+  - If you are behind a (reverse) proxy/CDN they may buffer the whole request before forwarding it to the server.
+    Cloudflare is doing that, and obviously, this is not going to work for tunneling traffic
+  - if you have wstunnel behind a reverse proxy, most of them (i.e: nginx) are going to turn http2 request into http1
+    This is not going to work, because http1 does not support streaming naturally
+   
+The only way to make it works with HTTP2 is to have wstunnel server directly exposed to the internet without any reverse proxy in front of it
+
+In addition, you may also want to play with the request headers (i.e: content-length and content-type) to make it looks like normal traffic to bypass your firewall/proxy.
+Some firewall may not like to see request with content-length not set, or with content-type set to application/octet-stream
 
 ### Maximize your stealthiness/Make your traffic discrete <a name="stealth"></a>
 

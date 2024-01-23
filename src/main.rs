@@ -46,9 +46,8 @@ use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
 
-/// Use the websockets protocol to tunnel {TCP,UDP} traffic
+/// Use Websocket or HTTP2 protocol to tunnel {TCP,UDP} traffic
 /// wsTunnelClient <---> wsTunnelServer <---> RemoteHost
-/// Use secure connection (wss://) to bypass proxies
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, verbatim_doc_comment, long_about = None)]
 struct Wstunnel {
@@ -198,7 +197,16 @@ struct Client {
     http_headers: Vec<(HeaderName, HeaderValue)>,
 
     /// Address of the wstunnel server
-    /// Example: With TLS wss://wstunnel.example.com or without ws://wstunnel.example.com
+    /// You can either use websocket or http2 as transport protocol. Use websocket if you are unsure.
+    /// Example: For websocket with TLS wss://wstunnel.example.com or without ws://wstunnel.example.com
+    ///          For http2 with TLS https://wstunnel.example.com or without http://wstunnel.example.com
+    ///
+    /// *WARNING* HTTP2 as transport protocol is harder to make it works because:
+    ///   - If you are behind a (reverse) proxy/CDN they are going to buffer the whole request before forwarding it to the server
+    ///     Obviously, this is not going to work for tunneling traffic
+    ///   - if you have wstunnel behind a reverse proxy, most of them (i.e: nginx) are going to turn http2 request into http1
+    ///     This is not going to work, because http1 does not support streaming naturally
+    /// The only way to make it works with http2 is to have wstunnel directly exposed to the internet without any reverse proxy in front of it
     #[arg(value_name = "ws[s]|http[s]://wstunnel.server.com[:port]", value_parser = parse_server_url, verbatim_doc_comment)]
     remote_addr: Url,
 }
@@ -207,6 +215,8 @@ struct Client {
 struct Server {
     /// Address of the wstunnel server to bind to
     /// Example: With TLS wss://0.0.0.0:8080 or without ws://[::]:8080
+    ///
+    /// The server is capable of detecting by itself if the request is websocket or http2. So you don't need to specify it.
     #[arg(value_name = "ws[s]://0.0.0.0[:port]", value_parser = parse_server_url, verbatim_doc_comment)]
     remote_addr: Url,
 
