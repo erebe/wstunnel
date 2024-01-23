@@ -32,10 +32,11 @@ My inspiration came from [this project](https://www.npmjs.com/package/wstunnel) 
 
 * Good error messages and debug information
 * Static forward and reverse tunneling (TCP, UDP, Unix socket)
-* Dynamic tunneling (Socks5 proxy and Transparent Proxy)
+* Dynamic tunneling (TCP, UDP Socks5 proxy and Transparent Proxy)
 * Support for http proxy (when behind one)
 * Support for tls/https server with certificates auto-reload (with embedded self-signed certificate, or your own)
 * Support IPv6
+* Support for Websocket and HTTP2 as transport protocol (websocket is more performant)
 * **Standalone binaries** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
 
 ## Note <a name="note"></a>
