@@ -9,7 +9,7 @@ use std::io::{Error, ErrorKind};
 use std::net::SocketAddr;
 
 use crate::tunnel::to_host_port;
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use fast_socks5::new_udp_header;
 use fast_socks5::util::target_addr::TargetAddr;
 use log::warn;
@@ -229,9 +229,7 @@ pub async fn run_server(
     let stream = stream::unfold((udp_server, buffer), |(mut server, mut buf)| async move {
         loop {
             server.clean_dead_keys();
-            if buf.remaining_mut() < MAX_PACKET_LENGTH {
-                buf.reserve(MAX_PACKET_LENGTH);
-            }
+            buf.reserve(MAX_PACKET_LENGTH);
 
             let peer_addr = match server.listener.recv_buf_from(&mut buf).await {
                 Ok((_read_len, peer_addr)) => peer_addr,
