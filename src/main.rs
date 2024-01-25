@@ -196,6 +196,12 @@ struct Client {
     #[arg(short='H', long, value_name = "HEADER_NAME: HEADER_VALUE", value_parser = parse_http_headers, verbatim_doc_comment)]
     http_headers: Vec<(HeaderName, HeaderValue)>,
 
+    /// Send custom headers in the upgrade request reading them from a file.
+    /// It overrides http_headers specified from command line.
+    /// File is read everytime and file format must contains lines with `HEADER_NAME: HEADER_VALUE`
+    #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
+    http_headers_file_path: Option<PathBuf>,
+
     /// Address of the wstunnel server
     /// You can either use websocket or http2 as transport protocol. Use websocket if you are unsure.
     /// Example: For websocket with TLS wss://wstunnel.example.com or without ws://wstunnel.example.com
@@ -598,6 +604,7 @@ pub struct WsClientConfig {
     pub http_upgrade_path_prefix: String,
     pub http_upgrade_credentials: Option<HeaderValue>,
     pub http_headers: HashMap<HeaderName, HeaderValue>,
+    pub http_headers_file: Option<PathBuf>,
     pub http_header_host: HeaderValue,
     pub timeout_connect: Duration,
     pub websocket_ping_frequency: Duration,
@@ -696,6 +703,11 @@ async fn main() {
                 };
                 HeaderValue::from_str(&host).unwrap()
             };
+            if let Some(path) = &args.http_headers_file_path {
+                if !path.exists() {
+                    panic!("http headers file does not exists: {}", path.display());
+                }
+            }
             let mut client_config = WsClientConfig {
                 remote_addr: TransportAddr::new(
                     TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
@@ -708,6 +720,7 @@ async fn main() {
                 http_upgrade_path_prefix: args.http_upgrade_path_prefix,
                 http_upgrade_credentials: args.http_upgrade_credentials,
                 http_headers: args.http_headers.into_iter().filter(|(k, _)| k != HOST).collect(),
+                http_headers_file: args.http_headers_file_path,
                 http_header_host: host_header,
                 timeout_connect: Duration::from_secs(10),
                 websocket_ping_frequency: args.websocket_ping_frequency_sec.unwrap_or(Duration::from_secs(30)),

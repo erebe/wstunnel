@@ -1,8 +1,14 @@
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
 use bytes::BytesMut;
+use hyper::http::{HeaderName, HeaderValue};
 use std::future::Future;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+use std::str::FromStr;
+
 use tokio::io::AsyncWrite;
+use tracing::error;
 
 pub mod http2;
 pub mod io;
@@ -71,4 +77,26 @@ impl TunnelWrite for TunnelWriter {
             TunnelWriter::Http2(s) => s.close().await,
         }
     }
+}
+
+#[inline]
+pub fn headers_from_file(path: &Path) -> Vec<(HeaderName, HeaderValue)> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) => {
+            error!("Cannot read headers from file: {:?}: {:?}", path, err);
+            return vec![];
+        }
+    };
+
+    BufReader::new(file)
+        .lines()
+        .filter_map(|line| {
+            let line = line.ok()?;
+            let (header, value) = line.split_once(':')?;
+            let header = HeaderName::from_str(header.trim()).ok()?;
+            let value = HeaderValue::from_str(value.trim()).ok()?;
+            Some((header, value))
+        })
+        .collect()
 }

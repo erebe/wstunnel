@@ -1,4 +1,4 @@
-use crate::tunnel::transport::{TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
+use crate::tunnel::transport::{headers_from_file, TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
 use crate::tunnel::{tunnel_to_jwt_token, RemoteAddr, JWT_HEADER_PREFIX};
 use crate::WsClientConfig;
 use anyhow::{anyhow, Context};
@@ -160,9 +160,17 @@ pub async fn connect(
         let _ = headers.remove(k);
         headers.append(k, v.clone());
     }
+
     if let Some(auth) = &client_cfg.http_upgrade_credentials {
         let _ = headers.remove(AUTHORIZATION);
         headers.append(AUTHORIZATION, auth.clone());
+    }
+
+    if let Some(headers_file_path) = &client_cfg.http_headers_file {
+        for (k, v) in headers_from_file(headers_file_path) {
+            let _ = headers.remove(&k);
+            headers.append(k, v);
+        }
     }
 
     let req = req.body(Empty::<Bytes>::new()).with_context(|| {
