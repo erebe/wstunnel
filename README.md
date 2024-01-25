@@ -145,6 +145,10 @@ ws://localhost:8080" my-server`
   -H, --http-headers <HEADER_NAME: HEADER_VALUE>
           Send custom headers in the upgrade request
           Can be specified multiple time
+      --http-headers-file-path <FILE_PATH>
+          Send custom headers in the upgrade request reading them from a file.
+          It overrides http_headers specified from command line.
+          File is read everytime and file format must contains lines with `HEADER_NAME: HEADER_VALUE`
   -h, --help
           Print help
 
