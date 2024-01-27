@@ -8,7 +8,6 @@ on:
 
 env:
   RUST_VERSION: 1.75.0
-  BUILD_ARGS: "--release"
   BIN_NAME: "wstunnel"
 
 jobs:
@@ -23,18 +22,23 @@ jobs:
           # Linux
           - name: Linux x86_64
             target: x86_64-unknown-linux-musl
+            build-args: "--release"
 
           - name: Linux aarch64
             target: aarch64-unknown-linux-musl
+            build-args: "--release"
 
           - name: Linux armv7hf
             target: armv7-unknown-linux-musleabihf
+            build-args: "--release"
 
           - name: Freebsd x86_64
             target: x86_64-unknown-freebsd
+            build-args: "--release"
 
           - name: Freebsd x86
             target: i686-unknown-freebsd
+            build-args: "--release"
 
           # - name: Android aarch64
           #   target: aarch64-linux-android
@@ -52,10 +56,12 @@ jobs:
           - name: MacOS x86_64
             os: macos-latest
             target: x86_64-apple-darwin
+            build-args: "--release"
 
           - name: MacOS aarch64
             os: macos-latest
             target: aarch64-apple-darwin
+            build-args: "--release"
 
           # - name: iOS x86_64
           #   target: x86_64-apple-ios
@@ -69,10 +75,12 @@ jobs:
           - name: Windows x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
+            build-args: "--profile release-with-symbols"
 
           - name: Windows x86
             os: windows-latest
             target: i686-pc-windows-msvc
+            build-args: "--profile release-with-symbols"
 
     steps:
     - name: Install package for linux
@@ -120,22 +128,14 @@ jobs:
       with:
         command: build
         use-cross: ${{ !contains(matrix.platform.target, 'x86_64') || contains(matrix.platform.target, 'freebsd') }}
-        args: ${{ env.BUILD_ARGS }} --target ${{ matrix.platform.target }}
+        args: ${{ matrix.platform.build-args }} --target ${{ matrix.platform.target }}
 
-    # Mac OS
-    #- name: Build ${{ matrix.platform.name }} binary
-    #  if: contains(matrix.platform.target, 'apple')
-    #  # We use a dedicated Rust image containing required Apple libraries to cross-compile on multiple archs
-    #  run: |
-    #    docker run --rm --volume "${PWD}":/root/src --workdir /root/src joseluisq/rust-linux-darwin-builder:$RUST_VERSION \
-    #    sh -c "CC=o64-clang CXX=o64-clang++ cargo build $BUILD_ARGS --target ${{ matrix.platform.target }}"
-    
     - name: Store artifact
       uses: actions/upload-artifact@v3
       with:
         # Finally, we store the binary as GitHub artifact for later usage
         name: ${{ env.BIN_NAME }}-${{ matrix.platform.target }}
-        path: target/${{ matrix.platform.target }}/release/${{ env.BIN_NAME }}${{ contains(matrix.platform.target, 'windows') && '.exe' || '' }}
+        path: target/${{ matrix.platform.target }}/release${{ contains(matrix.platform.target, 'windows') && '-with-symbols' || '' }}/${{ env.BIN_NAME }}${{ contains(matrix.platform.target, 'windows') && '.exe' || '' }}
         retention-days: 1
 
   release:

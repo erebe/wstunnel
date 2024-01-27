@@ -63,3 +63,7 @@ codegen-units = 1
 opt-level = 3
 debug = 0
 strip = "symbols"
+
+[profile.release-with-symbols]
+inherits = "release"
+strip = false
