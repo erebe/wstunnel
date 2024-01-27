@@ -200,7 +200,7 @@ struct Client {
     /// It overrides http_headers specified from command line.
     /// File is read everytime and file format must contains lines with `HEADER_NAME: HEADER_VALUE`
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
-    http_headers_file_path: Option<PathBuf>,
+    http_headers_file: Option<PathBuf>,
 
     /// Address of the wstunnel server
     /// You can either use websocket or http2 as transport protocol. Use websocket if you are unsure.
@@ -703,7 +703,7 @@ async fn main() {
                 };
                 HeaderValue::from_str(&host).unwrap()
             };
-            if let Some(path) = &args.http_headers_file_path {
+            if let Some(path) = &args.http_headers_file {
                 if !path.exists() {
                     panic!("http headers file does not exists: {}", path.display());
                 }
@@ -720,7 +720,7 @@ async fn main() {
                 http_upgrade_path_prefix: args.http_upgrade_path_prefix,
                 http_upgrade_credentials: args.http_upgrade_credentials,
                 http_headers: args.http_headers.into_iter().filter(|(k, _)| k != HOST).collect(),
-                http_headers_file: args.http_headers_file_path,
+                http_headers_file: args.http_headers_file,
                 http_header_host: host_header,
                 timeout_connect: Duration::from_secs(10),
                 websocket_ping_frequency: args.websocket_ping_frequency_sec.unwrap_or(Duration::from_secs(30)),
