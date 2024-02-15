@@ -7,6 +7,7 @@ use http_body_util::{BodyExt, BodyStream, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE};
 use hyper::http::response::Parts;
+use hyper::http::HeaderName;
 use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use log::{debug, error, warn};
@@ -107,12 +108,27 @@ pub async fn connect(
         Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
     }?;
 
+    // In http2 HOST header does not exist, it is explicitly set in the authority from the request uri
+    let (headers_file, authority) = if let Some(headers_file_path) = &client_cfg.http_headers_file {
+        let headers = headers_from_file(headers_file_path);
+        let host = headers
+            .iter()
+            .find(|(h, _)| h == HeaderName::from_static("HOST"))
+            .and_then(|(_, v)| v.to_str().ok())
+            .map(|v| v.to_string());
+        (Some(headers), host)
+    } else {
+        (None, None)
+    };
+
     let mut req = Request::builder()
         .method("POST")
         .uri(format!(
             "{}://{}/{}/events",
             client_cfg.remote_addr.scheme(),
-            client_cfg.http_header_host.to_str().unwrap(),
+            authority.as_deref()
+                
+                .unwrap_or(client_cfg.http_header_host.to_str().unwrap_or("")),
             &client_cfg.http_upgrade_path_prefix
         ))
         .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
@@ -130,8 +146,8 @@ pub async fn connect(
         headers.append(AUTHORIZATION, auth.clone());
     }
 
-    if let Some(headers_file_path) = &client_cfg.http_headers_file {
-        for (k, v) in headers_from_file(headers_file_path) {
+    if let Some(headers_file) = headers_file {
+        for (k, v) in headers_file {
             let _ = headers.remove(&k);
             headers.append(k, v);
         }
