@@ -113,7 +113,7 @@ pub async fn connect(
         let headers = headers_from_file(headers_file_path);
         let host = headers
             .iter()
-            .find(|(h, _)| h == HeaderName::from_static("HOST"))
+            .find(|(h, _)| h == HeaderName::from_static("host"))
             .and_then(|(_, v)| v.to_str().ok())
             .map(|v| v.to_string());
         (Some(headers), host)
@@ -126,8 +126,8 @@ pub async fn connect(
         .uri(format!(
             "{}://{}/{}/events",
             client_cfg.remote_addr.scheme(),
-            authority.as_deref()
-                
+            authority
+                .as_deref()
                 .unwrap_or(client_cfg.http_header_host.to_str().unwrap_or("")),
             &client_cfg.http_upgrade_path_prefix
         ))
