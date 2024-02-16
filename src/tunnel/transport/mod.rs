@@ -79,24 +79,34 @@ impl TunnelWrite for TunnelWriter {
     }
 }
 
+#[allow(clippy::type_complexity)]
 #[inline]
-pub fn headers_from_file(path: &Path) -> Vec<(HeaderName, HeaderValue)> {
+pub fn headers_from_file(path: &Path) -> (Option<(HeaderName, HeaderValue)>, Vec<(HeaderName, HeaderValue)>) {
+    static HOST_HEADER: HeaderName = HeaderName::from_static("host");
+
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(err) => {
             error!("Cannot read headers from file: {:?}: {:?}", path, err);
-            return vec![];
+            return (None, vec![]);
         }
     };
 
-    BufReader::new(file)
+    let mut host_header = None;
+    let headers = BufReader::new(file)
         .lines()
         .filter_map(|line| {
             let line = line.ok()?;
             let (header, value) = line.split_once(':')?;
             let header = HeaderName::from_str(header.trim()).ok()?;
             let value = HeaderValue::from_str(value.trim()).ok()?;
+            if header == HOST_HEADER {
+                host_header = Some((header, value));
+                return None;
+            }
             Some((header, value))
         })
-        .collect()
+        .collect();
+
+    (host_header, headers)
 }

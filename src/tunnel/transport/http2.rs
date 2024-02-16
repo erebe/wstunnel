@@ -1,5 +1,5 @@
 use crate::tunnel::transport::{headers_from_file, TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
-use crate::tunnel::{tunnel_to_jwt_token, RemoteAddr};
+use crate::tunnel::{tunnel_to_jwt_token, RemoteAddr, TransportScheme};
 use crate::WsClientConfig;
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
@@ -7,7 +7,6 @@ use http_body_util::{BodyExt, BodyStream, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE};
 use hyper::http::response::Parts;
-use hyper::http::HeaderName;
 use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use log::{debug, error, warn};
@@ -110,12 +109,18 @@ pub async fn connect(
 
     // In http2 HOST header does not exist, it is explicitly set in the authority from the request uri
     let (headers_file, authority) = if let Some(headers_file_path) = &client_cfg.http_headers_file {
-        let headers = headers_from_file(headers_file_path);
-        let host = headers
-            .iter()
-            .find(|(h, _)| h == HeaderName::from_static("host"))
-            .and_then(|(_, v)| v.to_str().ok())
-            .map(|v| v.to_string());
+        let (host, headers) = headers_from_file(headers_file_path);
+        let host = if let Some((_, v)) = host {
+            match (client_cfg.remote_addr.scheme(), client_cfg.remote_addr.port()) {
+                (TransportScheme::Http, 80) | (TransportScheme::Https, 443) => {
+                    Some(v.to_str().unwrap_or("").to_string())
+                }
+                (_, port) => Some(format!("{}:{}", v.to_str().unwrap_or(""), port)),
+            }
+        } else {
+            None
+        };
+
         (Some(headers), host)
     } else {
         (None, None)

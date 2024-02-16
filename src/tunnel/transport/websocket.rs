@@ -167,9 +167,14 @@ pub async fn connect(
     }
 
     if let Some(headers_file_path) = &client_cfg.http_headers_file {
-        for (k, v) in headers_from_file(headers_file_path) {
+        let (host, headers_file) = headers_from_file(headers_file_path);
+        for (k, v) in headers_file {
             let _ = headers.remove(&k);
             headers.append(k, v);
+        }
+        if let Some((host, val)) = host {
+            let _ = headers.remove(&host);
+            headers.append(host, val);
         }
     }
 
