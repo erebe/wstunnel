@@ -109,16 +109,30 @@ where
         // Correctly configure tunnel cfg
         let (ws_rx, ws_tx, response) = match client_cfg.remote_addr.scheme() {
             TransportScheme::Ws | TransportScheme::Wss => {
-                tunnel::transport::websocket::connect(request_id, &client_cfg, &remote_addr)
+                match tunnel::transport::websocket::connect(request_id, &client_cfg, &remote_addr)
                     .instrument(span.clone())
                     .await
-                    .map(|(r, w, response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response))?
+                {
+                    Ok((r, w, response)) => (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response),
+                    Err(err) => {
+                        error!("Retrying in 1sec, cannot connect to remote server: {:?}", err);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
             }
             TransportScheme::Http | TransportScheme::Https => {
-                tunnel::transport::http2::connect(request_id, &client_cfg, &remote_addr)
+                match tunnel::transport::http2::connect(request_id, &client_cfg, &remote_addr)
                     .instrument(span.clone())
                     .await
-                    .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
+                {
+                    Ok((r, w, response)) => (TunnelReader::Http2(r), TunnelWriter::Http2(w), response),
+                    Err(err) => {
+                        error!("Retrying in 1sec, cannot connect to remote server: {:?}", err);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
             }
         };
 
