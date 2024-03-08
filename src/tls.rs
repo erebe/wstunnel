@@ -72,7 +72,10 @@ pub fn tls_connector(
     // Load system certificates and add them to the root store
     let certs = rustls_native_certs::load_native_certs().with_context(|| "Cannot load system certificates")?;
     for cert in certs {
-        root_store.add(&Certificate(cert.as_ref().to_vec()))?;
+        if let Err(err) = root_store.add(&Certificate(cert.as_ref().to_vec())) {
+            warn!("cannot load a system certificate: {:?}", err);
+            continue
+        }
     }
 
     let mut config = ClientConfig::builder()
