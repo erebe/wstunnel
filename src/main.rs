@@ -138,6 +138,11 @@ struct Client {
     #[arg(long, value_name = "DOMAIN_NAME", value_parser = parse_sni_override, verbatim_doc_comment)]
     tls_sni_override: Option<DnsName>,
 
+    /// Disable sending SNI during TLS handshake
+    /// Warning: Most reverse proxies rely on it
+    #[arg(long, verbatim_doc_comment)]
+    tls_sni_disable: bool,
+
     /// Enable TLS certificate verification.
     /// Disabled by default. The client will happily connect to any server with self signed certificate.
     #[arg(long, verbatim_doc_comment)]
@@ -557,6 +562,7 @@ fn parse_server_url(arg: &str) -> Result<Url, io::Error> {
 
 #[derive(Clone)]
 pub struct TlsClientConfig {
+    pub tls_sni_disabled: bool,
     pub tls_sni_override: Option<DnsName>,
     pub tls_verify_certificate: bool,
     pub tls_connector: TlsConnector,
@@ -680,16 +686,26 @@ async fn main() {
             {
                 TransportScheme::Ws | TransportScheme::Http => None,
                 TransportScheme::Wss => Some(TlsClientConfig {
-                    tls_connector: tls::tls_connector(args.tls_verify_certificate, Some(vec![b"http/1.1".to_vec()]))
-                        .expect("Cannot create tls connector"),
+                    tls_connector: tls::tls_connector(
+                        args.tls_verify_certificate,
+                        Some(vec![b"http/1.1".to_vec()]),
+                        !args.tls_sni_disable,
+                    )
+                    .expect("Cannot create tls connector"),
                     tls_sni_override: args.tls_sni_override,
                     tls_verify_certificate: args.tls_verify_certificate,
+                    tls_sni_disabled: args.tls_sni_disable,
                 }),
                 TransportScheme::Https => Some(TlsClientConfig {
-                    tls_connector: tls::tls_connector(args.tls_verify_certificate, Some(vec![b"h2".to_vec()]))
-                        .expect("Cannot create tls connector"),
+                    tls_connector: tls::tls_connector(
+                        args.tls_verify_certificate,
+                        Some(vec![b"h2".to_vec()]),
+                        !args.tls_sni_disable,
+                    )
+                    .expect("Cannot create tls connector"),
                     tls_sni_override: args.tls_sni_override,
                     tls_verify_certificate: args.tls_verify_certificate,
+                    tls_sni_disabled: args.tls_sni_disable,
                 }),
             };
 

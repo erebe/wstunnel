@@ -66,6 +66,7 @@ pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKey> {
 pub fn tls_connector(
     tls_verify_certificate: bool,
     alpn_protocols: Option<Vec<Vec<u8>>>,
+    enable_sni: bool,
 ) -> anyhow::Result<TlsConnector> {
     let mut root_store = rustls::RootCertStore::empty();
 
@@ -74,7 +75,7 @@ pub fn tls_connector(
     for cert in certs {
         if let Err(err) = root_store.add(&Certificate(cert.as_ref().to_vec())) {
             warn!("cannot load a system certificate: {:?}", err);
-            continue
+            continue;
         }
     }
 
@@ -82,6 +83,8 @@ pub fn tls_connector(
         .with_safe_defaults()
         .with_root_certificates(root_store)
         .with_no_client_auth();
+
+    config.enable_sni = enable_sni;
 
     // To bypass certificate verification
     if !tls_verify_certificate {
@@ -110,19 +113,28 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
 
 pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
     let sni = client_cfg.tls_server_name();
-    info!(
-        "Doing TLS handshake using sni {sni:?} with the server {}:{}",
-        client_cfg.remote_addr.host(),
-        client_cfg.remote_addr.port()
-    );
-
-    let tls_connector = match &client_cfg.remote_addr {
-        TransportAddr::Wss { tls, .. } => &tls.tls_connector,
-        TransportAddr::Https { tls, .. } => &tls.tls_connector,
+    let (tls_connector, sni_disabled) = match &client_cfg.remote_addr {
+        TransportAddr::Wss { tls, .. } => (&tls.tls_connector, tls.tls_sni_disabled),
+        TransportAddr::Https { tls, .. } => (&tls.tls_connector, tls.tls_sni_disabled),
         TransportAddr::Http { .. } | TransportAddr::Ws { .. } => {
             return Err(anyhow!("Transport does not support TLS: {}", client_cfg.remote_addr.scheme()))
         }
     };
+
+    if sni_disabled {
+        info!(
+            "Doing TLS handshake without SNI with the server {}:{}",
+            client_cfg.remote_addr.host(),
+            client_cfg.remote_addr.port()
+        );
+    } else {
+        info!(
+            "Doing TLS handshake using SNI {sni:?} with the server {}:{}",
+            client_cfg.remote_addr.host(),
+            client_cfg.remote_addr.port()
+        );
+    }
+
     let tls_stream = tls_connector.connect(sni, tcp_stream).await.with_context(|| {
         format!(
             "failed to do TLS handshake with the server {}:{}",
