@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
-use tracing::{error, span, Instrument, Level, Span};
+use tracing::{error, span, Instrument, Level, Span, event};
 use url::Host;
 use uuid::Uuid;
 
@@ -105,7 +105,6 @@ where
             id = request_id.to_string(),
             remote = format!("{}:{}", remote_addr.host, remote_addr.port)
         );
-        let _span = span.enter();
         // Correctly configure tunnel cfg
         let (ws_rx, ws_tx, response) = match client_cfg.remote_addr.scheme() {
             TransportScheme::Ws | TransportScheme::Wss => {
@@ -115,7 +114,7 @@ where
                 {
                     Ok((r, w, response)) => (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response),
                     Err(err) => {
-                        error!("Retrying in 1sec, cannot connect to remote server: {:?}", err);
+                        event!(parent: &span, Level::ERROR, "Retrying in 1sec, cannot connect to remote server: {:?}", err);
                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                         continue;
                     }
@@ -128,7 +127,7 @@ where
                 {
                     Ok((r, w, response)) => (TunnelReader::Http2(r), TunnelWriter::Http2(w), response),
                     Err(err) => {
-                        error!("Retrying in 1sec, cannot connect to remote server: {:?}", err);
+                        event!(parent: &span, Level::ERROR, "Retrying in 1sec, cannot connect to remote server: {:?}", err);
                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                         continue;
                     }
@@ -137,7 +136,7 @@ where
         };
 
         // Connect to endpoint
-        debug!("Server response: {:?}", response);
+        event!(parent: &span, Level::DEBUG, "Server response: {:?}", response);
         let remote = response
             .headers
             .get(COOKIE)
@@ -156,7 +155,7 @@ where
         let stream = match connect_to_dest(remote).instrument(span.clone()).await {
             Ok(s) => s,
             Err(err) => {
-                error!("Cannot connect to xxxx: {err:?}");
+                event!(parent: &span, Level::ERROR, "Cannot connect to xxxx: {err:?}");
                 continue;
             }
         };
@@ -168,7 +167,7 @@ where
             let ping_frequency = client_config.websocket_ping_frequency;
             tokio::spawn(
                 super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, Some(ping_frequency))
-                    .instrument(Span::current()),
+                    .in_current_span(),
             );
 
             // Forward websocket rx to local rx
