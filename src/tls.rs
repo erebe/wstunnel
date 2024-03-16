@@ -12,7 +12,7 @@ use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::client::{ServerCertVerified, ServerCertVerifier};
 
 use crate::tunnel::TransportAddr;
-use tokio_rustls::rustls::{Certificate, ClientConfig, PrivateKey, ServerName};
+use tokio_rustls::rustls::{Certificate, ClientConfig, KeyLogFile, PrivateKey, ServerName};
 use tokio_rustls::{rustls, TlsAcceptor, TlsConnector};
 use tracing::info;
 
@@ -85,6 +85,7 @@ pub fn tls_connector(
         .with_no_client_auth();
 
     config.enable_sni = enable_sni;
+    config.key_log = Arc::new(KeyLogFile::new());
 
     // To bypass certificate verification
     if !tls_verify_certificate {
@@ -105,6 +106,7 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
         .with_single_cert(tls_cfg.tls_certificate.lock().clone(), tls_cfg.tls_key.lock().clone())
         .with_context(|| "invalid tls certificate or private key")?;
 
+    config.key_log = Arc::new(KeyLogFile::new());
     if let Some(alpn_protocols) = alpn_protocols {
         config.alpn_protocols = alpn_protocols;
     }
