@@ -116,6 +116,9 @@ ws://localhost:8080" my-server`
           Domain name that will be use as SNI during TLS handshake
           Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
                    or it will be flagged as fishy and your request rejected
+      --tls-sni-disable
+          Disable sending SNI during TLS handshake
+          Warning: Most reverse proxies rely on it
       --tls-verify-certificate
           Enable TLS certificate verification.
           Disabled by default. The client will happily connect to any server with self signed certificate.
