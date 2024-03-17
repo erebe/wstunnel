@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
-use tracing::{error, span, Instrument, Level, Span, event};
+use tracing::{error, event, span, Instrument, Level, Span};
 use url::Host;
 use uuid::Uuid;
 
