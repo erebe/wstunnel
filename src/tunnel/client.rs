@@ -63,7 +63,15 @@ where
     W: AsyncWrite + Send + 'static,
 {
     pin_mut!(incoming_cnx);
-    while let Some(Ok((cnx_stream, remote_addr))) = incoming_cnx.next().await {
+    while let Some(cnx) = incoming_cnx.next().await {
+        let (cnx_stream, remote_addr) = match cnx {
+            Ok((cnx_stream, remote_addr)) => (cnx_stream, remote_addr),
+            Err(err) => {
+                error!("Error accepting connection: {:?}", err);
+                continue;
+            }
+        };
+
         let request_id = Uuid::now_v7();
         let span = span!(
             Level::INFO,

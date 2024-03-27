@@ -205,7 +205,7 @@ where
                             None => break,
                             Some(Err(err)) => {
                                 warn!("Error while listening for incoming connections {err:?}");
-                                break;
+                                continue;
                             }
                             Some(Ok(cnx)) => {
                                 if tx.send_timeout(cnx, Duration::from_secs(30)).await.is_err() {
