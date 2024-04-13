@@ -314,7 +314,7 @@ wstunnel server --restrict-to localhost:51820 wss://[::]:443
 
 on your local machine start the client like this
 ```
-wstunnel client -L 'udp://51280:localhost:51280?timeout_sec=0' wss://my.server.com:443
+wstunnel client -L 'udp://51820:localhost:51820?timeout_sec=0' wss://my.server.com:443
 ```
 
 change your wireguard client config to something
