@@ -96,7 +96,6 @@ Options:
           'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p
 
           'unix:///tmp/wstunnel.sock:g.com:443' =>  listen for data from unix socket of path /tmp/wstunnel.sock and forward to g.com:443
-ws://localhost:8080" my-server`
   -R, --remote-to-local <{tcp,udp,socks5,unix}://[BIND:]PORT:HOST:PORT>
           Listen on remote and forwards traffic from local. Can be specified multiple times.
           examples:
