@@ -597,7 +597,7 @@ pub async fn run_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<()
     let mut tls_context = if let Some(tls_config) = &server_config.tls {
         let tls_context = TlsContext {
             tls_acceptor: Arc::new(tls::tls_acceptor(tls_config, Some(vec![b"h2".to_vec(), b"http/1.1".to_vec()]))?),
-            tls_reloader: TlsReloader::new(server_config.clone())?,
+            tls_reloader: TlsReloader::new_for_server(server_config.clone())?,
             tls_config,
         };
         Some(tls_context)

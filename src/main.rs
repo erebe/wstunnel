@@ -19,7 +19,7 @@ use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
 use log::{debug, warn};
 use once_cell::sync::Lazy;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Formatter};
@@ -40,6 +40,7 @@ use tokio_rustls::TlsConnector;
 use tracing::{error, info};
 
 use crate::dns::DnsResolver;
+use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
 use crate::udp::MyUdpSocket;
 use tracing_subscriber::filter::Directive;
@@ -60,7 +61,7 @@ struct Wstunnel {
 
     /// *WARNING* The flag does nothing, you need to set the env variable *WARNING*
     /// Control the number of threads that will be used.
-    /// By default it is equal the number of cpus
+    /// By default, it is equal the number of cpus
     #[arg(
         long,
         global = true,
@@ -132,7 +133,7 @@ struct Client {
     #[arg(short = 'c', long, value_name = "INT", default_value = "0", verbatim_doc_comment)]
     connection_min_idle: u32,
 
-    /// Domain name that will be use as SNI during TLS handshake
+    /// Domain name that will be used as SNI during TLS handshake
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
     ///          or it will be flagged as fishy and your request rejected
     #[arg(long, value_name = "DOMAIN_NAME", value_parser = parse_sni_override, verbatim_doc_comment)]
@@ -144,7 +145,7 @@ struct Client {
     tls_sni_disable: bool,
 
     /// Enable TLS certificate verification.
-    /// Disabled by default. The client will happily connect to any server with self signed certificate.
+    /// Disabled by default. The client will happily connect to any server with self-signed certificate.
     #[arg(long, verbatim_doc_comment)]
     tls_verify_certificate: bool,
 
@@ -192,7 +193,7 @@ struct Client {
     websocket_ping_frequency_sec: Option<Duration>,
 
     /// Enable the masking of websocket frames. Default is false
-    /// Enable this option only if you use unsecure (non TLS) websocket server and you see some issues. Otherwise, it is just overhead.
+    /// Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
     #[arg(long, default_value = "false", verbatim_doc_comment)]
     websocket_mask_frame: bool,
 
@@ -203,7 +204,7 @@ struct Client {
 
     /// Send custom headers in the upgrade request reading them from a file.
     /// It overrides http_headers specified from command line.
-    /// File is read everytime and file format must contains lines with `HEADER_NAME: HEADER_VALUE`
+    /// File is read everytime and file format must contain lines with `HEADER_NAME: HEADER_VALUE`
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
     http_headers_file: Option<PathBuf>,
 
@@ -220,6 +221,17 @@ struct Client {
     /// The only way to make it works with http2 is to have wstunnel directly exposed to the internet without any reverse proxy in front of it
     #[arg(value_name = "ws[s]|http[s]://wstunnel.server.com[:port]", value_parser = parse_server_url, verbatim_doc_comment)]
     remote_addr: Url,
+
+    /// [Optional] Certificate (pem) to present to the server when connecting over TLS (HTTPS).
+    /// Used when the server requires clients to authenticate themselves with a certificate (i.e. mTLS).
+    /// The certificate will be automatically reloaded if it changes
+    #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
+    tls_certificate: Option<PathBuf>,
+
+    /// [Optional] The private key for the corresponding certificate used with mTLS.
+    /// The certificate will be automatically reloaded if it changes
+    #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
+    tls_private_key: Option<PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -241,7 +253,7 @@ struct Server {
     websocket_ping_frequency_sec: Option<Duration>,
 
     /// Enable the masking of websocket frames. Default is false
-    /// Enable this option only if you use unsecure (non TLS) websocket server and you see some issues. Otherwise, it is just overhead.
+    /// Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
     #[arg(long, default_value = "false", verbatim_doc_comment)]
     websocket_mask_frame: bool,
 
@@ -264,7 +276,7 @@ struct Server {
     dns_resolver: Option<Vec<Url>>,
 
     /// Server will only accept connection from if this specific path prefix is used during websocket upgrade.
-    /// Useful if you specify in the client a custom path prefix and you want the server to only allow this one.
+    /// Useful if you specify in the client a custom path prefix, and you want the server to only allow this one.
     /// The path prefix act as a secret to authenticate clients
     /// Disabled by default. Accept all path prefix. Can be specified multiple time
     #[arg(
@@ -275,7 +287,7 @@ struct Server {
     )]
     restrict_http_upgrade_path_prefix: Option<Vec<String>>,
 
-    /// [Optional] Use custom certificate (pem) instead of the default embedded self signed certificate.
+    /// [Optional] Use custom certificate (pem) instead of the default embedded self-signed certificate.
     /// The certificate will be automatically reloaded if it changes
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
     tls_certificate: Option<PathBuf>,
@@ -284,6 +296,12 @@ struct Server {
     /// The private key will be automatically reloaded if it changes
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
     tls_private_key: Option<PathBuf>,
+
+    /// [Optional] Enables mTLS (client authentication with certificate). Argument must be PEM file
+    /// containing one or more certificates of CA's of which the certificate of clients needs to be signed with.
+    /// The ca will be automatically reloaded if it changes
+    #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
+    tls_client_ca_certs: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -565,15 +583,25 @@ pub struct TlsClientConfig {
     pub tls_sni_disabled: bool,
     pub tls_sni_override: Option<DnsName>,
     pub tls_verify_certificate: bool,
-    pub tls_connector: TlsConnector,
+    tls_connector: Arc<RwLock<TlsConnector>>,
+    pub tls_certificate_path: Option<PathBuf>,
+    pub tls_key_path: Option<PathBuf>,
+}
+
+impl TlsClientConfig {
+    pub fn tls_connector(&self) -> TlsConnector {
+        self.tls_connector.read().clone()
+    }
 }
 
 #[derive(Debug)]
 pub struct TlsServerConfig {
     pub tls_certificate: Mutex<Vec<Certificate>>,
     pub tls_key: Mutex<PrivateKey>,
+    pub tls_client_ca_certificates: Option<Mutex<Vec<Certificate>>>,
     pub tls_certificate_path: Option<PathBuf>,
     pub tls_key_path: Option<PathBuf>,
+    pub tls_client_ca_certs_path: Option<PathBuf>,
 }
 
 pub struct WsServerConfig {
@@ -599,6 +627,14 @@ impl Debug for WsServerConfig {
             .field("timeout_connect", &self.timeout_connect)
             .field("websocket_mask_frame", &self.websocket_mask_frame)
             .field("tls", &self.tls.is_some())
+            .field(
+                "mTLS",
+                &self
+                    .tls
+                    .as_ref()
+                    .map(|x| x.tls_client_ca_certificates.is_some())
+                    .unwrap_or(false),
+            )
             .finish()
     }
 }
@@ -617,6 +653,7 @@ pub struct WsClientConfig {
     pub websocket_mask_frame: bool,
     pub http_proxy: Option<Url>,
     cnx_pool: Option<bb8::Pool<WsClientConfig>>,
+    tls_reloader: Option<Arc<TlsReloader>>,
     pub dns_resolver: DnsResolver,
 }
 
@@ -682,30 +719,54 @@ async fn main() {
 
     match args.commands {
         Commands::Client(args) => {
-            let tls = match TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url")
+            let (tls_certificate, tls_key) = if let (Some(cert), Some(key)) =
+                (args.tls_certificate.as_ref(), args.tls_private_key.as_ref())
             {
+                let tls_certificate =
+                    tls::load_certificates_from_pem(cert).expect("Cannot load client TLS certificate (mTLS)");
+                let tls_key = tls::load_private_key_from_file(key).expect("Cannot load client TLS private key (mTLS)");
+                (Some(tls_certificate), Some(tls_key))
+            } else {
+                (None, None)
+            };
+
+            let transport_scheme =
+                TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
+            let tls = match transport_scheme {
                 TransportScheme::Ws | TransportScheme::Http => None,
                 TransportScheme::Wss => Some(TlsClientConfig {
-                    tls_connector: tls::tls_connector(
-                        args.tls_verify_certificate,
-                        Some(vec![b"http/1.1".to_vec()]),
-                        !args.tls_sni_disable,
-                    )
-                    .expect("Cannot create tls connector"),
+                    tls_connector: Arc::new(RwLock::new(
+                        tls::tls_connector(
+                            args.tls_verify_certificate,
+                            transport_scheme.alpn_protocols(),
+                            !args.tls_sni_disable,
+                            tls_certificate,
+                            tls_key,
+                        )
+                        .expect("Cannot create tls connector"),
+                    )),
                     tls_sni_override: args.tls_sni_override,
                     tls_verify_certificate: args.tls_verify_certificate,
                     tls_sni_disabled: args.tls_sni_disable,
+                    tls_certificate_path: args.tls_certificate.clone(),
+                    tls_key_path: args.tls_private_key.clone(),
                 }),
                 TransportScheme::Https => Some(TlsClientConfig {
-                    tls_connector: tls::tls_connector(
-                        args.tls_verify_certificate,
-                        Some(vec![b"h2".to_vec()]),
-                        !args.tls_sni_disable,
-                    )
-                    .expect("Cannot create tls connector"),
+                    tls_connector: Arc::new(RwLock::new(
+                        tls::tls_connector(
+                            args.tls_verify_certificate,
+                            transport_scheme.alpn_protocols(),
+                            !args.tls_sni_disable,
+                            tls_certificate,
+                            tls_key,
+                        )
+                        .expect("Cannot create tls connector"),
+                    )),
                     tls_sni_override: args.tls_sni_override,
                     tls_verify_certificate: args.tls_verify_certificate,
                     tls_sni_disabled: args.tls_sni_disable,
+                    tls_certificate_path: args.tls_certificate.clone(),
+                    tls_key_path: args.tls_private_key.clone(),
                 }),
             };
 
@@ -761,6 +822,7 @@ async fn main() {
                     None
                 },
                 cnx_pool: None,
+                tls_reloader: None,
                 dns_resolver: if let Ok(resolver) = hickory_resolver::AsyncResolver::tokio_from_system_conf() {
                     DnsResolver::TrustDns(resolver)
                 } else {
@@ -769,6 +831,9 @@ async fn main() {
                 },
             };
 
+            let tls_reloader =
+                TlsReloader::new_for_client(Arc::new(client_config.clone())).expect("Cannot create tls reloader");
+            client_config.tls_reloader = Some(Arc::new(tls_reloader));
             let pool = bb8::Pool::builder()
                 .max_size(1000)
                 .min_idle(Some(args.connection_min_idle))
@@ -1120,11 +1185,20 @@ async fn main() {
                     embedded_certificate::TLS_PRIVATE_KEY.clone()
                 };
 
+                let tls_client_ca_certificates = args.tls_client_ca_certs.as_ref().map(|tls_client_ca| {
+                    Mutex::new(
+                        tls::load_certificates_from_pem(tls_client_ca)
+                            .expect("Cannot load client CA certificate (mTLS)"),
+                    )
+                });
+
                 Some(TlsServerConfig {
                     tls_certificate: Mutex::new(tls_certificate),
                     tls_key: Mutex::new(tls_key),
+                    tls_client_ca_certificates,
                     tls_certificate_path: args.tls_certificate,
                     tls_key_path: args.tls_private_key,
+                    tls_client_ca_certs_path: args.tls_client_ca_certs,
                 })
             } else {
                 None

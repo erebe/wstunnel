@@ -1,6 +1,6 @@
 pub mod client;
 pub mod server;
-mod tls_reloader;
+pub mod tls_reloader;
 mod transport;
 
 use crate::{tcp, tls, LocalProtocol, TlsClientConfig, WsClientConfig};
@@ -102,6 +102,15 @@ impl TransportScheme {
             TransportScheme::Wss => "wss",
             TransportScheme::Http => "http",
             TransportScheme::Https => "https",
+        }
+    }
+
+    pub fn alpn_protocols(&self) -> Vec<Vec<u8>> {
+        match self {
+            TransportScheme::Ws => vec![],
+            TransportScheme::Wss => vec![b"http/1.1".to_vec()],
+            TransportScheme::Http => vec![],
+            TransportScheme::Https => vec![b"h2".to_vec()],
         }
     }
 }

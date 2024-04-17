@@ -12,6 +12,7 @@ use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::client::{ServerCertVerified, ServerCertVerifier};
 
 use crate::tunnel::TransportAddr;
+use tokio_rustls::rustls::server::{AllowAnyAuthenticatedClient, NoClientAuth};
 use tokio_rustls::rustls::{Certificate, ClientConfig, KeyLogFile, PrivateKey, ServerName};
 use tokio_rustls::{rustls, TlsAcceptor, TlsConnector};
 use tracing::info;
@@ -65,8 +66,10 @@ pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKey> {
 
 pub fn tls_connector(
     tls_verify_certificate: bool,
-    alpn_protocols: Option<Vec<Vec<u8>>>,
+    alpn_protocols: Vec<Vec<u8>>,
     enable_sni: bool,
+    tls_client_certificate: Option<Vec<Certificate>>,
+    tls_client_key: Option<PrivateKey>,
 ) -> anyhow::Result<TlsConnector> {
     let mut root_store = rustls::RootCertStore::empty();
 
@@ -79,10 +82,16 @@ pub fn tls_connector(
         }
     }
 
-    let mut config = ClientConfig::builder()
+    let config_builder = ClientConfig::builder()
         .with_safe_defaults()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
+        .with_root_certificates(root_store);
+
+    let mut config = match (tls_client_certificate, tls_client_key) {
+        (Some(tls_client_certificate), Some(tls_client_key)) => config_builder
+            .with_client_auth_cert(tls_client_certificate, tls_client_key)
+            .with_context(|| "Error setting up mTLS")?,
+        _ => config_builder.with_no_client_auth(),
+    };
 
     config.enable_sni = enable_sni;
     config.key_log = Arc::new(KeyLogFile::new());
@@ -92,17 +101,28 @@ pub fn tls_connector(
         config.dangerous().set_certificate_verifier(Arc::new(NullVerifier));
     }
 
-    if let Some(alpn_protocols) = alpn_protocols {
-        config.alpn_protocols = alpn_protocols;
-    }
+    config.alpn_protocols = alpn_protocols;
     let tls_connector = TlsConnector::from(Arc::new(config));
     Ok(tls_connector)
 }
 
 pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsAcceptor> {
+    let client_cert_verifier = if let Some(tls_client_ca_certificates) = &tls_cfg.tls_client_ca_certificates {
+        let mut root_store = rustls::RootCertStore::empty();
+        for tls_client_ca_certificate in tls_client_ca_certificates.lock().iter() {
+            root_store
+                .add(tls_client_ca_certificate)
+                .with_context(|| "Failed to add mTLS client CA certificate")?;
+        }
+
+        Arc::new(AllowAnyAuthenticatedClient::new(root_store))
+    } else {
+        NoClientAuth::boxed()
+    };
+
     let mut config = rustls::ServerConfig::builder()
         .with_safe_defaults()
-        .with_no_client_auth()
+        .with_client_cert_verifier(client_cert_verifier)
         .with_single_cert(tls_cfg.tls_certificate.lock().clone(), tls_cfg.tls_key.lock().clone())
         .with_context(|| "invalid tls certificate or private key")?;
 
@@ -116,8 +136,8 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
 pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
     let sni = client_cfg.tls_server_name();
     let (tls_connector, sni_disabled) = match &client_cfg.remote_addr {
-        TransportAddr::Wss { tls, .. } => (&tls.tls_connector, tls.tls_sni_disabled),
-        TransportAddr::Https { tls, .. } => (&tls.tls_connector, tls.tls_sni_disabled),
+        TransportAddr::Wss { tls, .. } => (tls.tls_connector(), tls.tls_sni_disabled),
+        TransportAddr::Https { tls, .. } => (tls.tls_connector(), tls.tls_sni_disabled),
         TransportAddr::Http { .. } | TransportAddr::Ws { .. } => {
             return Err(anyhow!("Transport does not support TLS: {}", client_cfg.remote_addr.scheme()))
         }
