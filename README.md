@@ -36,7 +36,7 @@ nodejs to use this tool, I remade it in ~~Haskell~~ Rust and improved it.
 * Dynamic tunneling (TCP, UDP Socks5 proxy and Transparent Proxy)
 * Support for http proxy (when behind one)
 * Support for tls/https server with certificates auto-reload (with embedded self-signed certificate, or your own)
-* Support of mTLS with certificates auto-reload
+* Support of mTLS with certificates auto-reload - [documentation here](https://github.com/erebe/wstunnel/blob/main/docs/using_mtls.md)
 * Support IPv6
 * Support for Websocket and HTTP2 as transport protocol (websocket is more performant)
 * **Standalone binaries** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
@@ -47,8 +47,7 @@ Part of WsTunnel development has been sponsored by
 <p align="center">
    <a href="https://serviceplanet.nl">
     <img width="200" height="200" src="https://github.com/erebe/wstunnel/raw/main/docs/logo_serviceplanet.png" alt="service planet logo"/>
-   </a>
-</p>
+   </a></p>
 
 ## Note <a name="note"></a>
 
