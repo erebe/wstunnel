@@ -43,10 +43,10 @@ nodejs to use this tool, I remade it in ~~Haskell~~ Rust and improved it.
 
 ## Sponsors <a name="sponsors"></a>
 
-Part of WsTunnel development has been sponsored by
+Part of Wstunnel development has been sponsored by
 <p align="center">
    <a href="https://serviceplanet.nl">
-    <img width="200" height="200" src="https://github.com/erebe/wstunnel/raw/main/docs/logo_serviceplanet.png" alt="service planet logo"/>
+    <img width="200" height="100" src="https://github.com/erebe/wstunnel/raw/main/docs/logo_serviceplanet.png" alt="service planet logo"/>
    </a></p>
 
 ## Note <a name="note"></a>
