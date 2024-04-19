@@ -475,6 +475,8 @@ FAQ
   gateway for the ip of wstunnel server.
   Else if you forward all the traffic without putting a static route, you will endup looping your traffic wireguard
   interface -> wstunnel client -> wireguard interface
+- If you have trouble making it works on windows, please check this issue
+  https://github.com/erebe/wstunnel/issues/252
 
 ---
 
@@ -541,9 +543,6 @@ wstunnel client --http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd 
 
 Now your wstunnel server, will only accept connection if the client specify the correct path prefix during the upgrade
 request.
-
-If you have trouble making it works on windows, please check this issue
-https://github.com/erebe/wstunnel/issues/252
 
 ---
 
