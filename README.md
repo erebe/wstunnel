@@ -32,9 +32,10 @@ nodejs to use this tool, I remade it in ~~Haskell~~ Rust and improved it.
 **What to expect:**
 
 * Good error messages and debug information
-* Static forward and reverse tunneling (TCP, UDP, Unix socket)
+* Static forward and reverse tunneling (TCP, UDP, Unix socket, Stdio)
 * Dynamic tunneling (TCP, UDP Socks5 proxy and Transparent Proxy)
 * Support for http proxy (when behind one)
+* Support of proxy protocol
 * Support for tls/https server with certificates auto-reload (with embedded self-signed certificate, or your own)
 * Support of mTLS with certificates auto-reload - [documentation here](https://github.com/erebe/wstunnel/blob/main/docs/using_mtls.md)
 * Support IPv6
