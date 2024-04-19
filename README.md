@@ -31,6 +31,7 @@ nodejs to use this tool, I remade it in ~~Haskell~~ Rust and improved it.
 
 **What to expect:**
 
+* Easy to use
 * Good error messages and debug information
 * Static forward and reverse tunneling (TCP, UDP, Unix socket, Stdio)
 * Dynamic tunneling (TCP, UDP Socks5 proxy and Transparent Proxy)
