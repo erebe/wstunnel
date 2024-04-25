@@ -194,6 +194,7 @@ where
         listening_server
     } else {
         let listening_server = gen_listening_server.await?;
+        let send_timeout = Duration::from_secs(30);
         let (tx, rx) = mpsc::channel::<T>(1);
         let fut = async move {
             pin_mut!(listening_server);
@@ -208,7 +209,8 @@ where
                                 continue;
                             }
                             Some(Ok(cnx)) => {
-                                if tx.send_timeout(cnx, Duration::from_secs(30)).await.is_err() {
+                                if tx.send_timeout(cnx, send_timeout).await.is_err() {
+                                    info!("New remote connection failed to be picked by client after {}s. Closing remote tunnel server", send_timeout.as_secs());
                                     break;
                                 }
                             }
