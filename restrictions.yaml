@@ -1,0 +1,84 @@
+# Restrictions are whitelist rules for the tunnels
+# By default, all requests are denied and only if a restriction match, the request is allowed
+restrictions:
+  - name: "Allow all"
+    description: "This restriction allows all requests"
+    # This restriction apply only if it matches the prefix that match the given regex
+    # The regex does a match, so if you want to match exactly you need to bound the pattern with ^ $
+    # I.e: "tesotron" is going to match "XXXtesotronXXX", but "^tesotron$" is going to match only "tesotron"
+    match: !PathPrefix "^.*$"
+
+    # This is th list of tunnels your restriction is going to allow
+    # The list is going to be checked in order, the first match is going to allow the request
+    allow:
+      # !Tunnel allows forward tunnels
+      - !Tunnel
+        # Protocol that are allowed. Empty list means all protocols are allowed
+        protocol:
+          - Tcp
+          - Udp
+        # Port that are allowed. Can be a single port or an inclusive range (i.e. 80..90)
+        port: 9999
+
+        # if the tunnel wants to connect to a specific host, this regex must match
+        host: ^.*$
+        # if the tunnel wants to connect to a specific IP, it must match one of the network cidr
+        cidr:
+          - 0.0.0.0/0
+          - ::/0
+
+      # !ReverseTunnel allows reverse tunnels
+      # Not specifying anything means all reverse tunnels are allowed
+      - !ReverseTunnel
+        protocol:
+          - Tcp
+          - Udp
+          - Socks5
+          - Unix
+        port: 1..65535
+        cidr:
+          - 0.0.0.0/0
+          - ::/0
+
+---
+# Examples
+restrictions:
+  - name: "example 1"
+    description: "Only allow forward tunnels to port 443 and forbid reverse tunnels"
+    match: !PathPrefix "^.*$"
+    allow:
+      - !Tunnel
+        port: 443
+---
+restrictions:
+  - name: "example 2"
+    description: "Only allow forward tunnels to local ssh and forbid reverse tunnels"
+    match: !PathPrefix "^.*$"
+    allow:
+      - !Tunnel
+        protocol:
+          - Tcp
+        port: 22
+        host: ^localhost$
+        cidr:
+          - 127.0.0.1/32
+---
+restrictions:
+  - name: "example 3"
+    description: "Only allow socks5 reverse tunnels listening on port between 1080..1443 on lan network"
+    match: !PathPrefix "^.*$"
+    allow:
+      - !ReverseTunnel
+        protocol:
+          - Socks5
+        port: 1080..1443
+        cidr:
+          - 192.168.0.0/16
+---
+restrictions:
+  - name: "example 4"
+    description: "Allow everything for client using path prefix my-super-secret-path"
+    match: !PathPrefix "^my-super-secret-path$"
+    allow:
+      - !Tunnel
+      - !ReverseTunnel

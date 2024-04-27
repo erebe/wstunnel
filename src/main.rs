@@ -1,5 +1,6 @@
 mod dns;
 mod embedded_certificate;
+mod restrictions;
 mod socks5;
 mod socks5_udp;
 mod stdio;
@@ -40,6 +41,7 @@ use tokio_rustls::TlsConnector;
 use tracing::{error, info};
 
 use crate::dns::DnsResolver;
+use crate::restrictions::types::RestrictionsRules;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
 use crate::udp::MyUdpSocket;
@@ -287,6 +289,11 @@ struct Server {
     )]
     restrict_http_upgrade_path_prefix: Option<Vec<String>>,
 
+    /// Path to the location of the restriction yaml config file.
+    /// Restriction file is automatically reloaded if it changes
+    #[arg(long, verbatim_doc_comment)]
+    restriction_file: Option<PathBuf>,
+
     /// [Optional] Use custom certificate (pem) instead of the default embedded self-signed certificate.
     /// The certificate will be automatically reloaded if it changes
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
@@ -317,6 +324,15 @@ enum LocalProtocol {
     ReverseSocks5,
     ReverseUnix { path: PathBuf },
     Unix { path: PathBuf },
+}
+
+impl LocalProtocol {
+    pub fn is_reverse_tunnel(&self) -> bool {
+        matches!(
+            self,
+            LocalProtocol::ReverseTcp | LocalProtocol::ReverseUdp { .. } | LocalProtocol::ReverseSocks5
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -607,13 +623,12 @@ pub struct TlsServerConfig {
 pub struct WsServerConfig {
     pub socket_so_mark: Option<u32>,
     pub bind: SocketAddr,
-    pub restrict_to: Option<Vec<String>>,
-    pub restrict_http_upgrade_path_prefix: Option<Vec<String>>,
     pub websocket_ping_frequency: Option<Duration>,
     pub timeout_connect: Duration,
     pub websocket_mask_frame: bool,
     pub tls: Option<TlsServerConfig>,
     pub dns_resolver: DnsResolver,
+    pub restrictions: RestrictionsRules,
 }
 
 impl Debug for WsServerConfig {
@@ -621,8 +636,6 @@ impl Debug for WsServerConfig {
         f.debug_struct("WsServerConfig")
             .field("socket_so_mark", &self.socket_so_mark)
             .field("bind", &self.bind)
-            .field("restrict_to", &self.restrict_to)
-            .field("restrict_http_upgrade_path_prefix", &self.restrict_http_upgrade_path_prefix)
             .field("websocket_ping_frequency", &self.websocket_ping_frequency)
             .field("timeout_connect", &self.timeout_connect)
             .field("websocket_mask_frame", &self.websocket_mask_frame)
@@ -1246,16 +1259,38 @@ async fn main() {
                     }
                 }
             };
+
+            let restrictions = if let Some(path) = &args.restriction_file {
+                RestrictionsRules::from_config_file(path).expect("Cannot parse restriction file")
+            } else {
+                let restrict_to: Vec<(String, u16)> = args
+                    .restrict_to
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|x| {
+                        let (host, port) = x.rsplit_once(':').expect("Invalid restrict-to format");
+                        (host.to_string(), port.parse::<u16>().expect("Invalid restrict-to port format"))
+                    })
+                    .collect();
+
+                let restriction_cfg = RestrictionsRules::from_path_prefix(
+                    args.restrict_http_upgrade_path_prefix.as_deref().unwrap_or(&[]),
+                    &restrict_to,
+                )
+                .expect("Cannot covertion restriction rules from path-prefix and restric-to");
+                restriction_cfg
+            };
+
             let server_config = WsServerConfig {
                 socket_so_mark: args.socket_so_mark,
                 bind: args.remote_addr.socket_addrs(|| Some(8080)).unwrap()[0],
-                restrict_to: args.restrict_to,
-                restrict_http_upgrade_path_prefix: args.restrict_http_upgrade_path_prefix,
                 websocket_ping_frequency: args.websocket_ping_frequency_sec,
                 timeout_connect: Duration::from_secs(10),
                 websocket_mask_frame: args.websocket_mask_frame,
                 tls: tls_config,
                 dns_resolver,
+                restrictions,
             };
 
             info!(

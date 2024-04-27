@@ -18,7 +18,13 @@ fast-socks5 = { version = "0.9.6", features = [] }
 fastwebsockets = { version = "0.7.1", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.30" }
 hickory-resolver = { version = "0.24.0", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls"] }
-ppp = {  version = "2.2.0", features = [] }
+ppp = { version = "2.2.0", features = [] }
+
+# For config file parsing
+regex = { version = "1.10.4", default-features = false, features = ["std", "perf"] }
+serde_regex = "1.1.0"
+serde_yaml = { version = "0.9.34", features = [] }
+ipnet = { version = "2.9.0", features = ["serde"] }
 
 hyper = { version = "1.2.0", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1.3", features = ["tokio", "server", "server-auto"] }

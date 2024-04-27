@@ -8,7 +8,7 @@ use std::cmp::min;
 use std::fmt::Debug;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::ops::{Deref, Not};
+use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,6 +26,9 @@ use jsonwebtoken::TokenData;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 
+use crate::restrictions::types::{
+    AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules, ReverseTunnelConfigProtocol, TunnelConfigProtocol,
+};
 use crate::socks5::Socks5Stream;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
@@ -43,12 +46,11 @@ use uuid::Uuid;
 
 async fn run_tunnel(
     server_config: &WsServerConfig,
-    jwt: TokenData<JwtTunnelConfig>,
+    remote: RemoteAddr,
     client_address: SocketAddr,
 ) -> anyhow::Result<(RemoteAddr, Pin<Box<dyn AsyncRead + Send>>, Pin<Box<dyn AsyncWrite + Send>>)> {
-    match jwt.claims.p {
+    match remote.protocol {
         LocalProtocol::Udp { timeout, .. } => {
-            let remote = RemoteAddr::try_from(jwt.claims)?;
             let cnx = udp::connect(
                 &remote.host,
                 remote.port,
@@ -60,7 +62,6 @@ async fn run_tunnel(
             Ok((remote, Box::pin(cnx.clone()), Box::pin(cnx)))
         }
         LocalProtocol::Tcp { proxy_protocol } => {
-            let remote = RemoteAddr::try_from(jwt.claims)?;
             let mut socket = tcp::connect(
                 &remote.host,
                 remote.port,
@@ -89,14 +90,14 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<TcpStream>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
-            let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
+            let local_srv = (remote.host, remote.port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
             let listening_server = tcp::run_server(bind.parse()?, false);
             let tcp = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let (local_rx, local_tx) = tcp.into_split();
 
             let remote = RemoteAddr {
-                protocol: jwt.claims.p,
+                protocol: remote.protocol,
                 host: local_srv.0,
                 port: local_srv.1,
             };
@@ -107,7 +108,7 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<UdpStream>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
-            let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
+            let local_srv = (remote.host, remote.port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
             let listening_server =
                 udp::run_server(bind.parse()?, timeout, |_| Ok(()), |send_socket| Ok(send_socket.clone()));
@@ -115,7 +116,7 @@ async fn run_tunnel(
             let (local_rx, local_tx) = tokio::io::split(udp);
 
             let remote = RemoteAddr {
-                protocol: jwt.claims.p,
+                protocol: remote.protocol,
                 host: local_srv.0,
                 port: local_srv.1,
             };
@@ -126,7 +127,7 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<(Socks5Stream, (Host, u16))>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
-            let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
+            let local_srv = (remote.host, remote.port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
             let listening_server = socks5::run_server(bind.parse()?, None);
             let (stream, local_srv) = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
@@ -149,13 +150,13 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<UnixStream>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
-            let local_srv = (Host::parse(&jwt.claims.r)?, jwt.claims.rp);
+            let local_srv = (remote.host, remote.port);
             let listening_server = unix_socket::run_server(path);
             let stream = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let (local_rx, local_tx) = stream.into_split();
 
             let remote = RemoteAddr {
-                protocol: jwt.claims.p.clone(),
+                protocol: remote.protocol,
                 host: local_srv.0,
                 port: local_srv.1,
             };
@@ -163,7 +164,7 @@ async fn run_tunnel(
         }
         #[cfg(not(unix))]
         LocalProtocol::ReverseUnix { ref path } => {
-            error!("Received an unsupported target protocol {:?}", jwt.claims);
+            error!("Received an unsupported target protocol {:?}", remote);
             Err(anyhow::anyhow!("Invalid upgrade request"))
         }
         LocalProtocol::Stdio
@@ -171,7 +172,7 @@ async fn run_tunnel(
         | LocalProtocol::TProxyTcp
         | LocalProtocol::TProxyUdp { .. }
         | LocalProtocol::Unix { .. } => {
-            error!("Received an unsupported target protocol {:?}", jwt.claims);
+            error!("Received an unsupported target protocol {:?}", remote);
             Err(anyhow::anyhow!("Invalid upgrade request"))
         }
     }
@@ -251,11 +252,26 @@ fn extract_x_forwarded_for(req: &Request<Incoming>) -> Result<Option<(IpAddr, &s
 }
 
 #[inline]
-fn validate_url(
-    req: &Request<Incoming>,
-    path_restriction_prefix: &Option<Vec<String>>,
-) -> Result<(), Response<String>> {
-    if !req.uri().path().ends_with("/events") {
+fn extract_path_prefix(req: &Request<Incoming>) -> Result<&str, Response<String>> {
+    let path = req.uri().path();
+    let min_len = min(path.len(), 1);
+    if &path[0..min_len] != "/" {
+        warn!("Rejecting connection with bad path prefix in upgrade request: {}", req.uri());
+        return Err(http::Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid upgrade request".to_string())
+            .unwrap());
+    }
+
+    let Some((l, r)) = path[min_len..].split_once('/') else {
+        warn!("Rejecting connection with bad upgrade request: {}", req.uri());
+        return Err(http::Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid upgrade request".into())
+            .unwrap());
+    };
+
+    if !r.ends_with("events") {
         warn!("Rejecting connection with bad upgrade request: {}", req.uri());
         return Err(http::Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -263,26 +279,7 @@ fn validate_url(
             .unwrap());
     }
 
-    if let Some(paths_prefix) = &path_restriction_prefix {
-        let path = req.uri().path();
-        let min_len = min(path.len(), 1);
-        let mut max_len = 0;
-        if &path[0..min_len] != "/"
-            || !paths_prefix.iter().any(|p| {
-                max_len = min(path.len(), p.len() + 1);
-                p == &path[min_len..max_len]
-            })
-            || !path[max_len..].starts_with('/')
-        {
-            warn!("Rejecting connection with bad path prefix in upgrade request: {}", req.uri());
-            return Err(http::Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid upgrade request".to_string())
-                .unwrap());
-        }
-    }
-
-    Ok(())
+    Ok(l)
 }
 
 #[inline]
@@ -316,25 +313,102 @@ fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<JwtTunnelCon
 }
 
 #[inline]
-fn validate_destination(
+fn validate_tunnel<'a>(
     _req: &Request<Incoming>,
-    jwt: &TokenData<JwtTunnelConfig>,
-    destination_restriction: &Option<Vec<String>>,
-) -> Result<(), Response<String>> {
-    let Some(allowed_dests) = &destination_restriction else {
-        return Ok(());
-    };
+    remote: &RemoteAddr,
+    path_prefix: &str,
+    restrictions: &'a RestrictionsRules,
+) -> Result<&'a RestrictionConfig, Response<String>> {
+    for restriction in &restrictions.restrictions {
+        match &restriction.r#match {
+            MatchConfig::Any => {}
+            MatchConfig::PathPrefix(path) => {
+                if !path.is_match(path_prefix) {
+                    continue;
+                }
+            }
+        }
 
-    let requested_dest = format!("{}:{}", jwt.claims.r, jwt.claims.rp);
-    if allowed_dests.iter().any(|dest| dest == &requested_dest).not() {
-        warn!("Rejecting connection with not allowed destination: {}", requested_dest);
-        return Err(http::Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body("Invalid upgrade request".to_string())
-            .unwrap());
+        for allow in &restriction.allow {
+            match allow {
+                AllowConfig::ReverseTunnel(allow) => {
+                    if !remote.protocol.is_reverse_tunnel() || !allow.port.contains(&remote.port) {
+                        continue;
+                    }
+
+                    if !allow.protocol.is_empty()
+                        && !allow
+                            .protocol
+                            .contains(&ReverseTunnelConfigProtocol::from(&remote.protocol))
+                    {
+                        continue;
+                    }
+
+                    match &remote.host {
+                        Host::Domain(_) => {}
+                        Host::Ipv4(ip) => {
+                            let ip = IpAddr::V4(*ip);
+                            for cidr in &allow.cidr {
+                                if cidr.contains(&ip) {
+                                    return Ok(restriction);
+                                }
+                            }
+                        }
+                        Host::Ipv6(ip) => {
+                            let ip = IpAddr::V6(*ip);
+                            for cidr in &allow.cidr {
+                                if cidr.contains(&ip) {
+                                    return Ok(restriction);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                AllowConfig::Tunnel(allow) => {
+                    if remote.protocol.is_reverse_tunnel() || !allow.port.contains(&remote.port) {
+                        continue;
+                    }
+
+                    if !allow.protocol.is_empty()
+                        && !allow.protocol.contains(&TunnelConfigProtocol::from(&remote.protocol))
+                    {
+                        continue;
+                    }
+
+                    match &remote.host {
+                        Host::Domain(host) => {
+                            if allow.host.is_match(host) {
+                                return Ok(restriction);
+                            }
+                        }
+                        Host::Ipv4(ip) => {
+                            let ip = IpAddr::V4(*ip);
+                            for cidr in &allow.cidr {
+                                if cidr.contains(&ip) {
+                                    return Ok(restriction);
+                                }
+                            }
+                        }
+                        Host::Ipv6(ip) => {
+                            let ip = IpAddr::V6(*ip);
+                            for cidr in &allow.cidr {
+                                if cidr.contains(&ip) {
+                                    return Ok(restriction);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    Ok(())
+    warn!("Rejecting connection with not allowed destination: {:?}", remote);
+    Err(http::Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body("Invalid upgrade request".to_string())
+        .unwrap())
 }
 
 async fn ws_server_upgrade(
@@ -360,9 +434,10 @@ async fn ws_server_upgrade(
         Err(err) => return err,
     };
 
-    if let Err(err) = validate_url(&req, &server_config.restrict_http_upgrade_path_prefix) {
-        return err;
-    }
+    let path_prefix = match extract_path_prefix(&req) {
+        Ok(p) => p,
+        Err(err) => return err,
+    };
 
     let jwt = match extract_tunnel_info(&req) {
         Ok(jwt) => jwt,
@@ -372,12 +447,26 @@ async fn ws_server_upgrade(
     Span::current().record("id", &jwt.claims.id);
     Span::current().record("remote", format!("{}:{}", jwt.claims.r, jwt.claims.rp));
 
-    if let Err(err) = validate_destination(&req, &jwt, &server_config.restrict_to) {
-        return err;
+    let remote = match RemoteAddr::try_from(jwt.claims) {
+        Ok(remote) => remote,
+        Err(err) => {
+            warn!("Rejecting connection with bad tunnel info: {} {}", err, req.uri());
+            return http::Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid upgrade request".to_string())
+                .unwrap();
+        }
+    };
+
+    match validate_tunnel(&req, &remote, path_prefix, &server_config.restrictions) {
+        Ok(matched_restriction) => {
+            info!("Tunnel accepted due to matched restriction: {}", matched_restriction.name);
+        }
+        Err(err) => return err,
     }
 
-    let req_protocol = jwt.claims.p.clone();
-    let tunnel = match run_tunnel(&server_config, jwt, client_addr).await {
+    let req_protocol = remote.protocol.clone();
+    let tunnel = match run_tunnel(&server_config, remote, client_addr).await {
         Ok(ret) => ret,
         Err(err) => {
             warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
@@ -461,9 +550,10 @@ async fn http_server_upgrade(
         Err(err) => return err.map(Either::Left),
     };
 
-    if let Err(err) = validate_url(&req, &server_config.restrict_http_upgrade_path_prefix) {
-        return err.map(Either::Left);
-    }
+    let path_prefix = match extract_path_prefix(&req) {
+        Ok(p) => p,
+        Err(err) => return err.map(Either::Left),
+    };
 
     let jwt = match extract_tunnel_info(&req) {
         Ok(jwt) => jwt,
@@ -472,13 +562,26 @@ async fn http_server_upgrade(
 
     Span::current().record("id", &jwt.claims.id);
     Span::current().record("remote", format!("{}:{}", jwt.claims.r, jwt.claims.rp));
+    let remote = match RemoteAddr::try_from(jwt.claims) {
+        Ok(remote) => remote,
+        Err(err) => {
+            warn!("Rejecting connection with bad tunnel info: {} {}", err, req.uri());
+            return http::Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Either::Left("Invalid upgrade request".to_string()))
+                .unwrap();
+        }
+    };
 
-    if let Err(err) = validate_destination(&req, &jwt, &server_config.restrict_to) {
-        return err.map(Either::Left);
+    match validate_tunnel(&req, &remote, path_prefix, &server_config.restrictions) {
+        Ok(matched_restriction) => {
+            info!("Tunnel accepted due to matched restriction: {}", matched_restriction.name);
+        }
+        Err(err) => return err.map(Either::Left),
     }
 
-    let req_protocol = jwt.claims.p.clone();
-    let tunnel = match run_tunnel(&server_config, jwt, client_addr).await {
+    let req_protocol = remote.protocol.clone();
+    let tunnel = match run_tunnel(&server_config, remote, client_addr).await {
         Ok(ret) => ret,
         Err(err) => {
             warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());

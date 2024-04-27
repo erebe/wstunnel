@@ -913,6 +913,9 @@ name = "ipnet"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "itoa"
@@ -1525,6 +1528,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_regex"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8136f1a4ea815d7eac4101cfd0b16dc0cb5e1fe1b8609dfd728058656b7badf"
+dependencies = [
+ "regex",
+ "serde",
+]
+
+[[package]]
 name = "serde_with"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1544,6 +1557,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -1951,6 +1977,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2285,6 +2317,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "ipnet",
  "jsonwebtoken",
  "log",
  "nix",
@@ -2293,10 +2326,13 @@ dependencies = [
  "parking_lot",
  "pin-project",
  "ppp",
+ "regex",
  "rustls-native-certs",
  "rustls-pemfile 2.1.1",
  "scopeguard",
  "serde",
+ "serde_regex",
+ "serde_yaml",
  "socket2",
  "testcontainers",
  "tokio",
