@@ -195,7 +195,7 @@ where
         listening_server
     } else {
         let listening_server = gen_listening_server.await?;
-        let send_timeout = Duration::from_secs(30);
+        let send_timeout = Duration::from_secs(60 * 3);
         let (tx, rx) = mpsc::channel::<T>(1);
         let fut = async move {
             pin_mut!(listening_server);
