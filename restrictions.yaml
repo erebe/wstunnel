@@ -18,7 +18,10 @@ restrictions:
           - Tcp
           - Udp
         # Port that are allowed. Can be a single port or an inclusive range (i.e. 80..90)
-        port: 9999
+        port:
+          - 80
+          - 443
+          - 8080..8089
 
         # if the tunnel wants to connect to a specific host, this regex must match
         host: ^.*$
@@ -35,7 +38,8 @@ restrictions:
           - Udp
           - Socks5
           - Unix
-        port: 1..65535
+        port:
+          - 1..65535
         cidr:
           - 0.0.0.0/0
           - ::/0
@@ -48,7 +52,8 @@ restrictions:
     match: !PathPrefix "^.*$"
     allow:
       - !Tunnel
-        port: 443
+        port:
+          - 443
 ---
 restrictions:
   - name: "example 2"
@@ -58,7 +63,8 @@ restrictions:
       - !Tunnel
         protocol:
           - Tcp
-        port: 22
+        port:
+          - 22
         host: ^localhost$
         cidr:
           - 127.0.0.1/32
@@ -71,7 +77,8 @@ restrictions:
       - !ReverseTunnel
         protocol:
           - Socks5
-        port: 1080..1443
+        port:
+          - 1080..1443
         cidr:
           - 192.168.0.0/16
 ---

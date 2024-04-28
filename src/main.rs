@@ -259,12 +259,6 @@ struct Server {
     #[arg(long, default_value = "false", verbatim_doc_comment)]
     websocket_mask_frame: bool,
 
-    /// Server will only accept connection from the specified tunnel information.
-    /// Can be specified multiple time
-    /// Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
-    #[arg(long, value_name = "DEST:PORT", verbatim_doc_comment)]
-    restrict_to: Option<Vec<String>>,
-
     /// Dns resolver to use to lookup ips of domain name
     /// This option is not going to work if you use transparent proxy
     /// Can be specified multiple time
@@ -276,6 +270,12 @@ struct Server {
     /// system://0.0.0.0
     #[arg(long, verbatim_doc_comment)]
     dns_resolver: Option<Vec<Url>>,
+
+    /// Server will only accept connection from the specified tunnel information.
+    /// Can be specified multiple time
+    /// Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
+    #[arg(long, value_name = "DEST:PORT", verbatim_doc_comment)]
+    restrict_to: Option<Vec<String>>,
 
     /// Server will only accept connection from if this specific path prefix is used during websocket upgrade.
     /// Useful if you specify in the client a custom path prefix, and you want the server to only allow this one.
@@ -292,7 +292,7 @@ struct Server {
     /// Path to the location of the restriction yaml config file.
     /// Restriction file is automatically reloaded if it changes
     #[arg(long, verbatim_doc_comment)]
-    restriction_file: Option<PathBuf>,
+    restrict_config: Option<PathBuf>,
 
     /// [Optional] Use custom certificate (pem) instead of the default embedded self-signed certificate.
     /// The certificate will be automatically reloaded if it changes
@@ -1260,7 +1260,7 @@ async fn main() {
                 }
             };
 
-            let restrictions = if let Some(path) = &args.restriction_file {
+            let restrictions = if let Some(path) = &args.restrict_config {
                 RestrictionsRules::from_config_file(path).expect("Cannot parse restriction file")
             } else {
                 let restrict_to: Vec<(String, u16)> = args

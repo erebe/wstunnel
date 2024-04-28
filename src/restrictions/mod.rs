@@ -1,4 +1,4 @@
-use crate::restrictions::types::{default_cidr, default_host, default_port};
+use crate::restrictions::types::{default_cidr, default_host};
 use regex::Regex;
 use std::fs::File;
 use std::io::BufReader;
@@ -21,7 +21,7 @@ impl RestrictionsRules {
         let mut tunnels_restrictions = if restrict_to.is_empty() {
             let r = types::AllowConfig::Tunnel(types::AllowTunnelConfig {
                 protocol: vec![],
-                port: default_port(),
+                port: vec![],
                 host: default_host(),
                 cidr: default_cidr(),
             });
@@ -30,21 +30,20 @@ impl RestrictionsRules {
             restrict_to
                 .iter()
                 .map(|(host, port)| {
-                    // Fixme: Remove the unwrap
-                    let reg = Regex::new(&format!("^{}$", regex::escape(host))).unwrap();
-                    types::AllowConfig::Tunnel(types::AllowTunnelConfig {
+                    let reg = Regex::new(&format!("^{}$", regex::escape(host)))?;
+                    Ok(types::AllowConfig::Tunnel(types::AllowTunnelConfig {
                         protocol: vec![],
-                        port: RangeInclusive::new(*port, *port),
+                        port: vec![RangeInclusive::new(*port, *port)],
                         host: reg,
                         cidr: default_cidr(),
-                    })
+                    }))
                 })
-                .collect()
+                .collect::<Result<Vec<_>, anyhow::Error>>()?
         };
 
         tunnels_restrictions.push(types::AllowConfig::ReverseTunnel(types::AllowReverseTunnelConfig {
             protocol: vec![],
-            port: default_port(),
+            port: vec![],
             cidr: default_cidr(),
         }));
 
@@ -61,19 +60,16 @@ impl RestrictionsRules {
             path_prefixes
                 .iter()
                 .map(|path_prefix| {
-                    // Fixme: Remove the unwrap
-                    let reg = Regex::new(&format!("^{}$", regex::escape(path_prefix))).unwrap();
-                    types::RestrictionConfig {
+                    let reg = Regex::new(&format!("^{}$", regex::escape(path_prefix)))?;
+                    Ok(types::RestrictionConfig {
                         name: format!("Allow path prefix {}", path_prefix),
                         r#match: types::MatchConfig::PathPrefix(reg),
                         allow: tunnels_restrictions.clone(),
-                    }
+                    })
                 })
-                .collect()
+                .collect::<Result<Vec<_>, anyhow::Error>>()?
         };
 
-        let restrictions = RestrictionsRules { restrictions };
-
-        Ok(restrictions)
+        Ok(RestrictionsRules { restrictions })
     }
 }

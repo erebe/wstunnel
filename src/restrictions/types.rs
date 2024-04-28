@@ -35,8 +35,8 @@ pub struct AllowTunnelConfig {
     pub protocol: Vec<TunnelConfigProtocol>,
 
     #[serde(deserialize_with = "deserialize_port_range")]
-    #[serde(default = "default_port")]
-    pub port: RangeInclusive<u16>,
+    #[serde(default)]
+    pub port: Vec<RangeInclusive<u16>>,
 
     #[serde(with = "serde_regex")]
     #[serde(default = "default_host")]
@@ -52,8 +52,8 @@ pub struct AllowReverseTunnelConfig {
     pub protocol: Vec<ReverseTunnelConfigProtocol>,
 
     #[serde(deserialize_with = "deserialize_port_range")]
-    #[serde(default = "default_port")]
-    pub port: RangeInclusive<u16>,
+    #[serde(default)]
+    pub port: Vec<RangeInclusive<u16>>,
 
     #[serde(default = "default_cidr")]
     pub cidr: Vec<IpNet>,
@@ -75,10 +75,6 @@ pub enum ReverseTunnelConfigProtocol {
     Unknown,
 }
 
-pub fn default_port() -> RangeInclusive<u16> {
-    RangeInclusive::new(1, 65535)
-}
-
 pub fn default_host() -> Regex {
     Regex::new("^.*$").unwrap()
 }
@@ -87,22 +83,30 @@ pub fn default_cidr() -> Vec<IpNet> {
     vec![IpNet::V4(Ipv4Net::default()), IpNet::V6(Ipv6Net::default())]
 }
 
-fn deserialize_port_range<'de, D>(deserializer: D) -> Result<RangeInclusive<u16>, D::Error>
+fn deserialize_port_range<'de, D>(deserializer: D) -> Result<Vec<RangeInclusive<u16>>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
-    let range = if let Some((l, r)) = s.split_once("..") {
-        RangeInclusive::new(
-            l.parse().map_err(serde::de::Error::custom)?,
-            r.parse().map_err(serde::de::Error::custom)?,
-        )
-    } else {
-        let port = s.parse::<u16>().map_err(serde::de::Error::custom)?;
-        RangeInclusive::new(port, port)
-    };
+    let s = Vec::<String>::deserialize(deserializer)?;
+    let ranges = s
+        .into_iter()
+        .map(|s| {
+            let range: Result<RangeInclusive<u16>, D::Error> = if let Some((l, r)) = s.split_once("..") {
+                Ok(RangeInclusive::new(
+                    l.parse().map_err(<D::Error as serde::de::Error>::custom)?,
+                    r.parse().map_err(<D::Error as serde::de::Error>::custom)?,
+                ))
+            } else {
+                let port = s.parse::<u16>().map_err(serde::de::Error::custom)?;
+                Ok(RangeInclusive::new(port, port))
+            };
+            range
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect::<Result<Vec<RangeInclusive<u16>>, D::Error>>()?;
 
-    Ok(range)
+    Ok(ranges)
 }
 
 impl From<&LocalProtocol> for ReverseTunnelConfigProtocol {

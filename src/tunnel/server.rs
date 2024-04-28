@@ -211,7 +211,7 @@ where
                             }
                             Some(Ok(cnx)) => {
                                 if tx.send_timeout(cnx, send_timeout).await.is_err() {
-                                    info!("New remote connection failed to be picked by client after {}s. Closing remote tunnel server", send_timeout.as_secs());
+                                    info!("New reverse connection failed to be picked by client after {}s. Closing reverse tunnel server", send_timeout.as_secs());
                                     break;
                                 }
                             }
@@ -223,7 +223,7 @@ where
                     }
                 }
             }
-            info!("Stopping listening server");
+            info!("Stopping listening reverse server");
         };
 
         tokio::spawn(fut.instrument(Span::current()));
@@ -233,7 +233,7 @@ where
     let cnx = listening_server
         .recv()
         .await
-        .ok_or_else(|| anyhow!("listening server stopped"))?;
+        .ok_or_else(|| anyhow!("listening reverse server stopped"))?;
     servers.lock().insert(local_srv.clone(), listening_server);
     Ok(cnx)
 }
@@ -314,7 +314,6 @@ fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<JwtTunnelCon
 
 #[inline]
 fn validate_tunnel<'a>(
-    _req: &Request<Incoming>,
     remote: &RemoteAddr,
     path_prefix: &str,
     restrictions: &'a RestrictionsRules,
@@ -332,7 +331,11 @@ fn validate_tunnel<'a>(
         for allow in &restriction.allow {
             match allow {
                 AllowConfig::ReverseTunnel(allow) => {
-                    if !remote.protocol.is_reverse_tunnel() || !allow.port.contains(&remote.port) {
+                    if !remote.protocol.is_reverse_tunnel() {
+                        continue;
+                    }
+
+                    if !allow.port.is_empty() && !allow.port.iter().any(|range| range.contains(&remote.port)) {
                         continue;
                     }
 
@@ -366,7 +369,11 @@ fn validate_tunnel<'a>(
                 }
 
                 AllowConfig::Tunnel(allow) => {
-                    if remote.protocol.is_reverse_tunnel() || !allow.port.contains(&remote.port) {
+                    if remote.protocol.is_reverse_tunnel() {
+                        continue;
+                    }
+
+                    if !allow.port.is_empty() && !allow.port.iter().any(|range| range.contains(&remote.port)) {
                         continue;
                     }
 
@@ -458,7 +465,7 @@ async fn ws_server_upgrade(
         }
     };
 
-    match validate_tunnel(&req, &remote, path_prefix, &server_config.restrictions) {
+    match validate_tunnel(&remote, path_prefix, &server_config.restrictions) {
         Ok(matched_restriction) => {
             info!("Tunnel accepted due to matched restriction: {}", matched_restriction.name);
         }
@@ -573,7 +580,7 @@ async fn http_server_upgrade(
         }
     };
 
-    match validate_tunnel(&req, &remote, path_prefix, &server_config.restrictions) {
+    match validate_tunnel(&remote, path_prefix, &server_config.restrictions) {
         Ok(matched_restriction) => {
             info!("Tunnel accepted due to matched restriction: {}", matched_restriction.name);
         }
