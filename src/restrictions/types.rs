@@ -12,7 +12,8 @@ pub struct RestrictionsRules {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RestrictionConfig {
     pub name: String,
-    pub r#match: MatchConfig,
+    #[serde(deserialize_with = "deserialize_non_empty_vec")]
+    pub r#match: Vec<MatchConfig>,
     pub allow: Vec<AllowConfig>,
 }
 
@@ -107,6 +108,19 @@ where
         .collect::<Result<Vec<RangeInclusive<u16>>, D::Error>>()?;
 
     Ok(ranges)
+}
+
+fn deserialize_non_empty_vec<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let vec = <Vec<T>>::deserialize(d)?;
+    if vec.is_empty() {
+        Err(serde::de::Error::custom("List must not be empty"))
+    } else {
+        Ok(vec)
+    }
 }
 
 impl From<&LocalProtocol> for ReverseTunnelConfigProtocol {

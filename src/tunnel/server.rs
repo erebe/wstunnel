@@ -319,13 +319,11 @@ fn validate_tunnel<'a>(
     restrictions: &'a RestrictionsRules,
 ) -> Result<&'a RestrictionConfig, Response<String>> {
     for restriction in &restrictions.restrictions {
-        match &restriction.r#match {
-            MatchConfig::Any => {}
-            MatchConfig::PathPrefix(path) => {
-                if !path.is_match(path_prefix) {
-                    continue;
-                }
-            }
+        if !restriction.r#match.iter().all(|m| match m {
+            MatchConfig::Any => true,
+            MatchConfig::PathPrefix(path) => path.is_match(path_prefix),
+        }) {
+            continue;
         }
 
         for allow in &restriction.allow {

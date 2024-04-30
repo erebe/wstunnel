@@ -3,21 +3,28 @@
 restrictions:
   - name: "Allow all"
     description: "This restriction allows all requests"
-    # This restriction apply only if it matches the prefix that match the given regex
-    # The regex does a match, so if you want to match exactly you need to bound the pattern with ^ $
-    # I.e: "tesotron" is going to match "XXXtesotronXXX", but "^tesotron$" is going to match only "tesotron"
-    match: !PathPrefix "^.*$"
+    # This restriction apply only and only if all matchers match/are evaluated to true
+    # It is a logical AND
+    match:
+      # This match apply only if it succeeds to match the path prefix with the given regex
+      # The regex does a match, so if you want to match exactly you need to bound the pattern with ^ $
+      # I.e: "tesotron" is going to match "XXXtesotronXXX", but "^tesotron$" is going to match only "tesotron"
+      - !PathPrefix "^.*$"
+      # The only other possible match type for now is !Any, that match everything/any request
+      # - !Any
 
-    # This is th list of tunnels your restriction is going to allow
-    # The list is going to be checked in order, the first match is going to allow the request
+    # This is the list of tunnels your restriction is going to allow
+    # The list is checked in order, the first match is going to allow the request
     allow:
       # !Tunnel allows forward tunnels
       - !Tunnel
         # Protocol that are allowed. Empty list means all protocols are allowed
+        # Logical OR
         protocol:
           - Tcp
           - Udp
         # Port that are allowed. Can be a single port or an inclusive range (i.e. 80..90)
+        # Logical OR
         port:
           - 80
           - 443
@@ -25,7 +32,8 @@ restrictions:
 
         # if the tunnel wants to connect to a specific host, this regex must match
         host: ^.*$
-        # if the tunnel wants to connect to a specific IP, it must match one of the network cidr
+        # if the tunnel wants to connect to a specific IP, it must be included in one of the network cidr
+        # Logical OR
         cidr:
           - 0.0.0.0/0
           - ::/0
@@ -49,7 +57,8 @@ restrictions:
 restrictions:
   - name: "example 1"
     description: "Only allow forward tunnels to port 443 and forbid reverse tunnels"
-    match: !PathPrefix "^.*$"
+    match:
+      - !PathPrefix "^.*$"
     allow:
       - !Tunnel
         port:
@@ -58,7 +67,8 @@ restrictions:
 restrictions:
   - name: "example 2"
     description: "Only allow forward tunnels to local ssh and forbid reverse tunnels"
-    match: !PathPrefix "^.*$"
+    match:
+      - !PathPrefix "^.*$"
     allow:
       - !Tunnel
         protocol:
@@ -72,7 +82,8 @@ restrictions:
 restrictions:
   - name: "example 3"
     description: "Only allow socks5 reverse tunnels listening on port between 1080..1443 on lan network"
-    match: !PathPrefix "^.*$"
+    match:
+      - !PathPrefix "^.*$"
     allow:
       - !ReverseTunnel
         protocol:
@@ -85,7 +96,15 @@ restrictions:
 restrictions:
   - name: "example 4"
     description: "Allow everything for client using path prefix my-super-secret-path"
-    match: !PathPrefix "^my-super-secret-path$"
+    match:
+      - !PathPrefix "^my-super-secret-path$"
     allow:
       - !Tunnel
       - !ReverseTunnel
+---
+restrictions:
+  - name: "example 5"
+    description: "Forbid everything ..."
+    match:
+      - !Any
+    allow: []

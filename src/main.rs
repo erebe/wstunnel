@@ -1278,9 +1278,10 @@ async fn main() {
                     args.restrict_http_upgrade_path_prefix.as_deref().unwrap_or(&[]),
                     &restrict_to,
                 )
-                .expect("Cannot covertion restriction rules from path-prefix and restric-to");
+                .expect("Cannot convert restriction rules from path-prefix and restric-to");
                 restriction_cfg
             };
+            debug!("Restriction rules: {:?}", restrictions);
 
             let server_config = WsServerConfig {
                 socket_so_mark: args.socket_so_mark,
