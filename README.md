@@ -550,6 +550,9 @@ wstunnel client --http-upgrade-path-prefix h3GywpDrP6gJEdZ6xbJbZZVFmvFZDCa4KcRd 
 Now your wstunnel server, will only accept connection if the client specify the correct path prefix during the upgrade
 request.
 
+If you need more customization, you can use a config file to specify specific rules with `--restrict-config`.
+You can find examples of restriction rules [there](https://github.com/erebe/wstunnel/blob/main/restrictions.yaml)
+
 ---
 
 ### Use HTTP2 instead of websocket for the transport protocol <a name="http2"></a>
