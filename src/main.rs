@@ -628,7 +628,7 @@ pub struct WsServerConfig {
     pub websocket_mask_frame: bool,
     pub tls: Option<TlsServerConfig>,
     pub dns_resolver: DnsResolver,
-    pub restrictions: RestrictionsRules,
+    pub restriction_config: Option<PathBuf>,
 }
 
 impl Debug for WsServerConfig {
@@ -639,6 +639,7 @@ impl Debug for WsServerConfig {
             .field("websocket_ping_frequency", &self.websocket_ping_frequency)
             .field("timeout_connect", &self.timeout_connect)
             .field("websocket_mask_frame", &self.websocket_mask_frame)
+            .field("restriction_config", &self.restriction_config)
             .field("tls", &self.tls.is_some())
             .field(
                 "mTLS",
@@ -1270,7 +1271,10 @@ async fn main() {
                     .iter()
                     .map(|x| {
                         let (host, port) = x.rsplit_once(':').expect("Invalid restrict-to format");
-                        (host.to_string(), port.parse::<u16>().expect("Invalid restrict-to port format"))
+                        (
+                            host.trim_matches(&['[', ']']).to_string(),
+                            port.parse::<u16>().expect("Invalid restrict-to port format"),
+                        )
                     })
                     .collect();
 
@@ -1281,7 +1285,6 @@ async fn main() {
                 .expect("Cannot convert restriction rules from path-prefix and restric-to");
                 restriction_cfg
             };
-            debug!("Restriction rules: {:?}", restrictions);
 
             let server_config = WsServerConfig {
                 socket_so_mark: args.socket_so_mark,
@@ -1291,7 +1294,7 @@ async fn main() {
                 websocket_mask_frame: args.websocket_mask_frame,
                 tls: tls_config,
                 dns_resolver,
-                restrictions,
+                restriction_config: args.restrict_config,
             };
 
             info!(
@@ -1299,7 +1302,8 @@ async fn main() {
                 env!("CARGO_PKG_VERSION"),
                 server_config
             );
-            tunnel::server::run_server(Arc::new(server_config))
+            debug!("Restriction rules: {:#?}", restrictions);
+            tunnel::server::run_server(Arc::new(server_config), restrictions)
                 .await
                 .unwrap_or_else(|err| {
                     panic!("Cannot start wstunnel server: {:?}", err);
