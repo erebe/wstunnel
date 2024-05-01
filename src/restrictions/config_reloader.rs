@@ -94,7 +94,7 @@ impl RestrictionsRulesReloader {
         &self.restrictions
     }
 
-    pub fn wait_for_reload(&self) -> Notified {
+    pub fn reload_notifier(&self) -> Notified {
         match &self.state {
             Static(st) => st.notified(),
             Config(st) => st.should_reload_config.notified(),

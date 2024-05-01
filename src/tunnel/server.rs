@@ -728,12 +728,16 @@ pub async fn run_server(server_config: Arc<WsServerConfig>, restrictions: Restri
     // Bind server and run forever to serve incoming connections.
     let mut restrictions = RestrictionsRulesReloader::new(restrictions, server_config.restriction_config.clone())?;
     let listener = TcpListener::bind(&server_config.bind).await?;
+    let mut await_config_reload = Box::pin(restrictions.reload_notifier());
+
     loop {
         let cnx = select! {
             biased;
 
-            _ = restrictions.wait_for_reload() => {
+            _ = &mut await_config_reload => {
+                drop(await_config_reload);
                 restrictions.reload_restrictions_config();
+                await_config_reload = Box::pin(restrictions.reload_notifier());
                 continue;
             },
 
