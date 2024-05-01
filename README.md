@@ -280,6 +280,10 @@ Options:
           
           [env: WSTUNNEL_RESTRICT_HTTP_UPGRADE_PATH_PREFIX=]
 
+      --restrict-config <RESTRICT_CONFIG>
+          Path to the location of the restriction yaml config file.
+          Restriction file is automatically reloaded if it changes
+
       --tls-certificate <FILE_PATH>
           [Optional] Use custom certificate (pem) instead of the default embedded self-signed certificate.
           The certificate will be automatically reloaded if it changes
