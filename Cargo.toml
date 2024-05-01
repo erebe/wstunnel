@@ -39,6 +39,7 @@ notify = { version = "6.1.1", features = [] }
 
 rustls-native-certs = { version = "0.7.0", features = [] }
 rustls-pemfile = { version = "2.1.1", features = [] }
+x509-parser = "0.16.0"
 scopeguard = "1.2.0"
 serde = { version = "1.0.197", features = ["derive"] }
 socket2 = { version = "0.5.6", features = [] }
