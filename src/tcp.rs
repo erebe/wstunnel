@@ -5,7 +5,7 @@ use crate::dns::DnsResolver;
 use base64::Engine;
 use bytes::BytesMut;
 use log::warn;
-use socket2::TcpKeepalive;
+use socket2::{SockRef, TcpKeepalive};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use std::time::Duration;
@@ -17,8 +17,7 @@ use tracing::log::info;
 use tracing::{debug, instrument};
 use url::{Host, Url};
 
-fn configure_socket(socket: &mut TcpSocket, so_mark: &Option<u32>) -> Result<(), anyhow::Error> {
-    let socket = socket2::SockRef::from(&socket);
+pub fn configure_socket(socket: SockRef, so_mark: &Option<u32>) -> Result<(), anyhow::Error> {
     socket
         .set_nodelay(true)
         .with_context(|| format!("cannot set no_delay on socket: {:?}", io::Error::last_os_error()))?;
@@ -71,12 +70,12 @@ pub async fn connect(
     for addr in socket_addrs {
         debug!("Connecting to {}", addr);
 
-        let mut socket = match &addr {
+        let socket = match &addr {
             SocketAddr::V4(_) => TcpSocket::new_v4()?,
             SocketAddr::V6(_) => TcpSocket::new_v6()?,
         };
 
-        configure_socket(&mut socket, &so_mark)?;
+        configure_socket(socket2::SockRef::from(&socket), &so_mark)?;
         match timeout(connect_timeout, socket.connect(addr)).await {
             Ok(Ok(stream)) => {
                 cnx = Some(stream);

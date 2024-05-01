@@ -7,6 +7,7 @@ use http_body_util::{BodyStream, Either, StreamBody};
 use std::cmp::min;
 use std::fmt::Debug;
 use std::future::Future;
+
 use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
 use std::pin::Pin;
@@ -25,6 +26,7 @@ use hyper_util::rt::TokioExecutor;
 use jsonwebtoken::TokenData;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use socket2::SockRef;
 
 use crate::restrictions::config_reloader::RestrictionsRulesReloader;
 use crate::restrictions::types::{
@@ -727,8 +729,8 @@ pub async fn run_server(server_config: Arc<WsServerConfig>, restrictions: Restri
 
     // Bind server and run forever to serve incoming connections.
     let mut restrictions = RestrictionsRulesReloader::new(restrictions, server_config.restriction_config.clone())?;
-    let listener = TcpListener::bind(&server_config.bind).await?;
     let mut await_config_reload = Box::pin(restrictions.reload_notifier());
+    let listener = TcpListener::bind(&server_config.bind).await?;
 
     loop {
         let cnx = select! {
@@ -751,7 +753,10 @@ pub async fn run_server(server_config: Arc<WsServerConfig>, restrictions: Restri
                 continue;
             }
         };
-        let _ = stream.set_nodelay(true);
+
+        if let Err(err) = tcp::configure_socket(SockRef::from(&stream), &None) {
+            warn!("Error while configuring server socket {:?}", err);
+        }
 
         let span = span!(
             Level::INFO,
