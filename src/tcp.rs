@@ -22,7 +22,7 @@ pub fn configure_socket(socket: SockRef, so_mark: &Option<u32>) -> Result<(), an
         .set_nodelay(true)
         .with_context(|| format!("cannot set no_delay on socket: {:?}", io::Error::last_os_error()))?;
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "openbsd")))]
     let tcp_keepalive = TcpKeepalive::new()
         .with_time(Duration::from_secs(60))
         .with_interval(Duration::from_secs(10))
@@ -32,6 +32,9 @@ pub fn configure_socket(socket: SockRef, so_mark: &Option<u32>) -> Result<(), an
     let tcp_keepalive = TcpKeepalive::new()
         .with_time(Duration::from_secs(60))
         .with_interval(Duration::from_secs(10));
+
+    #[cfg(target_os = "openbsd")]
+    let tcp_keepalive = TcpKeepalive::new().with_time(Duration::from_secs(60));
 
     socket
         .set_tcp_keepalive(&tcp_keepalive)
