@@ -6,33 +6,70 @@ use log::warn;
 use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
-use tokio_rustls::rustls::client::{ServerCertVerified, ServerCertVerifier};
 
 use crate::tunnel::TransportAddr;
-use tokio_rustls::rustls::server::{AllowAnyAuthenticatedClient, NoClientAuth};
-use tokio_rustls::rustls::{Certificate, ClientConfig, KeyLogFile, PrivateKey, ServerName};
+use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
+use tokio_rustls::rustls::server::WebPkiClientVerifier;
+use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, Error, KeyLogFile, SignatureScheme};
 use tokio_rustls::{rustls, TlsAcceptor, TlsConnector};
 use tracing::info;
 
+#[derive(Debug)]
 struct NullVerifier;
+
 impl ServerCertVerifier for NullVerifier {
     fn verify_server_cert(
         &self,
-        _end_entity: &Certificate,
-        _intermediates: &[Certificate],
-        _server_name: &ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
-        _now: SystemTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, Error> {
         Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+            SignatureScheme::RSA_PKCS1_SHA1,
+            SignatureScheme::ECDSA_SHA1_Legacy,
+            SignatureScheme::RSA_PKCS1_SHA256,
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA384,
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            SignatureScheme::RSA_PKCS1_SHA512,
+            SignatureScheme::ECDSA_NISTP521_SHA512,
+            SignatureScheme::RSA_PSS_SHA256,
+            SignatureScheme::RSA_PSS_SHA384,
+            SignatureScheme::RSA_PSS_SHA512,
+            SignatureScheme::ED25519,
+            SignatureScheme::ED448,
+        ]
     }
 }
 
-pub fn load_certificates_from_pem(path: &Path) -> anyhow::Result<Vec<Certificate>> {
+pub fn load_certificates_from_pem(path: &Path) -> anyhow::Result<Vec<CertificateDer<'static>>> {
     info!("Loading tls certificate from {:?}", path);
 
     let file = File::open(path)?;
@@ -42,7 +79,7 @@ pub fn load_certificates_from_pem(path: &Path) -> anyhow::Result<Vec<Certificate
     Ok(certs
         .into_iter()
         .filter_map(|cert| match cert {
-            Ok(cert) => Some(Certificate(cert.to_vec())),
+            Ok(cert) => Some(cert),
             Err(err) => {
                 warn!("Error while parsing tls certificate: {:?}", err);
                 None
@@ -51,7 +88,7 @@ pub fn load_certificates_from_pem(path: &Path) -> anyhow::Result<Vec<Certificate
         .collect())
 }
 
-pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKey> {
+pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKeyDer<'static>> {
     info!("Loading tls private key from {:?}", path);
 
     let file = File::open(path)?;
@@ -61,30 +98,28 @@ pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKey> {
         return Err(anyhow!("No private key found in {path:?}"));
     };
 
-    Ok(PrivateKey(private_key.secret_der().to_vec()))
+    Ok(private_key)
 }
 
 pub fn tls_connector(
     tls_verify_certificate: bool,
     alpn_protocols: Vec<Vec<u8>>,
     enable_sni: bool,
-    tls_client_certificate: Option<Vec<Certificate>>,
-    tls_client_key: Option<PrivateKey>,
+    tls_client_certificate: Option<Vec<CertificateDer<'static>>>,
+    tls_client_key: Option<PrivateKeyDer<'static>>,
 ) -> anyhow::Result<TlsConnector> {
     let mut root_store = rustls::RootCertStore::empty();
 
     // Load system certificates and add them to the root store
     let certs = rustls_native_certs::load_native_certs().with_context(|| "Cannot load system certificates")?;
     for cert in certs {
-        if let Err(err) = root_store.add(&Certificate(cert.as_ref().to_vec())) {
+        if let Err(err) = root_store.add(cert) {
             warn!("cannot load a system certificate: {:?}", err);
             continue;
         }
     }
 
-    let config_builder = ClientConfig::builder()
-        .with_safe_defaults()
-        .with_root_certificates(root_store);
+    let config_builder = ClientConfig::builder().with_root_certificates(root_store);
 
     let mut config = match (tls_client_certificate, tls_client_key) {
         (Some(tls_client_certificate), Some(tls_client_key)) => config_builder
@@ -111,19 +146,20 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
         let mut root_store = rustls::RootCertStore::empty();
         for tls_client_ca_certificate in tls_client_ca_certificates.lock().iter() {
             root_store
-                .add(tls_client_ca_certificate)
+                .add(tls_client_ca_certificate.clone())
                 .with_context(|| "Failed to add mTLS client CA certificate")?;
         }
 
-        Arc::new(AllowAnyAuthenticatedClient::new(root_store))
+        WebPkiClientVerifier::builder(Arc::new(root_store))
+            .build()
+            .map_err(|err| anyhow!("Failed to build mTLS client verifier: {:?}", err))?
     } else {
-        NoClientAuth::boxed()
+        WebPkiClientVerifier::no_client_auth()
     };
 
     let mut config = rustls::ServerConfig::builder()
-        .with_safe_defaults()
         .with_client_cert_verifier(client_cert_verifier)
-        .with_single_cert(tls_cfg.tls_certificate.lock().clone(), tls_cfg.tls_key.lock().clone())
+        .with_single_cert(tls_cfg.tls_certificate.lock().clone(), tls_cfg.tls_key.lock().clone_key())
         .with_context(|| "invalid tls certificate or private key")?;
 
     config.key_log = Arc::new(KeyLogFile::new());

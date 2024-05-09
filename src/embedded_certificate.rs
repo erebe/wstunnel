@@ -1,17 +1,17 @@
 use log::info;
 use once_cell::sync::Lazy;
-use tokio_rustls::rustls::{Certificate, PrivateKey};
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-pub static TLS_PRIVATE_KEY: Lazy<PrivateKey> = Lazy::new(|| {
+pub static TLS_PRIVATE_KEY: Lazy<PrivateKeyDer<'static>> = Lazy::new(|| {
     info!("Loading embedded tls private key");
 
     let key = include_bytes!("../certs/key.pem");
     let key = rustls_pemfile::private_key(&mut key.as_slice())
         .expect("failed to load embedded tls private key")
         .expect("failed to load embedded tls private key");
-    PrivateKey(key.secret_der().to_vec())
+    key
 });
-pub static TLS_CERTIFICATE: Lazy<Vec<Certificate>> = Lazy::new(|| {
+pub static TLS_CERTIFICATE: Lazy<Vec<CertificateDer<'static>>> = Lazy::new(|| {
     info!("Loading embedded tls certificate");
 
     let cert = include_bytes!("../certs/cert.pem");
@@ -19,8 +19,5 @@ pub static TLS_CERTIFICATE: Lazy<Vec<Certificate>> = Lazy::new(|| {
         .next()
         .expect("failed to load embedded tls certificate");
 
-    certs
-        .into_iter()
-        .map(|cert| Certificate(cert.as_ref().to_vec()))
-        .collect()
+    certs.into_iter().collect()
 });

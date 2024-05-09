@@ -34,8 +34,7 @@ use std::{fmt, io};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
-use tokio_rustls::rustls::server::DnsName;
-use tokio_rustls::rustls::{Certificate, PrivateKey, ServerName};
+use tokio_rustls::rustls::pki_types::{CertificateDer, DnsName, PrivateKeyDer, ServerName};
 use tokio_rustls::TlsConnector;
 
 use tracing::{error, info};
@@ -143,7 +142,7 @@ struct Client {
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
     ///          or it will be flagged as fishy and your request rejected
     #[arg(long, value_name = "DOMAIN_NAME", value_parser = parse_sni_override, verbatim_doc_comment)]
-    tls_sni_override: Option<DnsName>,
+    tls_sni_override: Option<DnsName<'static>>,
 
     /// Disable sending SNI during TLS handshake
     /// Warning: Most reverse proxies rely on it
@@ -534,7 +533,7 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
     }
 }
 
-fn parse_sni_override(arg: &str) -> Result<DnsName, io::Error> {
+fn parse_sni_override(arg: &str) -> Result<DnsName<'static>, io::Error> {
     match DnsName::try_from(arg.to_string()) {
         Ok(val) => Ok(val),
         Err(err) => Err(io::Error::new(
@@ -601,9 +600,9 @@ fn parse_server_url(arg: &str) -> Result<Url, io::Error> {
 
 /// Find a leaf certificate in a vector of certificates. It is assumed only a single leaf certificate
 /// is present in the vector. The other certificates should be (intermediate) CA certificates.
-fn find_leaf_certificate(tls_certificates: &Vec<Certificate>) -> Option<X509Certificate> {
+fn find_leaf_certificate<'a>(tls_certificates: &'a Vec<CertificateDer<'static>>) -> Option<X509Certificate<'a>> {
     for tls_certificate in tls_certificates {
-        if let Ok((_, tls_certificate_x509)) = parse_x509_certificate(&tls_certificate.0) {
+        if let Ok((_, tls_certificate_x509)) = parse_x509_certificate(tls_certificate) {
             if !tls_certificate_x509.is_ca() {
                 return Some(tls_certificate_x509);
             }
@@ -626,7 +625,7 @@ fn cn_from_certificate(tls_certificate_x509: &X509Certificate) -> Option<String>
 #[derive(Clone)]
 pub struct TlsClientConfig {
     pub tls_sni_disabled: bool,
-    pub tls_sni_override: Option<DnsName>,
+    pub tls_sni_override: Option<DnsName<'static>>,
     pub tls_verify_certificate: bool,
     tls_connector: Arc<RwLock<TlsConnector>>,
     pub tls_certificate_path: Option<PathBuf>,
@@ -641,9 +640,9 @@ impl TlsClientConfig {
 
 #[derive(Debug)]
 pub struct TlsServerConfig {
-    pub tls_certificate: Mutex<Vec<Certificate>>,
-    pub tls_key: Mutex<PrivateKey>,
-    pub tls_client_ca_certificates: Option<Mutex<Vec<Certificate>>>,
+    pub tls_certificate: Mutex<Vec<CertificateDer<'static>>>,
+    pub tls_key: Mutex<PrivateKeyDer<'static>>,
+    pub tls_client_ca_certificates: Option<Mutex<Vec<CertificateDer<'static>>>>,
     pub tls_certificate_path: Option<PathBuf>,
     pub tls_key_path: Option<PathBuf>,
     pub tls_client_ca_certs_path: Option<PathBuf>,
@@ -716,17 +715,16 @@ impl WsClientConfig {
         format!("{}:{}", self.remote_addr.host(), self.remote_addr.port())
     }
 
-    pub fn tls_server_name(&self) -> ServerName {
-        static INVALID_DNS_NAME: Lazy<DnsName> =
-            Lazy::new(|| DnsName::try_from_ascii(b"dns-name-invalid.com").unwrap());
+    pub fn tls_server_name(&self) -> ServerName<'static> {
+        static INVALID_DNS_NAME: Lazy<DnsName> = Lazy::new(|| DnsName::try_from("dns-name-invalid.com").unwrap());
 
         match self.remote_addr.tls().and_then(|tls| tls.tls_sni_override.as_ref()) {
             None => match &self.remote_addr.host() {
                 Host::Domain(domain) => {
                     ServerName::DnsName(DnsName::try_from(domain.clone()).unwrap_or_else(|_| INVALID_DNS_NAME.clone()))
                 }
-                Host::Ipv4(ip) => ServerName::IpAddress(IpAddr::V4(*ip)),
-                Host::Ipv6(ip) => ServerName::IpAddress(IpAddr::V6(*ip)),
+                Host::Ipv4(ip) => ServerName::IpAddress(IpAddr::V4(*ip).into()),
+                Host::Ipv6(ip) => ServerName::IpAddress(IpAddr::V6(*ip).into()),
             },
             Some(sni_override) => ServerName::DnsName(sni_override.clone()),
         }
@@ -1237,7 +1235,7 @@ async fn main() {
                 let tls_key = if let Some(key_path) = &args.tls_private_key {
                     tls::load_private_key_from_file(key_path).expect("Cannot load tls private key")
                 } else {
-                    embedded_certificate::TLS_PRIVATE_KEY.clone()
+                    embedded_certificate::TLS_PRIVATE_KEY.clone_key()
                 };
 
                 let tls_client_ca_certificates = args.tls_client_ca_certs.as_ref().map(|tls_client_ca| {

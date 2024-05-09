@@ -206,7 +206,8 @@ mod tests {
     use futures_util::pin_mut;
     use std::net::SocketAddr;
     use testcontainers::core::WaitFor;
-    use testcontainers::{Image, ImageArgs, RunnableImage};
+    use testcontainers::runners::AsyncRunner;
+    use testcontainers::{ContainerAsync, Image, ImageArgs, RunnableImage};
 
     #[derive(Debug, Clone, Default)]
     pub struct MitmProxy {}
@@ -240,9 +241,10 @@ mod tests {
         let server_addr: SocketAddr = "[::1]:1236".parse().unwrap();
         let server = TcpListener::bind(server_addr).await.unwrap();
 
-        let docker = testcontainers::clients::Cli::default();
-        let mitm_proxy: RunnableImage<MitmProxy> = RunnableImage::from(MitmProxy {}).with_network("host".to_string());
-        let _node = docker.run(mitm_proxy);
+        let _mitm_proxy: ContainerAsync<MitmProxy> = RunnableImage::from(MitmProxy {})
+            .with_network("host".to_string())
+            .start()
+            .await;
 
         let mut client = connect_with_http_proxy(
             &"http://localhost:8080".parse().unwrap(),

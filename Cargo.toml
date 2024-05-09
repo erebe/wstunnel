@@ -7,9 +7,10 @@ repository = "https://github.com/erebe/wstunnel.git"
 
 [dependencies]
 ahash = { version = "0.8.11", features = [] }
-anyhow = "1.0.81"
-async-trait = "0.1.79"
-base64 = "0.22.0"
+anyhow = "1.0.83"
+async-trait = "0.1.80"
+base64 = "0.22.1"
+scopeguard = "1.2.0"
 
 bb8 = { version = "0.8", features = [] }
 bytes = { version = "1.6.0", features = [] }
@@ -17,7 +18,7 @@ clap = { version = "4.5.4", features = ["derive", "env"] }
 fast-socks5 = { version = "0.9.6", features = [] }
 fastwebsockets = { version = "0.7.1", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.30" }
-hickory-resolver = { version = "0.24.0", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls"] }
+hickory-resolver = { version = "0.24.1", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls"] }
 ppp = { version = "2.2.0", features = [] }
 
 # For config file parsing
@@ -26,26 +27,29 @@ serde_regex = "1.1.0"
 serde_yaml = { version = "0.9.34", features = [] }
 ipnet = { version = "2.9.0", features = ["serde"] }
 
-hyper = { version = "1.2.0", features = ["client", "http1", "http2"] }
+hyper = { version = "1.3.1", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1.3", features = ["tokio", "server", "server-auto"] }
 http-body-util = { version = "0.1.1" }
 jsonwebtoken = { version = "9.3.0", default-features = false }
 log = "0.4.21"
 nix = { version = "0.28.0", features = ["socket", "net", "uio"] }
 once_cell = { version = "1.19.0", features = [] }
-parking_lot = "0.12.1"
+parking_lot = "0.12.2"
 pin-project = "1"
 notify = { version = "6.1.1", features = [] }
 
 rustls-native-certs = { version = "0.7.0", features = [] }
-rustls-pemfile = { version = "2.1.1", features = [] }
+rustls-pemfile = { version = "2.1.2", features = [] }
 x509-parser = "0.16.0"
-scopeguard = "1.2.0"
-serde = { version = "1.0.197", features = ["derive"] }
-socket2 = { version = "0.5.6", features = [] }
-tokio = { version = "1.36.0", features = ["full"] }
-tokio-rustls = { version = "0.24.1", features = ["tls12", "dangerous_configuration", "early-data"] }
+serde = { version = "1.0.201", features = ["derive"] }
+socket2 = { version = "0.5.7", features = [] }
+tokio = { version = "1.37.0", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["net"] }
+
+[target.'cfg(os = "linux")'.dependencies]
+tokio-rustls = { version = "0.26.0", features = ["tls12"] }
+[target.'cfg(not(os = "linux"))'.dependencies]
+tokio-rustls = { version = "0.26.0", default-features = false, features = ["logging", "tls12", "ring"] }
 
 tracing = { version = "0.1.40", features = ["log"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt", "local-time"] }
@@ -55,13 +59,13 @@ uuid = { version = "1.8.0", features = ["v7", "serde"] }
 
 [target.'cfg(not(target_family = "unix"))'.dependencies]
 crossterm = { version = "0.27.0" }
-tokio-util = { version = "0.7.10", features = ["io"] }
+tokio-util = { version = "0.7.11", features = ["io"] }
 
 [target.'cfg(target_family = "unix")'.dependencies]
 tokio-fd = "0.3.0"
 
 [dev-dependencies]
-testcontainers = "0.15.0"
+testcontainers = "0.16.7"
 
 [profile.release]
 lto = "fat"
