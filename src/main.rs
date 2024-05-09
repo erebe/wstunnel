@@ -48,8 +48,8 @@ use crate::udp::MyUdpSocket;
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
-use x509_parser::{parse_x509_certificate};
-use x509_parser::prelude::{X509Certificate};
+use x509_parser::parse_x509_certificate;
+use x509_parser::prelude::X509Certificate;
 
 const DEFAULT_CLIENT_UPGRADE_PATH_PREFIX: &str = "v1";
 
@@ -614,7 +614,9 @@ fn find_leaf_certificate(tls_certificates: &Vec<Certificate>) -> Option<X509Cert
 
 /// Returns the common name (CN) as specified in the supplied certificate.
 fn cn_from_certificate(tls_certificate_x509: &X509Certificate) -> Option<String> {
-    tls_certificate_x509.tbs_certificate.subject
+    tls_certificate_x509
+        .tbs_certificate
+        .subject
         .iter_common_name()
         .flat_map(|cn| cn.as_str().ok())
         .map(|cn| cn.to_string())
@@ -774,14 +776,14 @@ async fn main() {
             let http_upgrade_path_prefix = if args.http_upgrade_path_prefix.eq(DEFAULT_CLIENT_UPGRADE_PATH_PREFIX) {
                 // When using mTLS and no manual http upgrade path is specified configure the HTTP upgrade path
                 // to be the common name (CN) of the client's certificate.
-                tls_certificate.as_ref()
-                    .and_then(|tls_certs| find_leaf_certificate(tls_certs))
+                tls_certificate
+                    .as_ref()
+                    .and_then(find_leaf_certificate)
                     .and_then(|leaf_cert| cn_from_certificate(&leaf_cert))
                     .unwrap_or(args.http_upgrade_path_prefix)
             } else {
                 args.http_upgrade_path_prefix
             };
-            println!("{}", http_upgrade_path_prefix);
 
             let transport_scheme =
                 TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
