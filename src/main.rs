@@ -138,6 +138,10 @@ struct Client {
     #[arg(short = 'c', long, value_name = "INT", default_value = "0", verbatim_doc_comment)]
     connection_min_idle: u32,
 
+    /// The maximum of time in seconds while we are going to try to connect to the server before failing the connection/tunnel request
+    #[arg(long, value_name = "DURATION_IN_SECONDS", default_value = "300", value_parser = parse_duration_sec, verbatim_doc_comment)]
+    connection_retry_max_backoff_sec: Duration,
+
     /// Domain name that will be used as SNI during TLS handshake
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
     ///          or it will be flagged as fishy and your request rejected
@@ -891,6 +895,7 @@ async fn main() {
                 .max_size(1000)
                 .min_idle(Some(args.connection_min_idle))
                 .max_lifetime(Some(Duration::from_secs(30)))
+                .connection_timeout(args.connection_retry_max_backoff_sec)
                 .retry_connection(true)
                 .build(client_config.clone())
                 .await
