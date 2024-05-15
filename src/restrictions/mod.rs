@@ -36,6 +36,7 @@ impl RestrictionsRules {
             let reverse_tunnel = types::AllowConfig::ReverseTunnel(types::AllowReverseTunnelConfig {
                 protocol: vec![],
                 port: vec![],
+                port_mapping: Default::default(),
                 cidr: default_cidr(),
             });
 
@@ -56,6 +57,7 @@ impl RestrictionsRules {
                             types::AllowConfig::ReverseTunnel(types::AllowReverseTunnelConfig {
                                 protocol: vec![],
                                 port: vec![RangeInclusive::new(*port, *port)],
+                                port_mapping: Default::default(),
                                 cidr: vec![IpNet::new(ip, if ip.is_ipv4() { 32 } else { 128 })?],
                             }),
                         ]
@@ -70,6 +72,7 @@ impl RestrictionsRules {
                             types::AllowConfig::ReverseTunnel(types::AllowReverseTunnelConfig {
                                 protocol: vec![],
                                 port: vec![],
+                                port_mapping: Default::default(),
                                 cidr: default_cidr(),
                             }),
                         ]

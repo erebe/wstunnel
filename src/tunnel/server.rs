@@ -50,6 +50,7 @@ use uuid::Uuid;
 
 async fn run_tunnel(
     server_config: &WsServerConfig,
+    restriction: &RestrictionConfig,
     remote: RemoteAddr,
     client_address: SocketAddr,
 ) -> anyhow::Result<(RemoteAddr, Pin<Box<dyn AsyncRead + Send>>, Pin<Box<dyn AsyncWrite + Send>>)> {
@@ -94,7 +95,8 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<TcpStream>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
-            let local_srv = (remote.host, remote.port);
+            let remote_port = find_mapped_port(remote.port, restriction);
+            let local_srv = (remote.host, remote_port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
             let listening_server = tcp::run_server(bind.parse()?, false);
             let tcp = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
@@ -112,7 +114,8 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<UdpStream>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
-            let local_srv = (remote.host, remote.port);
+            let remote_port = find_mapped_port(remote.port, restriction);
+            let local_srv = (remote.host, remote_port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
             let listening_server =
                 udp::run_server(bind.parse()?, timeout, |_| Ok(()), |send_socket| Ok(send_socket.clone()));
@@ -131,7 +134,8 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<(Socks5Stream, (Host, u16))>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
-            let local_srv = (remote.host, remote.port);
+            let remote_port = find_mapped_port(remote.port, restriction);
+            let local_srv = (remote.host, remote_port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
             let listening_server = socks5::run_server(bind.parse()?, None);
             let (stream, local_srv) = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
@@ -154,7 +158,8 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<UnixStream>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
-            let local_srv = (remote.host, remote.port);
+            let remote_port = find_mapped_port(remote.port, restriction);
+            let local_srv = (remote.host, remote_port);
             let listening_server = unix_socket::run_server(path);
             let stream = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let (local_rx, local_tx) = stream.into_split();
@@ -180,6 +185,25 @@ async fn run_tunnel(
             Err(anyhow::anyhow!("Invalid upgrade request"))
         }
     }
+}
+
+/// Checks if the requested (remote) port has been mapped in the configuration to another port.
+/// If it is not mapped the original port number is returned.
+fn find_mapped_port(req_port: u16, restriction: &RestrictionConfig) -> u16 {
+    // Determine if the requested port is to be mapped to a different port.
+    let remote_port = restriction.allow
+        .iter()
+        .find_map(|allow| {
+            if let AllowConfig::ReverseTunnel(allow) = allow {
+                return allow.port_mapping.get(&req_port).cloned();
+            }
+            None
+        }).unwrap_or(req_port);
+    if req_port != remote_port {
+        info!("Client requested port {} was mapped to {}", req_port, remote_port);
+    }
+    
+    remote_port
 }
 
 #[allow(clippy::type_complexity)]
@@ -482,15 +506,16 @@ async fn ws_server_upgrade(
         }
     };
 
-    match validate_tunnel(&remote, path_prefix, &restrictions) {
+    let restriction = match validate_tunnel(&remote, path_prefix, &restrictions) {
         Ok(matched_restriction) => {
             info!("Tunnel accepted due to matched restriction: {}", matched_restriction.name);
+            matched_restriction
         }
         Err(err) => return err,
-    }
+    };
 
     let req_protocol = remote.protocol.clone();
-    let tunnel = match run_tunnel(&server_config, remote, client_addr).await {
+    let tunnel = match run_tunnel(&server_config, &restriction, remote, client_addr).await {
         Ok(ret) => ret,
         Err(err) => {
             warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
@@ -612,15 +637,16 @@ async fn http_server_upgrade(
         }
     };
 
-    match validate_tunnel(&remote, path_prefix, &restrictions) {
+    let restriction = match validate_tunnel(&remote, path_prefix, &restrictions) {
         Ok(matched_restriction) => {
             info!("Tunnel accepted due to matched restriction: {}", matched_restriction.name);
+            matched_restriction
         }
         Err(err) => return err.map(Either::Left),
-    }
+    };
 
     let req_protocol = remote.protocol.clone();
-    let tunnel = match run_tunnel(&server_config, remote, client_addr).await {
+    let tunnel = match run_tunnel(&server_config, &restriction, remote, client_addr).await {
         Ok(ret) => ret,
         Err(err) => {
             warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
