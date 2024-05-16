@@ -183,6 +183,8 @@ struct Client {
 
     /// Use a specific prefix that will show up in the http path during the upgrade request.
     /// Useful if you need to route requests server side but don't have vhosts
+    /// When using mTLS this option overrides the default behavior of using the common name of the
+    /// client's certificate. This will likely result in the wstunnel server rejecting the connection.
     #[arg(
         short = 'P',
         long,
@@ -282,7 +284,12 @@ struct Server {
     /// Server will only accept connection from the specified tunnel information.
     /// Can be specified multiple time
     /// Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
-    #[arg(long, value_name = "DEST:PORT", verbatim_doc_comment)]
+    #[arg(
+        long,
+        value_name = "DEST:PORT",
+        verbatim_doc_comment,
+        conflicts_with = "restrict_config",
+    )]
     restrict_to: Option<Vec<String>>,
 
     /// Server will only accept connection from if this specific path prefix is used during websocket upgrade.
@@ -293,6 +300,7 @@ struct Server {
         short = 'r',
         long,
         verbatim_doc_comment,
+        conflicts_with = "restrict_config",
         env = "WSTUNNEL_RESTRICT_HTTP_UPGRADE_PATH_PREFIX"
     )]
     restrict_http_upgrade_path_prefix: Option<Vec<String>>,
