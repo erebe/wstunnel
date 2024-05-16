@@ -288,7 +288,7 @@ struct Server {
         long,
         value_name = "DEST:PORT",
         verbatim_doc_comment,
-        conflicts_with = "restrict_config",
+        conflicts_with = "restrict_config"
     )]
     restrict_to: Option<Vec<String>>,
 
