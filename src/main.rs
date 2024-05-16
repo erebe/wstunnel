@@ -6,11 +6,11 @@ mod socks5_udp;
 mod stdio;
 mod tcp;
 mod tls;
+mod tls_utils;
 mod tunnel;
 mod udp;
 #[cfg(unix)]
 mod unix_socket;
-mod tls_utils;
 
 use anyhow::anyhow;
 use base64::Engine;
@@ -42,10 +42,10 @@ use tracing::{error, info};
 
 use crate::dns::DnsResolver;
 use crate::restrictions::types::RestrictionsRules;
+use crate::tls_utils::{cn_from_certificate, find_leaf_certificate};
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
 use crate::udp::MyUdpSocket;
-use crate::tls_utils::{cn_from_certificate, find_leaf_certificate};
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
@@ -756,7 +756,7 @@ async fn main() {
                 // to be the common name (CN) of the client's certificate.
                 tls_certificate
                     .as_ref()
-                    .and_then(find_leaf_certificate)
+                    .and_then(|certs| find_leaf_certificate(certs.as_slice()))
                     .and_then(|leaf_cert| cn_from_certificate(&leaf_cert))
                     .unwrap_or(args.http_upgrade_path_prefix)
             } else {

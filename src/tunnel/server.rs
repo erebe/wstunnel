@@ -33,11 +33,11 @@ use crate::restrictions::types::{
     AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules, ReverseTunnelConfigProtocol, TunnelConfigProtocol,
 };
 use crate::socks5::Socks5Stream;
+use crate::tls_utils::{cn_from_certificate, find_leaf_certificate};
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
 use crate::udp::UdpStream;
-use crate::tls_utils::{cn_from_certificate, find_leaf_certificate};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
@@ -452,10 +452,13 @@ async fn ws_server_upgrade(
 
     if let Some(restrict_path) = restrict_path_prefix {
         if path_prefix != restrict_path {
-            warn!("Client requested upgrade path '{}' does not match upgrade path restriction '{}' (mTLS, etc.)", path_prefix, restrict_path);
+            warn!(
+                "Client requested upgrade path '{}' does not match upgrade path restriction '{}' (mTLS, etc.)",
+                path_prefix, restrict_path
+            );
             return http::Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body("Requested upgrade path does not match upgrade path restriction (mTLS, etc.)".into())
+                .body("Invalid upgrade request".to_string())
                 .unwrap();
         }
     }
@@ -580,10 +583,13 @@ async fn http_server_upgrade(
 
     if let Some(restrict_path) = restrict_path_prefix {
         if path_prefix != restrict_path {
-            warn!("Client requested upgrade path '{}' does not match upgrade path restriction '{}' (mTLS, etc.)", path_prefix, restrict_path);
+            warn!(
+                "Client requested upgrade path '{}' does not match upgrade path restriction '{}' (mTLS, etc.)",
+                path_prefix, restrict_path
+            );
             return http::Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Either::Left("Requested upgrade path does not match upgrade path restriction (mTLS, etc.)".to_string()))
+                .body(Either::Left("Invalid upgrade request".to_string()))
                 .unwrap();
         }
     }
@@ -696,21 +702,37 @@ pub async fn run_server(server_config: Arc<WsServerConfig>, restrictions: Restri
     info!("Starting wstunnel server listening on {}", server_config.bind);
 
     // setup upgrade request handler
-    let mk_websocket_upgrade_fn =
-        |server_config: Arc<WsServerConfig>, restrictions: Arc<RestrictionsRules>, restrict_path: Option<String>,client_addr: SocketAddr| {
-            move |req: Request<Incoming>| {
-                ws_server_upgrade(server_config.clone(), restrictions.clone(), restrict_path.clone(), client_addr, req)
-                    .map::<anyhow::Result<_>, _>(Ok)
-            }
-        };
+    let mk_websocket_upgrade_fn = |server_config: Arc<WsServerConfig>,
+                                   restrictions: Arc<RestrictionsRules>,
+                                   restrict_path: Option<String>,
+                                   client_addr: SocketAddr| {
+        move |req: Request<Incoming>| {
+            ws_server_upgrade(
+                server_config.clone(),
+                restrictions.clone(),
+                restrict_path.clone(),
+                client_addr,
+                req,
+            )
+            .map::<anyhow::Result<_>, _>(Ok)
+        }
+    };
 
-    let mk_http_upgrade_fn =
-        |server_config: Arc<WsServerConfig>, restrictions: Arc<RestrictionsRules>, restrict_path: Option<String>, client_addr: SocketAddr| {
-            move |req: Request<Incoming>| {
-                http_server_upgrade(server_config.clone(), restrictions.clone(), restrict_path.clone(), client_addr, req)
-                    .map::<anyhow::Result<_>, _>(Ok)
-            }
-        };
+    let mk_http_upgrade_fn = |server_config: Arc<WsServerConfig>,
+                              restrictions: Arc<RestrictionsRules>,
+                              restrict_path: Option<String>,
+                              client_addr: SocketAddr| {
+        move |req: Request<Incoming>| {
+            http_server_upgrade(
+                server_config.clone(),
+                restrictions.clone(),
+                restrict_path.clone(),
+                client_addr,
+                req,
+            )
+            .map::<anyhow::Result<_>, _>(Ok)
+        }
+    };
 
     let mk_auto_upgrade_fn = |server_config: Arc<WsServerConfig>,
                               restrictions: Arc<RestrictionsRules>,
@@ -726,9 +748,15 @@ pub async fn run_server(server_config: Arc<WsServerConfig>, restrictions: Restri
                         .map(|response| Ok::<_, anyhow::Error>(response.map(Either::Left)))
                         .await
                 } else if req.version() == Version::HTTP_2 {
-                    http_server_upgrade(server_config.clone(), restrictions.clone(), restrict_path.clone(), client_addr, req)
-                        .map::<anyhow::Result<_>, _>(Ok)
-                        .await
+                    http_server_upgrade(
+                        server_config.clone(),
+                        restrictions.clone(),
+                        restrict_path.clone(),
+                        client_addr,
+                        req,
+                    )
+                    .map::<anyhow::Result<_>, _>(Ok)
+                    .await
                 } else {
                     error!("Invalid protocol version request, got {:?} while expecting either websocket http1 upgrade or http2", req.version());
                     Ok(http::Response::builder()
@@ -811,15 +839,13 @@ pub async fn run_server(server_config: Arc<WsServerConfig>, restrictions: Restri
                         }
                     };
 
-                    let restrict_path = if let Some(client_cert_chain) =
-                        tls_stream.inner().get_ref().1.peer_certificates() {
-                        find_leaf_certificate(&client_cert_chain.to_vec())
-                            .and_then(|leaf_cert| cn_from_certificate(&leaf_cert))
-                    } else {
-                        None
-                    };
-
-                    match tls_stream.inner().get_ref().1.alpn_protocol() {
+                    let tls_ctx = tls_stream.inner().get_ref().1;
+                    // extract client certificate common name if any
+                    let restrict_path = tls_ctx
+                        .peer_certificates()
+                        .and_then(find_leaf_certificate)
+                        .and_then(|c| cn_from_certificate(&c));
+                    match tls_ctx.alpn_protocol() {
                         // http2
                         Some(b"h2") => {
                             let mut conn_builder = http2::Builder::new(TokioExecutor::new());
@@ -827,7 +853,8 @@ pub async fn run_server(server_config: Arc<WsServerConfig>, restrictions: Restri
                                 conn_builder.keep_alive_interval(ping);
                             }
 
-                            let http_upgrade_fn = mk_http_upgrade_fn(server_config, restrictions.clone(), restrict_path.clone(), peer_addr);
+                            let http_upgrade_fn =
+                                mk_http_upgrade_fn(server_config, restrictions.clone(), restrict_path, peer_addr);
                             let con_fut = conn_builder.serve_connection(tls_stream, service_fn(http_upgrade_fn));
                             if let Err(e) = con_fut.await {
                                 error!("Error while upgrading cnx to http: {:?}", e);
@@ -836,7 +863,7 @@ pub async fn run_server(server_config: Arc<WsServerConfig>, restrictions: Restri
                         // websocket
                         _ => {
                             let websocket_upgrade_fn =
-                                mk_websocket_upgrade_fn(server_config, restrictions.clone(), restrict_path.clone(), peer_addr);
+                                mk_websocket_upgrade_fn(server_config, restrictions.clone(), restrict_path, peer_addr);
                             let conn_fut = http1::Builder::new()
                                 .serve_connection(tls_stream, service_fn(websocket_upgrade_fn))
                                 .with_upgrades();

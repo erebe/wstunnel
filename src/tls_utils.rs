@@ -4,7 +4,7 @@ use x509_parser::prelude::X509Certificate;
 
 /// Find a leaf certificate in a vector of certificates. It is assumed only a single leaf certificate
 /// is present in the vector. The other certificates should be (intermediate) CA certificates.
-pub fn find_leaf_certificate<'a>(tls_certificates: &'a Vec<CertificateDer<'static>>) -> Option<X509Certificate<'a>> {
+pub fn find_leaf_certificate<'a>(tls_certificates: &'a [CertificateDer<'static>]) -> Option<X509Certificate<'a>> {
     for tls_certificate in tls_certificates {
         if let Ok((_, tls_certificate_x509)) = parse_x509_certificate(tls_certificate) {
             if !tls_certificate_x509.is_ca() {
@@ -22,6 +22,6 @@ pub fn cn_from_certificate(tls_certificate_x509: &X509Certificate) -> Option<Str
         .subject
         .iter_common_name()
         .flat_map(|cn| cn.as_str().ok())
-        .map(|cn| cn.to_string())
         .next()
+        .map(|cn| cn.to_string())
 }
