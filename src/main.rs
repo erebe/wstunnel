@@ -10,6 +10,7 @@ mod tunnel;
 mod udp;
 #[cfg(unix)]
 mod unix_socket;
+mod tls_utils;
 
 use anyhow::anyhow;
 use base64::Engine;
@@ -44,11 +45,10 @@ use crate::restrictions::types::RestrictionsRules;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
 use crate::udp::MyUdpSocket;
+use crate::tls_utils::{cn_from_certificate, find_leaf_certificate};
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
-use x509_parser::parse_x509_certificate;
-use x509_parser::prelude::X509Certificate;
 
 const DEFAULT_CLIENT_UPGRADE_PATH_PREFIX: &str = "v1";
 
@@ -600,30 +600,6 @@ fn parse_server_url(arg: &str) -> Result<Url, io::Error> {
     }
 
     Ok(url)
-}
-
-/// Find a leaf certificate in a vector of certificates. It is assumed only a single leaf certificate
-/// is present in the vector. The other certificates should be (intermediate) CA certificates.
-fn find_leaf_certificate<'a>(tls_certificates: &'a Vec<CertificateDer<'static>>) -> Option<X509Certificate<'a>> {
-    for tls_certificate in tls_certificates {
-        if let Ok((_, tls_certificate_x509)) = parse_x509_certificate(tls_certificate) {
-            if !tls_certificate_x509.is_ca() {
-                return Some(tls_certificate_x509);
-            }
-        }
-    }
-    None
-}
-
-/// Returns the common name (CN) as specified in the supplied certificate.
-fn cn_from_certificate(tls_certificate_x509: &X509Certificate) -> Option<String> {
-    tls_certificate_x509
-        .tbs_certificate
-        .subject
-        .iter_common_name()
-        .flat_map(|cn| cn.as_str().ok())
-        .map(|cn| cn.to_string())
-        .next()
 }
 
 #[derive(Clone)]
