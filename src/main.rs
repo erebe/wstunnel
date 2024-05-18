@@ -724,27 +724,28 @@ async fn main() {
     let args = Wstunnel::parse();
 
     // Setup logging
-    match &args.commands {
-        // Disable logging if there is a stdio tunnel
-        Commands::Client(args)
-            if args
-                .local_to_remote
-                .iter()
-                .filter(|x| x.local_protocol == LocalProtocol::Stdio)
-                .count()
-                > 0 => {}
-        _ => {
-            let mut env_filter = EnvFilter::builder().parse(&args.log_lvl).expect("Invalid log level");
-            if !(args.log_lvl.contains("h2::") || args.log_lvl.contains("h2=")) {
-                env_filter =
-                    env_filter.add_directive(Directive::from_str("h2::codec=off").expect("Invalid log directive"));
-            }
-            tracing_subscriber::fmt()
-                .with_ansi(args.no_color.is_none())
-                .with_env_filter(env_filter)
-                .init();
-        }
+    let mut env_filter = EnvFilter::builder().parse(&args.log_lvl).expect("Invalid log level");
+    if !(args.log_lvl.contains("h2::") || args.log_lvl.contains("h2=")) {
+        env_filter = env_filter.add_directive(Directive::from_str("h2::codec=off").expect("Invalid log directive"));
     }
+    let logger = tracing_subscriber::fmt()
+        .with_ansi(args.no_color.is_none())
+        .with_env_filter(env_filter);
+
+    // stdio tunnel capture stdio, so need to log into stderr
+    if let Commands::Client(args) = &args.commands {
+        if args
+            .local_to_remote
+            .iter()
+            .filter(|x| x.local_protocol == LocalProtocol::Stdio)
+            .count()
+            > 0
+        {
+            logger.with_writer(io::stderr).init();
+        }
+    } else {
+        logger.init();
+    };
 
     match args.commands {
         Commands::Client(args) => {
@@ -1018,7 +1019,7 @@ async fn main() {
                         });
                     }
                     #[cfg(not(unix))]
-                    LocalProtocol::Unix { path } => {
+                    LocalProtocol::Unix { .. } => {
                         panic!("Unix socket is not available for non Unix platform")
                     }
                     LocalProtocol::Stdio

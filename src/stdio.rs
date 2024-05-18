@@ -2,8 +2,9 @@
 pub mod server {
 
     use tokio_fd::AsyncFd;
+    use tracing::info;
     pub async fn run_server() -> Result<(AsyncFd, AsyncFd), anyhow::Error> {
-        eprintln!("Starting STDIO server");
+        info!("Starting STDIO server");
 
         let stdin = AsyncFd::try_from(nix::libc::STDIN_FILENO)?;
         let stdout = AsyncFd::try_from(nix::libc::STDOUT_FILENO)?;
@@ -15,31 +16,39 @@ pub mod server {
 #[cfg(not(unix))]
 pub mod server {
     use bytes::BytesMut;
+    use log::error;
+    use scopeguard::guard;
     use std::io::{Read, Write};
     use std::{io, thread};
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
     use tokio::task::LocalSet;
     use tokio_stream::wrappers::UnboundedReceiverStream;
     use tokio_util::io::StreamReader;
+    use tracing::info;
 
     pub async fn run_server() -> Result<(impl AsyncRead, impl AsyncWrite), anyhow::Error> {
-        eprintln!("Starting STDIO server");
+        info!("Starting STDIO server. Press ctrl+c twice to exit");
 
         crossterm::terminal::enable_raw_mode()?;
 
         let stdin = io::stdin();
         let (send, recv) = tokio::sync::mpsc::unbounded_channel();
         thread::spawn(move || {
+            let _restore_terminal = guard((), move |_| {
+                let _ = crossterm::terminal::disable_raw_mode();
+            });
             let stdin = stdin;
             let mut stdin = stdin.lock();
             let mut buf = [0u8; 65536];
+
             loop {
-                let n = stdin.read(&mut buf).unwrap();
-                if n == 0 {
+                let n = stdin.read(&mut buf).unwrap_or(0);
+                if n == 0 || (n == 1 && buf[0] == 3) {
+                    // ctrl+c send char 3
                     break;
                 }
                 if let Err(err) = send.send(Result::<_, io::Error>::Ok(BytesMut::from(&buf[..n]))) {
-                    eprintln!("Failed send inout: {:?}", err);
+                    error!("Failed send inout: {:?}", err);
                     break;
                 }
             }
@@ -50,6 +59,9 @@ pub mod server {
         let rt = tokio::runtime::Handle::current();
         thread::spawn(move || {
             let task = async move {
+                let _restore_terminal = guard((), move |_| {
+                    let _ = crossterm::terminal::disable_raw_mode();
+                });
                 let mut stdout = io::stdout().lock();
                 let mut buf = [0u8; 65536];
                 loop {
@@ -62,7 +74,7 @@ pub mod server {
                     }
 
                     if let Err(err) = stdout.write_all(&buf[..n]) {
-                        eprintln!("Failed to write to stdout: {:?}", err);
+                        error!("Failed to write to stdout: {:?}", err);
                         break;
                     };
                     let _ = stdout.flush();

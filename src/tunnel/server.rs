@@ -167,7 +167,7 @@ async fn run_tunnel(
             Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
         }
         #[cfg(not(unix))]
-        LocalProtocol::ReverseUnix { ref path } => {
+        LocalProtocol::ReverseUnix { .. } => {
             error!("Received an unsupported target protocol {:?}", remote);
             Err(anyhow::anyhow!("Invalid upgrade request"))
         }
