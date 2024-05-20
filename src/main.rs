@@ -742,6 +742,8 @@ async fn main() {
             > 0
         {
             logger.with_writer(io::stderr).init();
+        } else {
+            logger.init()
         }
     } else {
         logger.init();
