@@ -2,6 +2,7 @@ use crate::LocalProtocol;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use regex::Regex;
 use serde::{Deserialize, Deserializer};
+use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,6 +57,10 @@ pub struct AllowReverseTunnelConfig {
     #[serde(default)]
     pub port: Vec<RangeInclusive<u16>>,
 
+    #[serde(deserialize_with = "deserialize_port_mapping")]
+    #[serde(default)]
+    pub port_mapping: HashMap<u16, u16>,
+
     #[serde(default = "default_cidr")]
     pub cidr: Vec<IpNet>,
 }
@@ -108,6 +113,29 @@ where
         .collect::<Result<Vec<RangeInclusive<u16>>, D::Error>>()?;
 
     Ok(ranges)
+}
+
+fn deserialize_port_mapping<'de, D>(deserializer: D) -> Result<HashMap<u16, u16>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mappings: Vec<String> = Deserialize::deserialize(deserializer)?;
+    mappings
+        .into_iter()
+        .map(|port_mapping| {
+            let port_mapping_parts: Vec<&str> = port_mapping.split(':').collect();
+            if port_mapping_parts.len() != 2 {
+                Err(serde::de::Error::custom(format!(
+                    "Invalid port_mapping entry: {}",
+                    port_mapping
+                )))
+            } else {
+                let orig_port = port_mapping_parts[0].parse::<u16>().map_err(serde::de::Error::custom)?;
+                let target_port = port_mapping_parts[1].parse::<u16>().map_err(serde::de::Error::custom)?;
+                Ok((orig_port, target_port))
+            }
+        })
+        .collect()
 }
 
 fn deserialize_non_empty_vec<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>

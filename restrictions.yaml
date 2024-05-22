@@ -48,6 +48,11 @@ restrictions:
           - Unix
         port:
           - 1..65535
+        # Maps ports on the server side from X to Y (X:Y). For example with 10001:8080 configured and a client
+        # which connects using '-R tcp://10001:localhost:80' the server will listen on port 8080 instead of 10001.
+        # The originally requested ports (NOT the mapped ports) need to be allowed via the 'ports' directive.
+        port_mapping:
+          - 10001:8080
         cidr:
           - 0.0.0.0/0
           - ::/0
