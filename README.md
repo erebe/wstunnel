@@ -104,7 +104,7 @@ Options:
           'tproxy+udp://[::1]:1212?timeout_sec=10'  listen locally on udp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
                                                     linux only and requires sudo/CAP_NET_ADMIN
           
-          'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
+          'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client --log-lvl=off -L stdio://%h:%p ws://localhost:8080" my-server`
           
           'unix:///tmp/wstunnel.sock:g.com:443' =>  listen for data from unix socket of path /tmp/wstunnel.sock and forward to g.com:443
 
@@ -368,7 +368,7 @@ curl -x socks5h://127.0.0.1:8888 http://google.com/
 You can specify `stdio` as source port on the client side if you wish to use wstunnel as part of a proxy command for ssh
 
 ```bash
-ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://myRemoteHost:8080" my-server
+ssh -o ProxyCommand="wstunnel client --log-lvl=off -L stdio://%h:%p ws://myRemoteHost:8080" my-server
 ```
 
 ---
