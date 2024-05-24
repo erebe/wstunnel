@@ -41,3 +41,6 @@ changelog:
     exclude:
       - "^docs:"
       - "^test:"
+release:
+  replace_existing_artifacts: true
+  prerelease: auto
