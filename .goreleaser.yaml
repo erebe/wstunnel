@@ -33,11 +33,16 @@ builds:
       - goos: freebsd
         goarch: "arm64"
     main: goreleaser.go
+    command: version
     hooks:
       #pre:
       #  - /bin/sh -c "if [ ! -e ./goreleaser.go ]; then echo -e 'package main\\\nfunc main() { }' > ./goreleaser.go ; fi"
       post:
         - ./.goreleaser_hook.sh "{{ .Arch }}" "{{ .Os }}" "{{ .Arm }}" "{{ .ProjectName }}"
+    overrides:
+      - goos: linux
+        goarch: arm64
+        ldflags: [ ]
 checksum:
   name_template: "checksums.txt"
 changelog:
