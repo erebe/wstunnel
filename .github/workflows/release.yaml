@@ -118,6 +118,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           components: rustfmt, clippy
 
+      - name: Install package for Android
+        if: contains(matrix.platform.target, 'android')
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
       - name: Show command used for Cargo
         run: |
           echo "cargo command is: ${{ env.CARGO }}"
