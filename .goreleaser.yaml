@@ -36,6 +36,7 @@ builds:
 checksum:
   name_template: "checksums.txt"
 changelog:
+  use: github
   sort: asc
   filters:
     exclude:
