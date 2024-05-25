@@ -34,6 +34,7 @@ use std::time::Duration;
 use std::{fmt, io};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
+use tokio::select;
 
 use tokio_rustls::rustls::pki_types::{CertificateDer, DnsName, PrivateKeyDer, ServerName};
 use tokio_rustls::TlsConnector;
@@ -1188,7 +1189,7 @@ async fn main() {
                     }
 
                     LocalProtocol::Stdio => {
-                        let server = stdio::server::run_server().await.unwrap_or_else(|err| {
+                        let (server, mut handle) = stdio::server::run_server().await.unwrap_or_else(|err| {
                             panic!("Cannot start STDIO server: {}", err);
                         });
                         tokio::spawn(async move {
@@ -1208,6 +1209,15 @@ async fn main() {
                                 error!("{:?}", err);
                             }
                         });
+
+                        // We need to wait for either a ctrl+c of that the stdio tunnel is closed
+                        // to force exit the program
+                        select! {
+                           _ = handle.closed() => {},
+                           _ = tokio::signal::ctrl_c() => {}
+                        }
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        std::process::exit(0);
                     }
                     LocalProtocol::ReverseTcp => {}
                     LocalProtocol::ReverseUdp { .. } => {}
