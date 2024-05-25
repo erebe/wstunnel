@@ -1,8 +1,8 @@
 on:
   # Indicates I want to run this workflow on all branches, PR, and tags
   push:
-    branches: ["main", "draft"]
-    tags: ["*"]
+    branches: [ "main", "draft" ]
+    tags: [ "*" ]
   pull_request:
     branches: [ "main" ]
 
@@ -40,11 +40,13 @@ jobs:
             target: i686-unknown-freebsd
             build-args: "--release"
 
-          # - name: Android aarch64
-          #   target: aarch64-linux-android
+          - name: Android aarch64
+            target: aarch64-linux-android
+            build-args: "--release"
 
-          # - name: Android armv7
-          #   target: armv7-linux-androideabi
+          - name: Android armv7
+            target: armv7-linux-androideabi
+            build-args: "--release"
 
           #- name: Linux mips
           #  target: mips-unknown-linux-musl
@@ -83,87 +85,79 @@ jobs:
             build-args: "--profile release-with-symbols"
 
     steps:
-    - name: Install package for linux
-      if: contains(matrix.platform.target, 'linux')
-      run: sudo apt install musl-tools 
+      - name: Install package for linux
+        if: contains(matrix.platform.target, 'linux')
+        run: sudo apt install musl-tools
 
-    - name: Install package for Android
-      if: contains(matrix.platform.target, 'android')
-      run: sudo apt install android-libunwind libunwind8
+      - name: Install package for Android
+        if: contains(matrix.platform.target, 'android')
+        run: sudo apt install android-libunwind libunwind8
 
-    - name: Checkout Git repo
-      uses: actions/checkout@v3
+      - name: Setup Android SDK
+        if: contains(matrix.platform.target, 'android')
+        uses: android-actions/setup-android@v3
 
-    # Linux & Windows
-    - name: Install rust toolchain for Linux
-      uses: actions-rs/toolchain@v1
-      with:
-        # We setup Rust toolchain and the desired target
-        profile: minimal
-        toolchain: "${{ env.RUST_VERSION }}"
-        override: true
-        target: ${{ matrix.platform.target }}
-        components: rustfmt, clippy
+      - name: Checkout Git repo
+        uses: actions/checkout@v3
 
-    - name: Install rust toolchain for Android
-      if: ${{ contains(matrix.platform.target, 'android') }}
-      uses: actions-rs/toolchain@v1
-      with:
-        # Need new release of cross to target rust > 1.68.0
-        # https://github.com/cross-rs/cross/issues/1222
-        profile: minimal
-        toolchain: 1.67.0
-        override: true
-        target: ${{ matrix.platform.target }}
-        components: rustfmt, clippy
+      # Linux & Windows
+      - name: Install rust toolchain for Linux
+        uses: actions-rs/toolchain@v1
+        with:
+          # We setup Rust toolchain and the desired target
+          profile: minimal
+          toolchain: "${{ env.RUST_VERSION }}"
+          override: true
+          target: ${{ matrix.platform.target }}
+          components: rustfmt, clippy
 
-    - name: Show command used for Cargo
-      run: |
-        echo "cargo command is: ${{ env.CARGO }}"
-        echo "target flag is: ${{ env.BUILD_ARGS }}"
+      - name: Show command used for Cargo
+        run: |
+          echo "cargo command is: ${{ env.CARGO }}"
+          echo "target flag is: ${{ env.BUILD_ARGS }}"
 
-    - name: Build ${{ matrix.platform.name }} binary
-      uses: actions-rs/cargo@v1
-      # We use cross-rs if not running on x86_64 architecture on Linux
-      with:
-        command: build
-        use-cross: ${{ !contains(matrix.platform.target, 'x86_64') || contains(matrix.platform.target, 'freebsd') }}
-        args: ${{ matrix.platform.build-args }} --target ${{ matrix.platform.target }}
+      - name: Build ${{ matrix.platform.name }} binary
+        uses: actions-rs/cargo@v1
+        # We use cross-rs if not running on x86_64 architecture on Linux
+        with:
+          command: build
+          use-cross: ${{ !contains(matrix.platform.target, 'x86_64') || contains(matrix.platform.target, 'freebsd') }}
+          args: ${{ matrix.platform.build-args }} --target ${{ matrix.platform.target }}
 
-    - name: Store artifact
-      uses: actions/upload-artifact@v3
-      with:
-        # Finally, we store the binary as GitHub artifact for later usage
-        name: ${{ env.BIN_NAME }}-${{ matrix.platform.target }}
-        path: target/${{ matrix.platform.target }}/release${{ contains(matrix.platform.target, 'windows') && '-with-symbols' || '' }}/${{ env.BIN_NAME }}${{ contains(matrix.platform.target, 'windows') && '.exe' || '' }}
-        retention-days: 1
+      - name: Store artifact
+        uses: actions/upload-artifact@v3
+        with:
+          # Finally, we store the binary as GitHub artifact for later usage
+          name: ${{ env.BIN_NAME }}-${{ matrix.platform.target }}
+          path: target/${{ matrix.platform.target }}/release${{ contains(matrix.platform.target, 'windows') && '-with-symbols' || '' }}/${{ env.BIN_NAME }}${{ contains(matrix.platform.target, 'windows') && '.exe' || '' }}
+          retention-days: 1
 
   release:
     name: Release
-    needs: [build]
+    needs: [ build ]
     # We run the release job only if a tag starts with 'v' letter
     if: startsWith( github.ref, 'refs/tags/v' )
     runs-on: ubuntu-22.04
     steps:
-    - name: Checkout Git repo
-      uses: actions/checkout@v3
+      - name: Checkout Git repo
+        uses: actions/checkout@v3
 
-    # Download all artifacts
-    - uses: actions/download-artifact@v3
-      with:
-        path: artifacts
+      # Download all artifacts
+      - uses: actions/download-artifact@v3
+        with:
+          path: artifacts
 
-    - name: list artifacts
-      run: find artifacts/
+      - name: list artifacts
+        run: find artifacts/
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
+      - name: Set up Go
+        uses: actions/setup-go@v4
 
-    - name: Run GoReleaser
-      uses: goreleaser/goreleaser-action@v5
-      with:
-        distribution: goreleaser
-        version: latest
-        args: release --clean --skip=validate
-      env:
-        GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --skip=validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
