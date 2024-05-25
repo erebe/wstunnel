@@ -48,7 +48,7 @@ tokio-stream = { version = "0.1.15", features = ["net"] }
 
 [target.'cfg(any(os = "linux", os = "darwin"))'.dependencies]
 tokio-rustls = { version = "0.26.0", features = [] }
-[target.'cfg(not(os = "linux"))'.dependencies]
+[target.'cfg(not(any(os = "linux", os = "darwin")))'.dependencies]
 tokio-rustls = { version = "0.26.0", default-features = false, features = ["logging", "tls12", "ring"] }
 
 tracing = { version = "0.1.40", features = ["log"] }
