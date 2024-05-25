@@ -91,7 +91,7 @@ jobs:
 
       - name: Install package for Android
         if: contains(matrix.platform.target, 'android')
-        run: sudo apt install android-libunwind libunwind8
+        run: sudo apt install android-libunwind android-libunwind-dev  libunwind-dev libunwind
 
       - name: Set up JDK 17
         if: contains(matrix.platform.target, 'android')
