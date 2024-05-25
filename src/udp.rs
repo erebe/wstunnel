@@ -415,7 +415,7 @@ pub fn mk_send_socket_tproxy(listener: &Arc<UdpSocket>) -> anyhow::Result<Arc<Ud
     )?;
 
     let mut remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
-    for cmsg in msg.cmsgs() {
+    for cmsg in msg.cmsgs()? {
         match cmsg {
             ControlMessageOwned::Ipv4OrigDstAddr(ip) => {
                 remote_addr = SocketAddr::new(
