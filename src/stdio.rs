@@ -33,11 +33,11 @@ pub mod server {
 pub mod server {
     use bytes::BytesMut;
     use log::error;
+    use parking_lot::Mutex;
     use scopeguard::guard;
     use std::io::{Read, Write};
-    use std::sync::{Arc, mpsc};
+    use std::sync::{mpsc, Arc};
     use std::{io, process, thread};
-    use parking_lot::Mutex;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
     use tokio::sync::oneshot;
     use tokio::task::LocalSet;
