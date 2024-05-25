@@ -93,6 +93,13 @@ jobs:
         if: contains(matrix.platform.target, 'android')
         run: sudo apt install android-libunwind libunwind8
 
+      - name: Set up JDK 17
+        if: contains(matrix.platform.target, 'android')
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
       - name: Setup Android SDK
         if: contains(matrix.platform.target, 'android')
         uses: android-actions/setup-android@v3
