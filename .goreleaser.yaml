@@ -26,6 +26,8 @@ builds:
         goarch: "386"
       - goos: android
         goarch: amd64
+      - goos: android
+        goarch: arm
       - goos: darwin
         goarch: "386"
       - goos: freebsd
