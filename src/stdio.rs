@@ -35,8 +35,9 @@ pub mod server {
     use log::error;
     use scopeguard::guard;
     use std::io::{Read, Write};
-    use std::sync::mpsc;
+    use std::sync::{Arc, mpsc};
     use std::{io, process, thread};
+    use parking_lot::Mutex;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
     use tokio::sync::oneshot;
     use tokio::task::LocalSet;
@@ -51,11 +52,13 @@ pub mod server {
 
         let stdin = io::stdin();
         let (send, recv) = tokio::sync::mpsc::unbounded_channel();
-        let (abort_tx, mut abort_rx) = oneshot::channel::<()>();
+        let (abort_tx, abort_rx) = oneshot::channel::<()>();
+        let abort_rx = Arc::new(Mutex::new(abort_rx));
+        let abort_rx2 = abort_rx.clone();
         thread::spawn(move || {
             let _restore_terminal = guard((), move |_| {
                 let _ = crossterm::terminal::disable_raw_mode();
-                abort_rx.close();
+                abort_rx.lock().close();
             });
             let stdin = stdin;
             let mut stdin = stdin.lock();
@@ -81,6 +84,7 @@ pub mod server {
             let task = async move {
                 let _restore_terminal = guard((), move |_| {
                     let _ = crossterm::terminal::disable_raw_mode();
+                    abort_rx2.lock().close();
                 });
                 let mut stdout = io::stdout().lock();
                 let mut buf = [0u8; 65536];
