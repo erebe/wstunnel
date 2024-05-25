@@ -18,10 +18,11 @@ case $go_os in
     darwin) rust_os='apple-darwin' ;;
     windows) rust_os='windows' ;;
     freebsd) rust_os='freebsd' ;;
+    android) rust_os='android' ;;
     *) echo "unknown os: $go_os" && exit 1 ;;
 esac
 
-# Find artifacts and uncompress in the coresponding directory
+# Find artifacts and uncompress in the corresponding directory
 if [ -z "$go_arm" ]
 then 
   DIST_DIR=$(find dist -type d -name "*${go_os}_${go_arch}*")

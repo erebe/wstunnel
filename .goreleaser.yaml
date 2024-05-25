@@ -4,6 +4,7 @@ builds:
       - darwin
       - windows
       - freebsd
+      - android
     goarch:
       - "386"
       - amd64
@@ -21,6 +22,10 @@ builds:
         goarch: arm
       - goos: linux
         goarch: "386"
+      - goos: android
+        goarch: "386"
+      - goos: android
+        goarch: amd64
       - goos: darwin
         goarch: "386"
       - goos: freebsd
