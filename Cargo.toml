@@ -46,9 +46,9 @@ socket2 = { version = "0.5.7", features = [] }
 tokio = { version = "1.37.0", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["net"] }
 
-[target.'cfg(any(os = "linux", os = "darwin"))'.dependencies]
+[target.'cfg(any(targt_os = "linux", target_os = "macos"))'.dependencies]
 tokio-rustls = { version = "0.26.0", features = [] }
-[target.'cfg(not(any(os = "linux", os = "darwin")))'.dependencies]
+[target.'cfg(not(any(target_os = "linux", target_os = "macos")))'.dependencies]
 tokio-rustls = { version = "0.26.0", default-features = false, features = ["logging", "tls12", "ring"] }
 
 tracing = { version = "0.1.40", features = ["log"] }
