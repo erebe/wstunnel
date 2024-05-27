@@ -14,7 +14,7 @@ case $go_arch in
     *) echo "unknown arch: $go_arch" && exit 1 ;;
 esac
 case $go_os in
-    linux) rust_os='linux' ;;
+    linux) rust_os='linux-musl' ;;
     darwin) rust_os='apple-darwin' ;;
     windows) rust_os='windows' ;;
     freebsd) rust_os='freebsd' ;;
