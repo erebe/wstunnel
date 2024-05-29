@@ -17,15 +17,12 @@ pub mod config_reloader;
 pub mod types;
 
 impl RestrictionsRules {
-    pub fn from_config_file(config_path: &Path) -> anyhow::Result<RestrictionsRules> {
-        let restrictions: RestrictionsRules = serde_yaml::from_reader(BufReader::new(File::open(config_path)?))?;
+    pub fn from_config_file(config_path: &Path) -> anyhow::Result<Self> {
+        let restrictions: Self = serde_yaml::from_reader(BufReader::new(File::open(config_path)?))?;
         Ok(restrictions)
     }
 
-    pub fn from_path_prefix(
-        path_prefixes: &[String],
-        restrict_to: &[(String, u16)],
-    ) -> anyhow::Result<RestrictionsRules> {
+    pub fn from_path_prefix(path_prefixes: &[String], restrict_to: &[(String, u16)]) -> anyhow::Result<Self> {
         let tunnels_restrictions = if restrict_to.is_empty() {
             let r = types::AllowConfig::Tunnel(types::AllowTunnelConfig {
                 protocol: vec![],
@@ -108,6 +105,6 @@ impl RestrictionsRules {
                 .collect::<Result<Vec<_>, anyhow::Error>>()?
         };
 
-        Ok(RestrictionsRules { restrictions })
+        Ok(Self { restrictions })
     }
 }

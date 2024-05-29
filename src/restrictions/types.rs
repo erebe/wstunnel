@@ -160,11 +160,11 @@ impl From<&LocalProtocol> for ReverseTunnelConfigProtocol {
             | LocalProtocol::Socks5 { .. }
             | LocalProtocol::TProxyTcp { .. }
             | LocalProtocol::TProxyUdp { .. }
-            | LocalProtocol::Unix { .. } => ReverseTunnelConfigProtocol::Unknown,
-            LocalProtocol::ReverseTcp => ReverseTunnelConfigProtocol::Tcp,
-            LocalProtocol::ReverseUdp { .. } => ReverseTunnelConfigProtocol::Udp,
-            LocalProtocol::ReverseSocks5 => ReverseTunnelConfigProtocol::Socks5,
-            LocalProtocol::ReverseUnix { .. } => ReverseTunnelConfigProtocol::Unix,
+            | LocalProtocol::Unix { .. } => Self::Unknown,
+            LocalProtocol::ReverseTcp => Self::Tcp,
+            LocalProtocol::ReverseUdp { .. } => Self::Udp,
+            LocalProtocol::ReverseSocks5 => Self::Socks5,
+            LocalProtocol::ReverseUnix { .. } => Self::Unix,
         }
     }
 }
@@ -179,9 +179,9 @@ impl From<&LocalProtocol> for TunnelConfigProtocol {
             | LocalProtocol::Socks5 { .. }
             | LocalProtocol::TProxyTcp { .. }
             | LocalProtocol::TProxyUdp { .. }
-            | LocalProtocol::Unix { .. } => TunnelConfigProtocol::Unknown,
-            LocalProtocol::Tcp { .. } => TunnelConfigProtocol::Tcp,
-            LocalProtocol::Udp { .. } => TunnelConfigProtocol::Udp,
+            | LocalProtocol::Unix { .. } => Self::Unknown,
+            LocalProtocol::Tcp { .. } => Self::Tcp,
+            LocalProtocol::Udp { .. } => Self::Udp,
         }
     }
 }

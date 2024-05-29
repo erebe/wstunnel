@@ -24,7 +24,7 @@ pub async fn propagate_local_to_remote(
     // We do our own pin_mut! to avoid shadowing timeout and be able to reset it, on next loop iteration
     // We reuse the future to avoid creating a timer in the tight loop
     let frequency = ping_frequency.unwrap_or(Duration::from_secs(3600 * 24));
-    let start_at = Instant::now().checked_add(frequency).unwrap_or(Instant::now());
+    let start_at = Instant::now().checked_add(frequency).unwrap_or_else(Instant::now);
     let timeout = tokio::time::interval_at(start_at, frequency);
     let should_close = close_tx.closed().fuse();
 

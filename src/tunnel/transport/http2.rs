@@ -24,7 +24,7 @@ pub struct Http2TunnelRead {
 }
 
 impl Http2TunnelRead {
-    pub fn new(inner: BodyStream<Incoming>) -> Self {
+    pub const fn new(inner: BodyStream<Incoming>) -> Self {
         Self { inner }
     }
 }
@@ -108,23 +108,24 @@ pub async fn connect(
     }?;
 
     // In http2 HOST header does not exist, it is explicitly set in the authority from the request uri
-    let (headers_file, authority) = if let Some(headers_file_path) = &client_cfg.http_headers_file {
-        let (host, headers) = headers_from_file(headers_file_path);
-        let host = if let Some((_, v)) = host {
-            match (client_cfg.remote_addr.scheme(), client_cfg.remote_addr.port()) {
-                (TransportScheme::Http, 80) | (TransportScheme::Https, 443) => {
-                    Some(v.to_str().unwrap_or("").to_string())
+    let (headers_file, authority) = client_cfg
+        .http_headers_file
+        .as_ref()
+        .map_or((None, None), |headers_file_path| {
+            let (host, headers) = headers_from_file(headers_file_path);
+            let host = if let Some((_, v)) = host {
+                match (client_cfg.remote_addr.scheme(), client_cfg.remote_addr.port()) {
+                    (TransportScheme::Http, 80) | (TransportScheme::Https, 443) => {
+                        Some(v.to_str().unwrap_or("").to_string())
+                    }
+                    (_, port) => Some(format!("{}:{}", v.to_str().unwrap_or(""), port)),
                 }
-                (_, port) => Some(format!("{}:{}", v.to_str().unwrap_or(""), port)),
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
-        (Some(headers), host)
-    } else {
-        (None, None)
-    };
+            (Some(headers), host)
+        });
 
     let mut req = Request::builder()
         .method("POST")
@@ -133,7 +134,7 @@ pub async fn connect(
             client_cfg.remote_addr.scheme(),
             authority
                 .as_deref()
-                .unwrap_or(client_cfg.http_header_host.to_str().unwrap_or("")),
+                .unwrap_or_else(|| client_cfg.http_header_host.to_str().unwrap_or("")),
             &client_cfg.http_upgrade_path_prefix
         ))
         .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))

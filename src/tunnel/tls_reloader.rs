@@ -37,7 +37,7 @@ enum TlsReloaderState {
 impl TlsReloaderState {
     fn fs_watcher(&self) -> &Mutex<RecommendedWatcher> {
         match self {
-            TlsReloaderState::Empty => unreachable!(),
+            Self::Empty => unreachable!(),
             Server(this) => &this.fs_watcher,
             Client(this) => &this.fs_watcher,
         }

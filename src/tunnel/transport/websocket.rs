@@ -97,7 +97,7 @@ pub struct WebsocketTunnelRead {
 }
 
 impl WebsocketTunnelRead {
-    pub fn new(ws: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>) -> Self {
+    pub const fn new(ws: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>) -> Self {
         Self { inner: ws }
     }
 }

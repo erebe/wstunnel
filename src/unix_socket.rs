@@ -13,7 +13,7 @@ pub struct UnixListenerStream {
 }
 
 impl UnixListenerStream {
-    pub fn new(listener: UnixListener, path_to_delete: bool) -> Self {
+    pub const fn new(listener: UnixListener, path_to_delete: bool) -> Self {
         Self {
             inner: listener,
             path_to_delete,

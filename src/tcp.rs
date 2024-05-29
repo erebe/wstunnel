@@ -97,16 +97,7 @@ pub async fn connect(
         }
     }
 
-    if let Some(cnx) = cnx {
-        Ok(cnx)
-    } else {
-        Err(anyhow!(
-            "Cannot connect to tcp endpoint {}:{} reason {:?}",
-            host,
-            port,
-            last_err
-        ))
-    }
+    cnx.ok_or_else(|| anyhow!("Cannot connect to tcp endpoint {}:{} reason {:?}", host, port, last_err))
 }
 
 #[instrument(level = "info", name = "http_proxy", skip_all)]
@@ -264,10 +255,7 @@ mod tests {
         let mut buf = [0u8; 25];
         let ret = client_srv.read(&mut buf).await;
         assert!(matches!(ret, Ok(18)));
-        client_srv
-            .write_all("HTTP/1.1 200 OK\r\n\r\n".as_bytes())
-            .await
-            .unwrap();
+        client_srv.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
 
         client_srv.get_mut().shutdown().await.unwrap();
         let _ = client.read(&mut buf).await.unwrap();

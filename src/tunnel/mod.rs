@@ -88,29 +88,24 @@ pub enum TransportScheme {
 }
 
 impl TransportScheme {
-    pub fn values() -> &'static [TransportScheme] {
-        &[
-            TransportScheme::Ws,
-            TransportScheme::Wss,
-            TransportScheme::Http,
-            TransportScheme::Https,
-        ]
+    pub const fn values() -> &'static [Self] {
+        &[Self::Ws, Self::Wss, Self::Http, Self::Https]
     }
-    pub fn to_str(self) -> &'static str {
+    pub const fn to_str(self) -> &'static str {
         match self {
-            TransportScheme::Ws => "ws",
-            TransportScheme::Wss => "wss",
-            TransportScheme::Http => "http",
-            TransportScheme::Https => "https",
+            Self::Ws => "ws",
+            Self::Wss => "wss",
+            Self::Http => "http",
+            Self::Https => "https",
         }
     }
 
     pub fn alpn_protocols(&self) -> Vec<Vec<u8>> {
         match self {
-            TransportScheme::Ws => vec![],
-            TransportScheme::Wss => vec![b"http/1.1".to_vec()],
-            TransportScheme::Http => vec![],
-            TransportScheme::Https => vec![b"h2".to_vec()],
+            Self::Ws => vec![],
+            Self::Wss => vec![b"http/1.1".to_vec()],
+            Self::Http => vec![],
+            Self::Https => vec![b"h2".to_vec()],
         }
     }
 }
@@ -119,10 +114,10 @@ impl FromStr for TransportScheme {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "https" => Ok(TransportScheme::Https),
-            "http" => Ok(TransportScheme::Http),
-            "wss" => Ok(TransportScheme::Wss),
-            "ws" => Ok(TransportScheme::Ws),
+            "https" => Ok(Self::Https),
+            "http" => Ok(Self::Http),
+            "wss" => Ok(Self::Wss),
+            "ws" => Ok(Self::Ws),
             _ => Err(()),
         }
     }
@@ -169,71 +164,71 @@ impl Debug for TransportAddr {
 impl TransportAddr {
     pub fn new(scheme: TransportScheme, host: Host, port: u16, tls: Option<TlsClientConfig>) -> Option<Self> {
         match scheme {
-            TransportScheme::Https => Some(TransportAddr::Https {
+            TransportScheme::Https => Some(Self::Https {
                 scheme: TransportScheme::Https,
                 tls: tls?,
                 host,
                 port,
             }),
-            TransportScheme::Http => Some(TransportAddr::Http {
+            TransportScheme::Http => Some(Self::Http {
                 scheme: TransportScheme::Http,
                 host,
                 port,
             }),
-            TransportScheme::Wss => Some(TransportAddr::Wss {
+            TransportScheme::Wss => Some(Self::Wss {
                 scheme: TransportScheme::Wss,
                 tls: tls?,
                 host,
                 port,
             }),
-            TransportScheme::Ws => Some(TransportAddr::Ws {
+            TransportScheme::Ws => Some(Self::Ws {
                 scheme: TransportScheme::Ws,
                 host,
                 port,
             }),
         }
     }
-    pub fn is_websocket(&self) -> bool {
-        matches!(self, TransportAddr::Ws { .. } | TransportAddr::Wss { .. })
+    pub const fn is_websocket(&self) -> bool {
+        matches!(self, Self::Ws { .. } | Self::Wss { .. })
     }
 
-    pub fn is_http2(&self) -> bool {
-        matches!(self, TransportAddr::Http { .. } | TransportAddr::Https { .. })
+    pub const fn is_http2(&self) -> bool {
+        matches!(self, Self::Http { .. } | Self::Https { .. })
     }
 
-    pub fn tls(&self) -> Option<&TlsClientConfig> {
+    pub const fn tls(&self) -> Option<&TlsClientConfig> {
         match self {
-            TransportAddr::Wss { tls, .. } => Some(tls),
-            TransportAddr::Https { tls, .. } => Some(tls),
-            TransportAddr::Ws { .. } => None,
-            TransportAddr::Http { .. } => None,
+            Self::Wss { tls, .. } => Some(tls),
+            Self::Https { tls, .. } => Some(tls),
+            Self::Ws { .. } => None,
+            Self::Http { .. } => None,
         }
     }
 
-    pub fn host(&self) -> &Host {
+    pub const fn host(&self) -> &Host {
         match self {
-            TransportAddr::Wss { host, .. } => host,
-            TransportAddr::Ws { host, .. } => host,
-            TransportAddr::Https { host, .. } => host,
-            TransportAddr::Http { host, .. } => host,
+            Self::Wss { host, .. } => host,
+            Self::Ws { host, .. } => host,
+            Self::Https { host, .. } => host,
+            Self::Http { host, .. } => host,
         }
     }
 
-    pub fn port(&self) -> u16 {
+    pub const fn port(&self) -> u16 {
         match self {
-            TransportAddr::Wss { port, .. } => *port,
-            TransportAddr::Ws { port, .. } => *port,
-            TransportAddr::Https { port, .. } => *port,
-            TransportAddr::Http { port, .. } => *port,
+            Self::Wss { port, .. } => *port,
+            Self::Ws { port, .. } => *port,
+            Self::Https { port, .. } => *port,
+            Self::Http { port, .. } => *port,
         }
     }
 
-    pub fn scheme(&self) -> &TransportScheme {
+    pub const fn scheme(&self) -> &TransportScheme {
         match self {
-            TransportAddr::Wss { scheme, .. } => scheme,
-            TransportAddr::Ws { scheme, .. } => scheme,
-            TransportAddr::Https { scheme, .. } => scheme,
-            TransportAddr::Http { scheme, .. } => scheme,
+            Self::Wss { scheme, .. } => scheme,
+            Self::Ws { scheme, .. } => scheme,
+            Self::Https { scheme, .. } => scheme,
+            Self::Http { scheme, .. } => scheme,
         }
     }
 }
@@ -257,8 +252,8 @@ pub enum TransportStream {
 impl AsyncRead for TransportStream {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
         match self.get_mut() {
-            TransportStream::Plain(cnx) => Pin::new(cnx).poll_read(cx, buf),
-            TransportStream::Tls(cnx) => Pin::new(cnx).poll_read(cx, buf),
+            Self::Plain(cnx) => Pin::new(cnx).poll_read(cx, buf),
+            Self::Tls(cnx) => Pin::new(cnx).poll_read(cx, buf),
         }
     }
 }
@@ -266,22 +261,22 @@ impl AsyncRead for TransportStream {
 impl AsyncWrite for TransportStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         match self.get_mut() {
-            TransportStream::Plain(cnx) => Pin::new(cnx).poll_write(cx, buf),
-            TransportStream::Tls(cnx) => Pin::new(cnx).poll_write(cx, buf),
+            Self::Plain(cnx) => Pin::new(cnx).poll_write(cx, buf),
+            Self::Tls(cnx) => Pin::new(cnx).poll_write(cx, buf),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         match self.get_mut() {
-            TransportStream::Plain(cnx) => Pin::new(cnx).poll_flush(cx),
-            TransportStream::Tls(cnx) => Pin::new(cnx).poll_flush(cx),
+            Self::Plain(cnx) => Pin::new(cnx).poll_flush(cx),
+            Self::Tls(cnx) => Pin::new(cnx).poll_flush(cx),
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         match self.get_mut() {
-            TransportStream::Plain(cnx) => Pin::new(cnx).poll_shutdown(cx),
-            TransportStream::Tls(cnx) => Pin::new(cnx).poll_shutdown(cx),
+            Self::Plain(cnx) => Pin::new(cnx).poll_shutdown(cx),
+            Self::Tls(cnx) => Pin::new(cnx).poll_shutdown(cx),
         }
     }
 
@@ -291,15 +286,15 @@ impl AsyncWrite for TransportStream {
         bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, Error>> {
         match self.get_mut() {
-            TransportStream::Plain(cnx) => Pin::new(cnx).poll_write_vectored(cx, bufs),
-            TransportStream::Tls(cnx) => Pin::new(cnx).poll_write_vectored(cx, bufs),
+            Self::Plain(cnx) => Pin::new(cnx).poll_write_vectored(cx, bufs),
+            Self::Tls(cnx) => Pin::new(cnx).poll_write_vectored(cx, bufs),
         }
     }
 
     fn is_write_vectored(&self) -> bool {
         match &self {
-            TransportStream::Plain(cnx) => cnx.is_write_vectored(),
-            TransportStream::Tls(cnx) => cnx.is_write_vectored(),
+            Self::Plain(cnx) => cnx.is_write_vectored(),
+            Self::Tls(cnx) => cnx.is_write_vectored(),
         }
     }
 }

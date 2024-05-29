@@ -90,7 +90,7 @@ impl RestrictionsRulesReloader {
         self.restrictions = Arc::new(restrictions);
     }
 
-    pub fn restrictions_rules(&self) -> &Arc<RestrictionsRules> {
+    pub const fn restrictions_rules(&self) -> &Arc<RestrictionsRules> {
         &self.restrictions
     }
 

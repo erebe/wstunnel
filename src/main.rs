@@ -344,11 +344,8 @@ enum LocalProtocol {
 }
 
 impl LocalProtocol {
-    pub fn is_reverse_tunnel(&self) -> bool {
-        matches!(
-            self,
-            LocalProtocol::ReverseTcp | LocalProtocol::ReverseUdp { .. } | LocalProtocol::ReverseSocks5
-        )
+    pub const fn is_reverse_tunnel(&self) -> bool {
+        matches!(self, Self::ReverseTcp | Self::ReverseUdp { .. } | Self::ReverseSocks5)
     }
 }
 
@@ -394,12 +391,10 @@ fn parse_local_bind(arg: &str) -> Result<(SocketAddr, &str), io::Error> {
     } else {
         // Maybe ipv4 addr
         let (ipv4_str, remaining) = arg.split_once(':').unwrap_or((arg, ""));
-
-        match Ipv4Addr::from_str(ipv4_str) {
-            Ok(ip4_addr) => (IpAddr::V4(ip4_addr), remaining),
-            // Must be the port, so we default to ipv4 bind
-            Err(_) => (IpAddr::V4(Ipv4Addr::from_str("127.0.0.1").unwrap()), arg),
-        }
+        Ipv4Addr::from_str(ipv4_str).map_or_else(
+            |_| (IpAddr::V4(Ipv4Addr::from_str("127.0.0.1").unwrap()), arg),
+            |ip4_addr| (IpAddr::V4(ip4_addr), remaining),
+        )
     };
 
     let remaining = remaining.trim_start_matches(':');
@@ -689,14 +684,14 @@ pub struct WsClientConfig {
 }
 
 impl WsClientConfig {
-    pub fn websocket_scheme(&self) -> &'static str {
+    pub const fn websocket_scheme(&self) -> &'static str {
         match self.remote_addr.tls().is_some() {
             false => "ws",
             true => "wss",
         }
     }
 
-    pub fn cnx_pool(&self) -> &bb8::Pool<WsClientConfig> {
+    pub fn cnx_pool(&self) -> &bb8::Pool<Self> {
         self.cnx_pool.as_ref().unwrap()
     }
 
@@ -707,16 +702,19 @@ impl WsClientConfig {
     pub fn tls_server_name(&self) -> ServerName<'static> {
         static INVALID_DNS_NAME: Lazy<DnsName> = Lazy::new(|| DnsName::try_from("dns-name-invalid.com").unwrap());
 
-        match self.remote_addr.tls().and_then(|tls| tls.tls_sni_override.as_ref()) {
-            None => match &self.remote_addr.host() {
-                Host::Domain(domain) => {
-                    ServerName::DnsName(DnsName::try_from(domain.clone()).unwrap_or_else(|_| INVALID_DNS_NAME.clone()))
-                }
-                Host::Ipv4(ip) => ServerName::IpAddress(IpAddr::V4(*ip).into()),
-                Host::Ipv6(ip) => ServerName::IpAddress(IpAddr::V6(*ip).into()),
-            },
-            Some(sni_override) => ServerName::DnsName(sni_override.clone()),
-        }
+        self.remote_addr
+            .tls()
+            .and_then(|tls| tls.tls_sni_override.as_ref())
+            .map_or_else(
+                || match &self.remote_addr.host() {
+                    Host::Domain(domain) => ServerName::DnsName(
+                        DnsName::try_from(domain.clone()).unwrap_or_else(|_| INVALID_DNS_NAME.clone()),
+                    ),
+                    Host::Ipv4(ip) => ServerName::IpAddress(IpAddr::V4(*ip).into()),
+                    Host::Ipv6(ip) => ServerName::IpAddress(IpAddr::V6(*ip).into()),
+                },
+                |sni_override| ServerName::DnsName(sni_override.clone()),
+            )
     }
 }
 

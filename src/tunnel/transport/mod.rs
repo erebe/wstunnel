@@ -38,8 +38,8 @@ pub enum TunnelReader {
 impl TunnelRead for TunnelReader {
     async fn copy(&mut self, writer: impl AsyncWrite + Unpin + Send) -> Result<(), std::io::Error> {
         match self {
-            TunnelReader::Websocket(s) => s.copy(writer).await,
-            TunnelReader::Http2(s) => s.copy(writer).await,
+            Self::Websocket(s) => s.copy(writer).await,
+            Self::Http2(s) => s.copy(writer).await,
         }
     }
 }
@@ -52,29 +52,29 @@ pub enum TunnelWriter {
 impl TunnelWrite for TunnelWriter {
     fn buf_mut(&mut self) -> &mut BytesMut {
         match self {
-            TunnelWriter::Websocket(s) => s.buf_mut(),
-            TunnelWriter::Http2(s) => s.buf_mut(),
+            Self::Websocket(s) => s.buf_mut(),
+            Self::Http2(s) => s.buf_mut(),
         }
     }
 
     async fn write(&mut self) -> Result<(), std::io::Error> {
         match self {
-            TunnelWriter::Websocket(s) => s.write().await,
-            TunnelWriter::Http2(s) => s.write().await,
+            Self::Websocket(s) => s.write().await,
+            Self::Http2(s) => s.write().await,
         }
     }
 
     async fn ping(&mut self) -> Result<(), std::io::Error> {
         match self {
-            TunnelWriter::Websocket(s) => s.ping().await,
-            TunnelWriter::Http2(s) => s.ping().await,
+            Self::Websocket(s) => s.ping().await,
+            Self::Http2(s) => s.ping().await,
         }
     }
 
     async fn close(&mut self) -> Result<(), std::io::Error> {
         match self {
-            TunnelWriter::Websocket(s) => s.close().await,
-            TunnelWriter::Http2(s) => s.close().await,
+            Self::Websocket(s) => s.close().await,
+            Self::Http2(s) => s.close().await,
         }
     }
 }
