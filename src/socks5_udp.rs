@@ -241,7 +241,14 @@ pub async fn run_server(
 
             let (destination_addr, data) = {
                 let payload = buf.split().freeze();
-                let (frag, destination_addr, data) = fast_socks5::parse_udp_request(payload.chunk()).await.unwrap();
+                let (frag, destination_addr, data) = match fast_socks5::parse_udp_request(payload.chunk()).await {
+                    Ok((frag, addr, data)) => (frag, addr, data),
+                    Err(err) => {
+                        warn!("Skipping invalid UDP socks5 request: {} ", err);
+                        debug!("Invalid UDP socks5 request: {:?}", payload.chunk());
+                        continue;
+                    }
+                };
                 // We don't support udp fragmentation
                 if frag != 0 {
                     warn!("dropping UDP socks5 fragmented");
