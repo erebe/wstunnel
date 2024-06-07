@@ -235,7 +235,8 @@ mod tests {
         let _mitm_proxy: ContainerAsync<MitmProxy> = RunnableImage::from(MitmProxy {})
             .with_network("host".to_string())
             .start()
-            .await;
+            .await
+            .unwrap();
 
         let mut client = connect_with_http_proxy(
             &"http://localhost:8080".parse().unwrap(),
