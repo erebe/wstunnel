@@ -42,7 +42,8 @@ impl DnsResolver {
             // https://github.com/hickory-dns/hickory-dns/issues/1968
             #[cfg(target_os = "windows")]
             {
-                opts.num_concurrent_reqs = 20;
+                opts.cache_size = 1024;
+                opts.num_concurrent_reqs = cfg.name_servers().len();
             }
             return Ok(Self::TrustDns(hickory_resolver::AsyncResolver::tokio(cfg, opts)));
         };
