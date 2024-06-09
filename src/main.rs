@@ -16,10 +16,9 @@ use anyhow::anyhow;
 use base64::Engine;
 use clap::Parser;
 use futures_util::{stream, TryStreamExt};
-use hickory_resolver::config::{NameServerConfig, ResolverConfig, ResolverOpts};
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
-use log::{debug, warn};
+use log::debug;
 use once_cell::sync::Lazy;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
@@ -245,6 +244,18 @@ struct Client {
     /// The certificate will be automatically reloaded if it changes
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
     tls_private_key: Option<PathBuf>,
+
+    /// Dns resolver to use to lookup ips of domain name. Can be specified multiple time
+    /// Example:
+    ///  dns://1.1.1.1 for using udp
+    ///  dns+https://1.1.1.1 for using dns over HTTPS
+    ///  dns+tls://8.8.8.8 for using dns over TLS
+    /// To use libc resolver, use
+    /// system://0.0.0.0
+    ///
+    /// **WARN** On windows you may want to specify explicitly the DNS resolver to avoid excessive DNS queries
+    #[arg(long, verbatim_doc_comment)]
+    dns_resolver: Vec<Url>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -280,7 +291,7 @@ struct Server {
     /// To use libc resolver, use
     /// system://0.0.0.0
     #[arg(long, verbatim_doc_comment)]
-    dns_resolver: Option<Vec<Url>>,
+    dns_resolver: Vec<Url>,
 
     /// Server will only accept connection from the specified tunnel information.
     /// Can be specified multiple time
@@ -866,12 +877,7 @@ async fn main() {
                 },
                 cnx_pool: None,
                 tls_reloader: None,
-                dns_resolver: if let Ok(resolver) = hickory_resolver::AsyncResolver::tokio_from_system_conf() {
-                    DnsResolver::TrustDns(resolver)
-                } else {
-                    debug!("Fall-backing to system dns resolver");
-                    DnsResolver::System
-                },
+                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver).expect("cannot create dns resolver"),
             };
 
             let tls_reloader =
@@ -1257,49 +1263,6 @@ async fn main() {
                 None
             };
 
-            let dns_resolver = match args.dns_resolver {
-                None => {
-                    if let Ok(resolver) = hickory_resolver::AsyncResolver::tokio_from_system_conf() {
-                        DnsResolver::TrustDns(resolver)
-                    } else {
-                        warn!("Fall-backing to system dns resolver. You should consider specifying a dns resolver. To avoid performance issue");
-                        DnsResolver::System
-                    }
-                }
-                Some(resolvers) => {
-                    if resolvers.iter().any(|r| r.scheme() == "system") {
-                        DnsResolver::System
-                    } else {
-                        let mut cfg = ResolverConfig::new();
-                        for resolver in resolvers {
-                            let (protocol, port) = match resolver.scheme() {
-                                "dns" => (hickory_resolver::config::Protocol::Udp, resolver.port().unwrap_or(53)),
-                                "dns+https" => {
-                                    (hickory_resolver::config::Protocol::Https, resolver.port().unwrap_or(443))
-                                }
-                                "dns+tls" => (hickory_resolver::config::Protocol::Tls, resolver.port().unwrap_or(853)),
-                                _ => panic!("invalid protocol for dns resolver"),
-                            };
-                            let sock = match resolver.host().unwrap() {
-                                Host::Domain(host) => match Host::parse(host) {
-                                    Ok(Host::Ipv4(ip)) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
-                                    Ok(Host::Ipv6(ip)) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
-                                    Ok(Host::Domain(_)) | Err(_) => {
-                                        panic!("Dns resolver must be an ip address, got {}", host)
-                                    }
-                                },
-                                Host::Ipv4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
-                                Host::Ipv6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
-                            };
-                            cfg.add_name_server(NameServerConfig::new(sock, protocol))
-                        }
-
-                        let opts = ResolverOpts::default();
-                        DnsResolver::TrustDns(hickory_resolver::AsyncResolver::tokio(cfg, opts))
-                    }
-                }
-            };
-
             let restrictions = if let Some(path) = &args.restrict_config {
                 RestrictionsRules::from_config_file(path).expect("Cannot parse restriction file")
             } else {
@@ -1332,7 +1295,7 @@ async fn main() {
                 timeout_connect: Duration::from_secs(10),
                 websocket_mask_frame: args.websocket_mask_frame,
                 tls: tls_config,
-                dns_resolver,
+                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver).expect("Cannot create DNS resolver"),
                 restriction_config: args.restrict_config,
             };
 
