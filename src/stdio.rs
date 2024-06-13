@@ -36,8 +36,8 @@ pub mod server {
     use parking_lot::Mutex;
     use scopeguard::guard;
     use std::io::{Read, Write};
-    use std::sync::{mpsc, Arc};
-    use std::{io, process, thread};
+    use std::sync::Arc;
+    use std::{io, thread};
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
     use tokio::sync::oneshot;
     use tokio::task::LocalSet;

@@ -877,7 +877,8 @@ async fn main() {
                 },
                 cnx_pool: None,
                 tls_reloader: None,
-                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver).expect("cannot create dns resolver"),
+                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver, args.socket_so_mark)
+                    .expect("cannot create dns resolver"),
             };
 
             let tls_reloader =
@@ -1295,7 +1296,8 @@ async fn main() {
                 timeout_connect: Duration::from_secs(10),
                 websocket_mask_frame: args.websocket_mask_frame,
                 tls: tls_config,
-                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver).expect("Cannot create DNS resolver"),
+                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver, args.socket_so_mark)
+                    .expect("Cannot create DNS resolver"),
                 restriction_config: args.restrict_config,
             };
 
