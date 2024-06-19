@@ -248,8 +248,8 @@ struct Client {
     /// Dns resolver to use to lookup ips of domain name. Can be specified multiple time
     /// Example:
     ///  dns://1.1.1.1 for using udp
-    ///  dns+https://1.1.1.1 for using dns over HTTPS
-    ///  dns+tls://8.8.8.8 for using dns over TLS
+    ///  dns+https://1.1.1.1?sni=loudflare-dns.com for using dns over HTTPS
+    ///  dns+tls://8.8.8.8?sni=dns.google for using dns over TLS
     /// To use libc resolver, use
     /// system://0.0.0.0
     ///
@@ -286,8 +286,8 @@ struct Server {
     /// Can be specified multiple time
     /// Example:
     ///  dns://1.1.1.1 for using udp
-    ///  dns+https://1.1.1.1 for using dns over HTTPS
-    ///  dns+tls://8.8.8.8 for using dns over TLS
+    ///  dns+https://1.1.1.1?sni=loudflare-dns.com for using dns over HTTPS
+    ///  dns+tls://8.8.8.8?sni=dns.google for using dns over TLS
     /// To use libc resolver, use
     /// system://0.0.0.0
     #[arg(long, verbatim_doc_comment)]

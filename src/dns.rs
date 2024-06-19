@@ -1,6 +1,6 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use futures_util::FutureExt;
-use hickory_resolver::config::{NameServerConfig, ResolverConfig, ResolverOpts};
+use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::{GenericConnector, RuntimeProvider, TokioRuntimeProvider};
 use hickory_resolver::proto::iocompat::AsyncIoTokioAsStd;
 use hickory_resolver::proto::TokioTime;
@@ -67,10 +67,24 @@ impl DnsResolver {
         // otherwise, use the specified resolvers
         let mut cfg = ResolverConfig::new();
         for resolver in resolvers.iter() {
-            let (protocol, port) = match resolver.scheme() {
-                "dns" => (hickory_resolver::config::Protocol::Udp, resolver.port().unwrap_or(53)),
-                "dns+https" => (hickory_resolver::config::Protocol::Https, resolver.port().unwrap_or(443)),
-                "dns+tls" => (hickory_resolver::config::Protocol::Tls, resolver.port().unwrap_or(853)),
+            let (protocol, port, tls_sni) = match resolver.scheme() {
+                "dns" => (Protocol::Udp, resolver.port().unwrap_or(53), None),
+                "dns+https" => {
+                    let tls_sni = resolver
+                        .query_pairs()
+                        .find(|(k, _)| k == "sni")
+                        .with_context(|| "Missing `sni` query parameter for dns over https")?
+                        .1;
+                    (Protocol::Https, resolver.port().unwrap_or(443), Some(tls_sni.to_string()))
+                }
+                "dns+tls" => {
+                    let tls_sni = resolver
+                        .query_pairs()
+                        .find(|(k, _)| k == "sni")
+                        .with_context(|| "Missing `sni` query parameter for dns over tls")?
+                        .1;
+                    (Protocol::Tls, resolver.port().unwrap_or(853), Some(tls_sni.to_string()))
+                }
                 _ => return Err(anyhow!("invalid protocol for dns resolver")),
             };
             let host = resolver
@@ -87,7 +101,10 @@ impl DnsResolver {
                 Host::Ipv4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
                 Host::Ipv6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
             };
-            cfg.add_name_server(NameServerConfig::new(sock, protocol))
+
+            let mut ns = NameServerConfig::new(sock, protocol);
+            ns.tls_dns_name = tls_sni;
+            cfg.add_name_server(ns);
         }
 
         let mut opts = ResolverOpts::default();

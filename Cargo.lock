@@ -305,7 +305,7 @@ dependencies = [
  "log",
  "pin-project-lite",
  "rustls 0.22.4",
- "rustls-native-certs",
+ "rustls-native-certs 0.7.0",
  "rustls-pemfile 2.1.2",
  "rustls-pki-types",
  "serde",
@@ -983,6 +983,7 @@ dependencies = [
  "once_cell",
  "rand",
  "rustls 0.21.12",
+ "rustls-native-certs 0.6.3",
  "rustls-pemfile 1.0.4",
  "thiserror",
  "tinyvec",
@@ -1008,6 +1009,7 @@ dependencies = [
  "rand",
  "resolv-conf",
  "rustls 0.21.12",
+ "rustls-native-certs 0.6.3",
  "smallvec",
  "thiserror",
  "tokio",
@@ -1140,7 +1142,7 @@ dependencies = [
  "hyper-util",
  "log",
  "rustls 0.22.4",
- "rustls-native-certs",
+ "rustls-native-certs 0.7.0",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.25.0",
@@ -2000,6 +2002,18 @@ dependencies = [
  "rustls-webpki 0.102.3",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rustls-native-certs"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9aace74cb666635c918e9c12bc0d348266037aa8eb599b5cba565709a8dff00"
+dependencies = [
+ "openssl-probe",
+ "rustls-pemfile 1.0.4",
+ "schannel",
+ "security-framework",
 ]
 
 [[package]]
@@ -3091,7 +3105,7 @@ dependencies = [
  "pin-project",
  "ppp",
  "regex",
- "rustls-native-certs",
+ "rustls-native-certs 0.7.0",
  "rustls-pemfile 2.1.2",
  "scopeguard",
  "serde",

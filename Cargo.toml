@@ -18,7 +18,7 @@ clap = { version = "4.5.6", features = ["derive", "env"] }
 fast-socks5 = { version = "0.9.6", features = [] }
 fastwebsockets = { version = "0.7.2", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.30" }
-hickory-resolver = { version = "0.24.1", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls"] }
+hickory-resolver = { version = "0.24.1", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls", "native-certs"] }
 ppp = { version = "2.2.0", features = [] }
 
 # For config file parsing
