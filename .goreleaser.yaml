@@ -20,8 +20,6 @@ builds:
         goarch: arm
       - goos: darwin
         goarch: arm
-      - goos: linux
-        goarch: "386"
       - goos: android
         goarch: "386"
       - goos: android
