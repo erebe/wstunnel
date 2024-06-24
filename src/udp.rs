@@ -152,7 +152,8 @@ impl UdpStream {
             keys_to_delete,
         };
 
-        let pending_notification = unsafe { std::mem::transmute(s.io.has_data_to_read.notified()) };
+        let pending_notification =
+            unsafe { std::mem::transmute::<Notified<'_>, Notified<'static>>(s.io.has_data_to_read.notified()) };
         s.pending_notification = Some(pending_notification);
 
         (s, io)
