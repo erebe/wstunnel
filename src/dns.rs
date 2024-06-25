@@ -1,5 +1,6 @@
+use crate::tcp;
 use anyhow::{anyhow, Context};
-use futures_util::FutureExt;
+use futures_util::{FutureExt, TryFutureExt};
 use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::{GenericConnector, RuntimeProvider, TokioRuntimeProvider};
 use hickory_resolver::proto::iocompat::AsyncIoTokioAsStd;
@@ -9,6 +10,7 @@ use log::warn;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::pin::Pin;
+use std::time::Duration;
 use tokio::net::{TcpStream, UdpSocket};
 use url::{Host, Url};
 
@@ -147,24 +149,30 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
 
     #[inline]
     fn connect_tcp(&self, server_addr: SocketAddr) -> Pin<Box<dyn Send + Future<Output = std::io::Result<Self::Tcp>>>> {
-        let socket = TcpStream::connect(server_addr);
+        #[cfg(not(target_os = "linux"))]
+        let so_mark = None;
 
         #[cfg(target_os = "linux")]
-        let socket = {
-            use socket2::SockRef;
+        let so_mark = self.so_mark;
+        let socket = async move {
+            let host = match server_addr.ip() {
+                IpAddr::V4(addr) => Host::<String>::Ipv4(addr),
+                IpAddr::V6(addr) => Host::<String>::Ipv6(addr),
+            };
 
-            socket.map({
-                let so_mark = self.so_mark;
-                move |sock| {
-                    if let (Ok(sock), Some(so_mark)) = (&sock, so_mark) {
-                        SockRef::from(sock).set_mark(so_mark)?;
-                    }
-                    sock
-                }
-            })
+            tcp::connect(
+                &host,
+                server_addr.port(),
+                so_mark,
+                Duration::from_secs(10),
+                &DnsResolver::System, // not going to be used as host is directly an ip address
+            )
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map(|s| s.map(AsyncIoTokioAsStd))
+            .await
         };
 
-        Box::pin(socket.map(|s| s.map(AsyncIoTokioAsStd)))
+        Box::pin(socket)
     }
 
     fn bind_udp(
