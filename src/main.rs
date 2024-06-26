@@ -248,8 +248,9 @@ struct Client {
     /// Dns resolver to use to lookup ips of domain name. Can be specified multiple time
     /// Example:
     ///  dns://1.1.1.1 for using udp
-    ///  dns+https://1.1.1.1?sni=loudflare-dns.com for using dns over HTTPS
+    ///  dns+https://1.1.1.1?sni=cloudflare-dns.com for using dns over HTTPS
     ///  dns+tls://8.8.8.8?sni=dns.google for using dns over TLS
+    /// For Dns over HTTPS/TLS if an HTTP proxy is configured, it will be used also
     /// To use libc resolver, use
     /// system://0.0.0.0
     ///
@@ -286,7 +287,7 @@ struct Server {
     /// Can be specified multiple time
     /// Example:
     ///  dns://1.1.1.1 for using udp
-    ///  dns+https://1.1.1.1?sni=loudflare-dns.com for using dns over HTTPS
+    ///  dns+https://1.1.1.1?sni=cloudflare-dns.com for using dns over HTTPS
     ///  dns+tls://8.8.8.8?sni=dns.google for using dns over TLS
     /// To use libc resolver, use
     /// system://0.0.0.0
@@ -839,6 +840,25 @@ async fn main() {
                     panic!("http headers file does not exists: {}", path.display());
                 }
             }
+            let http_proxy = if let Some(proxy) = args.http_proxy {
+                let mut proxy = if proxy.starts_with("http://") {
+                    Url::parse(&proxy).expect("Invalid http proxy url")
+                } else {
+                    Url::parse(&format!("http://{}", proxy)).expect("Invalid http proxy url")
+                };
+
+                if let Some(login) = args.http_proxy_login {
+                    proxy.set_username(login.as_str()).expect("Cannot set http proxy login");
+                }
+                if let Some(password) = args.http_proxy_password {
+                    proxy
+                        .set_password(Some(password.as_str()))
+                        .expect("Cannot set http proxy password");
+                }
+                Some(proxy)
+            } else {
+                None
+            };
             let mut client_config = WsClientConfig {
                 remote_addr: TransportAddr::new(
                     TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
@@ -856,29 +876,11 @@ async fn main() {
                 timeout_connect: Duration::from_secs(10),
                 websocket_ping_frequency: args.websocket_ping_frequency_sec.unwrap_or(Duration::from_secs(30)),
                 websocket_mask_frame: args.websocket_mask_frame,
-                http_proxy: if let Some(proxy) = args.http_proxy {
-                    let mut proxy = if proxy.starts_with("http://") {
-                        Url::parse(&proxy).expect("Invalid http proxy url")
-                    } else {
-                        Url::parse(&format!("http://{}", proxy)).expect("Invalid http proxy url")
-                    };
-
-                    if let Some(login) = args.http_proxy_login {
-                        proxy.set_username(login.as_str()).expect("Cannot set http proxy login");
-                    }
-                    if let Some(password) = args.http_proxy_password {
-                        proxy
-                            .set_password(Some(password.as_str()))
-                            .expect("Cannot set http proxy password");
-                    }
-                    Some(proxy)
-                } else {
-                    None
-                },
                 cnx_pool: None,
                 tls_reloader: None,
-                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver, args.socket_so_mark)
+                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver, http_proxy.clone(), args.socket_so_mark)
                     .expect("cannot create dns resolver"),
+                http_proxy,
             };
 
             let tls_reloader =
@@ -1296,7 +1298,7 @@ async fn main() {
                 timeout_connect: Duration::from_secs(10),
                 websocket_mask_frame: args.websocket_mask_frame,
                 tls: tls_config,
-                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver, args.socket_so_mark)
+                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver, None, args.socket_so_mark)
                     .expect("Cannot create DNS resolver"),
                 restriction_config: args.restrict_config,
             };

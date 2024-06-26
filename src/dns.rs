@@ -10,6 +10,7 @@ use log::warn;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpStream, UdpSocket};
 use url::{Host, Url};
@@ -38,7 +39,7 @@ impl DnsResolver {
         Ok(addrs)
     }
 
-    pub fn new_from_urls(resolvers: &[Url], so_mark: Option<u32>) -> anyhow::Result<Self> {
+    pub fn new_from_urls(resolvers: &[Url], proxy: Option<Url>, so_mark: Option<u32>) -> anyhow::Result<Self> {
         if resolvers.is_empty() {
             // no dns resolver specified, fall-back to default one
             let Ok((cfg, mut opts)) = hickory_resolver::system_conf::read_system_conf() else {
@@ -57,7 +58,7 @@ impl DnsResolver {
             return Ok(Self::TrustDns(AsyncResolver::new(
                 cfg,
                 opts,
-                GenericConnector::new(TokioRuntimeProviderWithSoMark::new(so_mark)),
+                GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
             )));
         };
 
@@ -114,7 +115,7 @@ impl DnsResolver {
         Ok(Self::TrustDns(AsyncResolver::new(
             cfg,
             opts,
-            GenericConnector::new(TokioRuntimeProviderWithSoMark::new(so_mark)),
+            GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
         )))
     }
 }
@@ -122,14 +123,16 @@ impl DnsResolver {
 #[derive(Clone)]
 pub struct TokioRuntimeProviderWithSoMark {
     runtime: TokioRuntimeProvider,
+    proxy: Option<Arc<Url>>,
     #[cfg(target_os = "linux")]
     so_mark: Option<u32>,
 }
 
 impl TokioRuntimeProviderWithSoMark {
-    fn new(so_mark: Option<u32>) -> Self {
+    fn new(proxy: Option<Url>, so_mark: Option<u32>) -> Self {
         Self {
             runtime: TokioRuntimeProvider::default(),
+            proxy: proxy.map(Arc::new),
             #[cfg(target_os = "linux")]
             so_mark,
         }
@@ -154,22 +157,37 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
 
         #[cfg(target_os = "linux")]
         let so_mark = self.so_mark;
+        let proxy = self.proxy.clone();
         let socket = async move {
             let host = match server_addr.ip() {
                 IpAddr::V4(addr) => Host::<String>::Ipv4(addr),
                 IpAddr::V6(addr) => Host::<String>::Ipv6(addr),
             };
 
-            tcp::connect(
-                &host,
-                server_addr.port(),
-                so_mark,
-                Duration::from_secs(10),
-                &DnsResolver::System, // not going to be used as host is directly an ip address
-            )
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-            .map(|s| s.map(AsyncIoTokioAsStd))
-            .await
+            if let Some(proxy) = &proxy {
+                tcp::connect_with_http_proxy(
+                    proxy,
+                    &host,
+                    server_addr.port(),
+                    so_mark,
+                    Duration::from_secs(10),
+                    &DnsResolver::System, // not going to be used as host is directly an ip address
+                )
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map(|s| s.map(AsyncIoTokioAsStd))
+                .await
+            } else {
+                tcp::connect(
+                    &host,
+                    server_addr.port(),
+                    so_mark,
+                    Duration::from_secs(10),
+                    &DnsResolver::System, // not going to be used as host is directly an ip address
+                )
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map(|s| s.map(AsyncIoTokioAsStd))
+                .await
+            }
         };
 
         Box::pin(socket)
