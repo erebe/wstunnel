@@ -213,7 +213,17 @@ Options:
           [Optional] The private key for the corresponding certificate used with mTLS.
           The certificate will be automatically reloaded if it changes
 
+      --dns-resolver <DNS_RESOLVER>
+          Dns resolver to use to lookup ips of domain name. Can be specified multiple time
+          Example:
+           dns://1.1.1.1 for using udp
+           dns+https://1.1.1.1?sni=cloudflare-dns.com for using dns over HTTPS
+           dns+tls://8.8.8.8?sni=dns.google for using dns over TLS
+          For Dns over HTTPS/TLS if an HTTP proxy is configured, it will be used also
+          To use libc resolver, use
+          system://0.0.0.0
 
+          **WARN** On windows you may want to specify explicitly the DNS resolver to avoid excessive DNS queries
 
 SERVER
 Usage: wstunnel server [OPTIONS] <ws[s]://0.0.0.0[:port]>
