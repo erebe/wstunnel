@@ -20,6 +20,7 @@ fastwebsockets = { version = "0.8.0", features = ["upgrade", "simd", "unstable-s
 futures-util = { version = "0.3.30" }
 hickory-resolver = { version = "0.24.1", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls", "native-certs"] }
 ppp = { version = "2.2.0", features = [] }
+itertools = "0.13.0"
 
 # For config file parsing
 regex = { version = "1.10.5", default-features = false, features = ["std", "perf"] }

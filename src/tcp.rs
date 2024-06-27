@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Context};
+use futures_util::{FutureExt, TryFutureExt};
 use std::{io, vec};
+use tokio::task::JoinSet;
 
 use crate::dns::DnsResolver;
 use base64::Engine;
@@ -8,10 +10,11 @@ use log::warn;
 use socket2::{SockRef, TcpKeepalive};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
+use itertools::Itertools;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::log::info;
 use tracing::{debug, instrument};
@@ -50,6 +53,16 @@ pub fn configure_socket(socket: SockRef, so_mark: &Option<u32>) -> Result<(), an
     Ok(())
 }
 
+// Interweave v4 and v6 addresses as per RFC8305.
+// The first address is v6 if we have any v6 addresses.
+fn sort_socket_addrs(socket_addrs: Vec<SocketAddr>) -> impl Iterator<Item = SocketAddr> {
+    let (addrs_v4, addrs_v6): (Vec<_>, Vec<_>) = socket_addrs.into_iter().partition(|a| match a {
+        SocketAddr::V4(_) => true,
+        SocketAddr::V6(_) => false,
+    });
+    addrs_v6.into_iter().interleave(addrs_v4)
+}
+
 pub async fn connect(
     host: &Host<String>,
     port: u16,
@@ -70,7 +83,9 @@ pub async fn connect(
 
     let mut cnx = None;
     let mut last_err = None;
-    for addr in socket_addrs {
+    let mut join_set = JoinSet::new();
+
+    for (ix, addr) in sort_socket_addrs(socket_addrs).enumerate() {
         debug!("Connecting to {}", addr);
 
         let socket = match &addr {
@@ -79,16 +94,36 @@ pub async fn connect(
         };
 
         configure_socket(socket2::SockRef::from(&socket), &so_mark)?;
-        match timeout(connect_timeout, socket.connect(addr)).await {
+
+        // Spawn the connection attempt in the join set.
+        // We include a delay of ix * 250 milliseconds, as per RFC8305.
+        // See https://datatracker.ietf.org/doc/html/rfc8305#section-5
+        join_set.spawn(sleep(Duration::from_millis(250 * (ix as u64))).then(move |_| {
+            timeout(connect_timeout, socket.connect(addr).map_err(move |err| (addr, err)))
+                .map_err(move |err| (addr, err))
+        }));
+    }
+
+    // Wait for the next future that finishes in the join set, until we got one
+    // that resulted in a successful connection.
+    while let Some(res) = join_set.join_next().await {
+        match res? {
             Ok(Ok(stream)) => {
+                // We've got a successful connection, so we can abort all other
+                // on-going attempts.
+                join_set.shutdown().await;
+
+                debug!(
+                    "Connected to tcp endpoint {}, aborted all other connections",
+                    stream.peer_addr()?
+                );
                 cnx = Some(stream);
-                break;
             }
-            Ok(Err(err)) => {
-                warn!("Cannot connect to tcp endpoint {addr} reason {err}");
+            Ok(Err((addr, err))) => {
+                debug!("Cannot connect to tcp endpoint {addr} reason {err}");
                 last_err = Some(err);
             }
-            Err(_) => {
+            Err((addr, _)) => {
                 warn!(
                     "Cannot connect to tcp endpoint {addr} due to timeout of {}s elapsed",
                     connect_timeout.as_secs()
