@@ -18,7 +18,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::futures::Notified;
 
-use crate::dns::DnsResolver;
+use crate::dns::{self, DnsResolver};
 use tokio::sync::Notify;
 use tokio::time::{timeout, Interval};
 use tracing::{debug, error, info};
@@ -337,7 +337,7 @@ pub async fn connect(
 
     let mut cnx = None;
     let mut last_err = None;
-    for addr in socket_addrs {
+    for addr in dns::sort_socket_addrs(&socket_addrs) {
         debug!("connecting to {}", addr);
 
         let socket = match &addr {

@@ -1,7 +1,7 @@
 use crate::tcp;
 use anyhow::{anyhow, Context};
 use futures_util::{FutureExt, TryFutureExt};
-use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
+use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::{GenericConnector, RuntimeProvider, TokioRuntimeProvider};
 use hickory_resolver::proto::iocompat::AsyncIoTokioAsStd;
 use hickory_resolver::proto::TokioTime;
@@ -14,6 +14,22 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpStream, UdpSocket};
 use url::{Host, Url};
+
+// Interweave v4 and v6 addresses as per RFC8305.
+// The first address is v6 if we have any v6 addresses.
+pub fn sort_socket_addrs(socket_addrs: &[SocketAddr]) -> impl Iterator<Item = &'_ SocketAddr> {
+    let mut pick_v6 = false;
+    let mut v6 = socket_addrs.iter().filter(|s| matches!(s, SocketAddr::V6(_)));
+    let mut v4 = socket_addrs.iter().filter(|s| matches!(s, SocketAddr::V4(_)));
+    std::iter::from_fn(move || {
+        pick_v6 = !pick_v6;
+        if pick_v6 {
+            v6.next().or_else(|| v4.next())
+        } else {
+            v4.next().or_else(|| v6.next())
+        }
+    })
+}
 
 #[derive(Clone)]
 pub enum DnsResolver {
@@ -112,6 +128,7 @@ impl DnsResolver {
 
         let mut opts = ResolverOpts::default();
         opts.timeout = std::time::Duration::from_secs(1);
+        opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
         Ok(Self::TrustDns(AsyncResolver::new(
             cfg,
             opts,
