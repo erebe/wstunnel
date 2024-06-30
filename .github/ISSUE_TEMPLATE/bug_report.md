@@ -14,8 +14,10 @@ Steps to reproduce the behavior:
 ## Expected behavior
 A clear and concise description of what you expected to happen.
 
-## Screenshots
-If applicable, add screenshots to help explain your problem.
+## Your wstunnel setup
+Paste your logs of wstunnel, started with `--log-lvl=DEBUG`, and with the `command line used`
+ - client
+ - server
 
 ## Desktop (please complete the following information):
  - OS: [e.g. iOS]
