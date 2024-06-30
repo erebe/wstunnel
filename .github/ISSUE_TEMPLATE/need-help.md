@@ -6,7 +6,9 @@ labels: 'help wanted'
 ---
 
 
-(ノಠ益ಠ)ノ彡┻━┻  --- ||||  Read and try the examples first before asking questions ||| --- (ノಠ益ಠ)ノ彡┻━┻
+(ノಠ益ಠ)ノ彡┻━┻  
+
+==> Read and try the examples first before asking questions <==
 
 https://github.com/erebe/wstunnel?#examples
 
@@ -18,6 +20,12 @@ Else if you forward all the traffic without putting a static route,
 you will endup looping your traffic wireguard interface -> wstunnel client -> wireguard interface
 If you have trouble making it works on windows, please check this issue #252
 ```
+
+(ノಠ益ಠ)ノ彡┻━┻
+
+
+
+
 
 
 ## Describe the goal
