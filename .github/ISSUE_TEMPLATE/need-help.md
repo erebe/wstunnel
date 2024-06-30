@@ -6,7 +6,7 @@ labels: 'help wanted'
 ---
 
 
-**Read the examples first before asking questions**
+(ノಠ益ಠ)ノ彡┻━┻  --- ||||  Read and try the examples first before asking questions ||| --- (ノಠ益ಠ)ノ彡┻━┻
 
 https://github.com/erebe/wstunnel?#examples
 
