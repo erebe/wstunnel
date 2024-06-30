@@ -5,7 +5,7 @@ title: ''
 labels: 'help wanted'
 ---
 
----
+
 **Read the examples first before asking questions**
 
 https://github.com/erebe/wstunnel?#examples
@@ -18,7 +18,7 @@ Else if you forward all the traffic without putting a static route,
 you will endup looping your traffic wireguard interface -> wstunnel client -> wireguard interface
 If you have trouble making it works on windows, please check this issue #252
 ```
----
+
 
 ## Describe the goal
 A clear and concise description of `what` you try to achieve.
