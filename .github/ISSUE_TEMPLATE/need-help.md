@@ -8,7 +8,7 @@ labels: 'help wanted'
 
 (ノಠ益ಠ)ノ彡┻━┻  
 
-==> Read and try the examples first before asking questions <==
+==> Read and try the examples first before requesting help <==
 
 https://github.com/erebe/wstunnel?#examples
 
