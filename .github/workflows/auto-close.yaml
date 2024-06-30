@@ -12,7 +12,7 @@ jobs:
         uses: roots/issue-closer@v1.1
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          issue-pattern: ".*Describe the (bug|feature).*"
+          issue-pattern: ".*Describe the (bug|feature|goal).*"
           issue-close-message: |- 
             Hello @${issue.user.login} :wave:
             
