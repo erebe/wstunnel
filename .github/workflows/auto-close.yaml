@@ -12,9 +12,9 @@ jobs:
         uses: roots/issue-closer@v1.1
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          issue-pattern: ".*Describe the bug.*"
+          issue-pattern: ".*Describe the (bug|feature).*"
           issue-close-message: |- 
-            @${issue.user.login}: hello! :wave:
+            Hello @${issue.user.login} :wave:
             
             This issue is being automatically closed because it does not follow the issue template.
 
