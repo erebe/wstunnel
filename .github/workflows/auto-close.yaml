@@ -9,10 +9,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v1
       - name: Automatically close issues that don't follow the issue template
-        uses: lucasbento/auto-close-issues@v1.0.2
+        uses: roots/issue-closer@v1.1
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          closed-issues-label: "bad-issue-template"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-pattern: ".*Describe the bug.*"
           issue-close-message: |- 
             @${issue.user.login}: hello! :wave:
             
