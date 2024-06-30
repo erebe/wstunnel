@@ -1,7 +1,7 @@
 use crate::tcp;
 use anyhow::{anyhow, Context};
 use futures_util::{FutureExt, TryFutureExt};
-use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
+use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::{GenericConnector, RuntimeProvider, TokioRuntimeProvider};
 use hickory_resolver::proto::iocompat::AsyncIoTokioAsStd;
 use hickory_resolver::proto::TokioTime;
@@ -112,6 +112,7 @@ impl DnsResolver {
 
         let mut opts = ResolverOpts::default();
         opts.timeout = std::time::Duration::from_secs(1);
+        opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
         Ok(Self::TrustDns(AsyncResolver::new(
             cfg,
             opts,

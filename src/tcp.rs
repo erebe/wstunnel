@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context};
 use std::{io, vec};
+use tokio::task::JoinSet;
 
 use crate::dns::DnsResolver;
 use base64::Engine;
@@ -11,7 +12,7 @@ use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::log::info;
 use tracing::{debug, instrument};
@@ -50,6 +51,22 @@ pub fn configure_socket(socket: SockRef, so_mark: &Option<u32>) -> Result<(), an
     Ok(())
 }
 
+// Interweave v4 and v6 addresses as per RFC8305.
+// The first address is v6 if we have any v6 addresses.
+fn sort_socket_addrs(socket_addrs: &[SocketAddr]) -> impl Iterator<Item = &SocketAddr> {
+    let mut pick_v6 = false;
+    let mut v6 = socket_addrs.iter().filter(|s| matches!(s, SocketAddr::V6(_)));
+    let mut v4 = socket_addrs.iter().filter(|s| matches!(s, SocketAddr::V4(_)));
+    std::iter::from_fn(move || {
+        pick_v6 = !pick_v6;
+        if pick_v6 {
+            v6.next().or_else(|| v4.next())
+        } else {
+            v4.next().or_else(|| v6.next())
+        }
+    })
+}
+
 pub async fn connect(
     host: &Host<String>,
     port: u16,
@@ -70,7 +87,9 @@ pub async fn connect(
 
     let mut cnx = None;
     let mut last_err = None;
-    for addr in socket_addrs {
+    let mut join_set = JoinSet::new();
+
+    for (ix, addr) in sort_socket_addrs(&socket_addrs).copied().enumerate() {
         debug!("Connecting to {}", addr);
 
         let socket = match &addr {
@@ -79,16 +98,45 @@ pub async fn connect(
         };
 
         configure_socket(socket2::SockRef::from(&socket), &so_mark)?;
-        match timeout(connect_timeout, socket.connect(addr)).await {
-            Ok(Ok(stream)) => {
-                cnx = Some(stream);
-                break;
+
+        // Spawn the connection attempt in the join set.
+        // We include a delay of ix * 250 milliseconds, as per RFC8305.
+        // See https://datatracker.ietf.org/doc/html/rfc8305#section-5
+        let fut = async move {
+            if ix > 0 {
+                sleep(Duration::from_millis(250 * ix as u64)).await;
             }
-            Ok(Err(err)) => {
-                warn!("Cannot connect to tcp endpoint {addr} reason {err}");
+            match timeout(connect_timeout, socket.connect(addr)).await {
+                Ok(Ok(s)) => Ok(Ok(s)),
+                Ok(Err(e)) => Ok(Err((addr, e))),
+                Err(e) => Err((addr, e)),
+            }
+        };
+        join_set.spawn(fut);
+    }
+
+    // Wait for the next future that finishes in the join set, until we got one
+    // that resulted in a successful connection.
+    // If cnx is no longer None, we exit the loop, since this means that we got
+    // a successful connection.
+    while let (None, Some(res)) = (&cnx, join_set.join_next().await) {
+        match res? {
+            Ok(Ok(stream)) => {
+                // We've got a successful connection, so we can abort all other
+                // on-going attempts.
+                join_set.abort_all();
+
+                debug!(
+                    "Connected to tcp endpoint {}, aborted all other connection attempts",
+                    stream.peer_addr()?
+                );
+                cnx = Some(stream);
+            }
+            Ok(Err((addr, err))) => {
+                debug!("Cannot connect to tcp endpoint {addr} reason {err}");
                 last_err = Some(err);
             }
-            Err(_) => {
+            Err((addr, _)) => {
                 warn!(
                     "Cannot connect to tcp endpoint {addr} due to timeout of {}s elapsed",
                     connect_timeout.as_secs()
@@ -195,7 +243,7 @@ pub async fn run_server(bind: SocketAddr, ip_transparent: bool) -> Result<TcpLis
 mod tests {
     use super::*;
     use futures_util::pin_mut;
-    use std::net::SocketAddr;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
     use testcontainers::core::WaitFor;
     use testcontainers::runners::AsyncRunner;
     use testcontainers::{ContainerAsync, Image, ImageArgs, RunnableImage};
@@ -225,6 +273,26 @@ mod tests {
                 length: Duration::from_secs(5),
             }]
         }
+    }
+
+    #[test]
+    fn test_sort_socket_addrs() {
+        let addrs = [
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 1)),
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 1), 1, 0, 0)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 3), 1)),
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 2), 1, 0, 0)),
+        ];
+        let expected = [
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 1), 1, 0, 0)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1)),
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 2), 1, 0, 0)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 1)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 3), 1)),
+        ];
+        let actual: Vec<_> = sort_socket_addrs(&addrs).copied().collect();
+        assert_eq!(expected, *actual);
     }
 
     #[tokio::test]
