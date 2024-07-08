@@ -36,7 +36,7 @@ use crate::socks5::Socks5Stream;
 use crate::tls_utils::{cn_from_certificate, find_leaf_certificate};
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
-use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
+use crate::tunnel::transport::websocket::{PingState, WebsocketTunnelRead, WebsocketTunnelWrite};
 use crate::udp::UdpStream;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -554,15 +554,21 @@ async fn ws_server_upgrade(
             };
             let (close_tx, close_rx) = oneshot::channel::<()>();
             ws_tx.set_auto_apply_mask(server_config.websocket_mask_frame);
+            let ws_tx = Arc::new(futures_util::lock::Mutex::new(ws_tx));
+            let ping_state = Arc::new(futures_util::lock::Mutex::new(PingState::new()));
 
             tokio::task::spawn(
-                super::transport::io::propagate_remote_to_local(local_tx, WebsocketTunnelRead::new(ws_rx), close_rx)
-                    .instrument(Span::current()),
+                super::transport::io::propagate_remote_to_local(
+                    local_tx,
+                    WebsocketTunnelRead::new(ws_rx, ws_tx.clone(), ping_state.clone()),
+                    close_rx,
+                )
+                .instrument(Span::current()),
             );
 
             let _ = super::transport::io::propagate_local_to_remote(
                 local_rx,
-                WebsocketTunnelWrite::new(ws_tx),
+                WebsocketTunnelWrite::new(ws_tx, ping_state),
                 close_tx,
                 None,
             )
