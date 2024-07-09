@@ -163,7 +163,7 @@ impl From<&LocalProtocol> for ReverseTunnelConfigProtocol {
             | LocalProtocol::Unix { .. } => Self::Unknown,
             LocalProtocol::ReverseTcp => Self::Tcp,
             LocalProtocol::ReverseUdp { .. } => Self::Udp,
-            LocalProtocol::ReverseSocks5 => Self::Socks5,
+            LocalProtocol::ReverseSocks5 { .. } => Self::Socks5,
             LocalProtocol::ReverseUnix { .. } => Self::Unix,
         }
     }
@@ -173,7 +173,7 @@ impl From<&LocalProtocol> for TunnelConfigProtocol {
         match value {
             LocalProtocol::ReverseTcp
             | LocalProtocol::ReverseUdp { .. }
-            | LocalProtocol::ReverseSocks5
+            | LocalProtocol::ReverseSocks5 { .. }
             | LocalProtocol::ReverseUnix { .. }
             | LocalProtocol::Stdio
             | LocalProtocol::Socks5 { .. }

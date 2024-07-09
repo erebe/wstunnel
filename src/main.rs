@@ -106,6 +106,7 @@ struct Client {
     /// 'udp://1212:1.1.1.1:53?timeout_sec=10'    timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
     ///
     /// 'socks5://[::1]:1212'            =>       listen locally with socks5 on port 1212 and forward dynamically requested tunnel
+    /// 'socks5://[::1]:1212?login=admin&password=admin' => listen locally with socks5 on port 1212 and only accept connection with login=admin and password=admin
     ///
     /// 'tproxy+tcp://[::1]:1212'        =>       listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
     /// 'tproxy+udp://[::1]:1212?timeout_sec=10'  listen locally on udp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
@@ -121,7 +122,7 @@ struct Client {
     /// examples:
     /// 'tcp://1212:google.com:443'      =>     listen on server for incoming tcp cnx on port 1212 and forward to google.com on port 443 from local machine
     /// 'udp://1212:1.1.1.1:53'          =>     listen on server for incoming udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53 from local machine
-    /// 'socks5://[::1]:1212'            =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine
+    /// 'socks5://[::1]:1212'            =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine (login/password is supported)
     /// 'unix://wstunnel.sock:g.com:443' =>     listen on server for incoming data from unix socket of path wstunnel.sock and forward to g.com:443 from local machine
     #[arg(short='R', long, value_name = "{tcp,udp,socks5,unix}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
     remote_to_local: Vec<LocalToRemote>,
@@ -342,22 +343,40 @@ struct Server {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum LocalProtocol {
-    Tcp { proxy_protocol: bool },
-    Udp { timeout: Option<Duration> },
+    Tcp {
+        proxy_protocol: bool,
+    },
+    Udp {
+        timeout: Option<Duration>,
+    },
     Stdio,
-    Socks5 { timeout: Option<Duration> },
+    Socks5 {
+        timeout: Option<Duration>,
+        credentials: Option<(String, String)>,
+    },
     TProxyTcp,
-    TProxyUdp { timeout: Option<Duration> },
+    TProxyUdp {
+        timeout: Option<Duration>,
+    },
     ReverseTcp,
-    ReverseUdp { timeout: Option<Duration> },
-    ReverseSocks5,
-    ReverseUnix { path: PathBuf },
-    Unix { path: PathBuf },
+    ReverseUdp {
+        timeout: Option<Duration>,
+    },
+    ReverseSocks5 {
+        timeout: Option<Duration>,
+        credentials: Option<(String, String)>,
+    },
+    ReverseUnix {
+        path: PathBuf,
+    },
+    Unix {
+        path: PathBuf,
+    },
 }
 
 impl LocalProtocol {
     pub const fn is_reverse_tunnel(&self) -> bool {
-        matches!(self, Self::ReverseTcp | Self::ReverseUdp { .. } | Self::ReverseSocks5)
+        matches!(self, Self::ReverseTcp | Self::ReverseUdp { .. } | Self::ReverseSocks5 { .. })
     }
 }
 
@@ -506,8 +525,11 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
                     .and_then(|x| x.parse::<u64>().ok())
                     .map(|d| if d == 0 { None } else { Some(Duration::from_secs(d)) })
                     .unwrap_or(Some(Duration::from_secs(30)));
+                let credentials = options
+                    .get("login")
+                    .and_then(|login| options.get("password").map(|p| (login.to_string(), p.to_string())));
                 Ok(LocalToRemote {
-                    local_protocol: LocalProtocol::Socks5 { timeout },
+                    local_protocol: LocalProtocol::Socks5 { timeout, credentials },
                     local: local_bind,
                     remote: (dest_host, dest_port),
                 })
@@ -953,16 +975,18 @@ async fn main() {
                             }
                         });
                     }
-                    LocalProtocol::Socks5 { .. } => {
+                    LocalProtocol::Socks5 { timeout, credentials } => {
                         trait T: AsyncWrite + AsyncRead + Unpin + Send {}
                         impl T for TcpStream {}
                         impl T for MyUdpSocket {}
 
+                        let credentials = credentials.clone();
+                        let timeout = *timeout;
                         tokio::spawn(async move {
                             let cfg = client_config.clone();
                             let (host, port) = to_host_port(tunnel.local);
                             let remote = RemoteAddr {
-                                protocol: LocalProtocol::ReverseSocks5,
+                                protocol: LocalProtocol::ReverseSocks5 { timeout, credentials },
                                 host,
                                 port,
                             };
@@ -1037,7 +1061,7 @@ async fn main() {
                     | LocalProtocol::TProxyUdp { .. }
                     | LocalProtocol::ReverseTcp
                     | LocalProtocol::ReverseUdp { .. }
-                    | LocalProtocol::ReverseSocks5
+                    | LocalProtocol::ReverseSocks5 { .. }
                     | LocalProtocol::ReverseUnix { .. } => {
                         panic!("Invalid protocol for reverse tunnel");
                     }
@@ -1175,8 +1199,8 @@ async fn main() {
                             }
                         });
                     }
-                    LocalProtocol::Socks5 { timeout } => {
-                        let server = socks5::run_server(tunnel.local, *timeout)
+                    LocalProtocol::Socks5 { timeout, credentials } => {
+                        let server = socks5::run_server(tunnel.local, *timeout, credentials.clone())
                             .await
                             .unwrap_or_else(|err| panic!("Cannot start Socks5 server on {}: {}", tunnel.local, err))
                             .map_ok(|(stream, (host, port))| {
@@ -1228,7 +1252,7 @@ async fn main() {
                     }
                     LocalProtocol::ReverseTcp => {}
                     LocalProtocol::ReverseUdp { .. } => {}
-                    LocalProtocol::ReverseSocks5 => {}
+                    LocalProtocol::ReverseSocks5 { .. } => {}
                     LocalProtocol::ReverseUnix { .. } => {}
                 }
             }

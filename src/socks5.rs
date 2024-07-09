@@ -1,7 +1,7 @@
 use crate::socks5_udp::Socks5UdpStream;
 use crate::{socks5_udp, LocalProtocol};
 use anyhow::Context;
-use fast_socks5::server::{Config, DenyAuthentication, Socks5Server};
+use fast_socks5::server::{Config, DenyAuthentication, SimpleUserPassword, Socks5Server};
 use fast_socks5::util::target_addr::TargetAddr;
 use fast_socks5::{consts, ReplyError};
 use futures_util::{stream, Stream, StreamExt};
@@ -45,15 +45,29 @@ impl Stream for Socks5Listener {
     }
 }
 
-pub async fn run_server(bind: SocketAddr, timeout: Option<Duration>) -> Result<Socks5Listener, anyhow::Error> {
-    info!("Starting SOCKS5 server listening cnx on {}", bind);
+pub async fn run_server(
+    bind: SocketAddr,
+    timeout: Option<Duration>,
+    credentials: Option<(String, String)>,
+) -> Result<Socks5Listener, anyhow::Error> {
+    info!(
+        "Starting SOCKS5 server listening cnx on {} with credentials {:?}",
+        bind, credentials
+    );
 
     let server = Socks5Server::<DenyAuthentication>::bind(bind)
         .await
         .with_context(|| format!("Cannot create socks5 server {:?}", bind))?;
 
-    let mut cfg = Config::<DenyAuthentication>::default();
-    cfg.set_allow_no_auth(true);
+    let mut cfg = Config::default();
+    cfg = if let Some((username, password)) = credentials {
+        cfg.set_allow_no_auth(false);
+        cfg.with_authentication(SimpleUserPassword { username, password })
+    } else {
+        cfg.set_allow_no_auth(true);
+        cfg
+    };
+
     cfg.set_dns_resolve(false);
     cfg.set_execute_command(false);
     cfg.set_udp_support(true);

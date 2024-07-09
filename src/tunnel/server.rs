@@ -129,7 +129,7 @@ async fn run_tunnel(
             };
             Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
         }
-        LocalProtocol::ReverseSocks5 => {
+        LocalProtocol::ReverseSocks5 { timeout, credentials } => {
             #[allow(clippy::type_complexity)]
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<(Socks5Stream, (Host, u16))>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
@@ -137,7 +137,7 @@ async fn run_tunnel(
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
-            let listening_server = socks5::run_server(bind.parse()?, None);
+            let listening_server = socks5::run_server(bind.parse()?, timeout, credentials);
             let (stream, local_srv) = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let protocol = stream.local_protocol();
             let (local_rx, local_tx) = tokio::io::split(stream);
@@ -571,7 +571,7 @@ async fn ws_server_upgrade(
         .instrument(Span::current()),
     );
 
-    if req_protocol == LocalProtocol::ReverseSocks5 {
+    if matches!(req_protocol, LocalProtocol::ReverseSocks5 { .. }) {
         let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), &remote_addr)) else {
             error!("Bad headervalue for reverse socks5: {} {}", remote_addr.host, remote_addr.port);
             return http::Response::builder()
@@ -691,7 +691,7 @@ async fn http_server_upgrade(
         .instrument(Span::current()),
     );
 
-    if req_protocol == LocalProtocol::ReverseSocks5 {
+    if matches!(req_protocol, LocalProtocol::ReverseSocks5 { .. }) {
         let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), &remote_addr)) else {
             error!("Bad header value for reverse socks5: {} {}", remote_addr.host, remote_addr.port);
             return http::Response::builder()

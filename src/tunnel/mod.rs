@@ -43,7 +43,7 @@ impl JwtTunnelConfig {
                 LocalProtocol::Socks5 { .. } => LocalProtocol::Tcp { proxy_protocol: false },
                 LocalProtocol::ReverseTcp => LocalProtocol::ReverseTcp,
                 LocalProtocol::ReverseUdp { .. } => dest.protocol.clone(),
-                LocalProtocol::ReverseSocks5 => LocalProtocol::ReverseSocks5,
+                LocalProtocol::ReverseSocks5 { .. } => dest.protocol.clone(),
                 LocalProtocol::TProxyTcp => LocalProtocol::Tcp { proxy_protocol: false },
                 LocalProtocol::TProxyUdp { timeout } => LocalProtocol::Udp { timeout },
                 LocalProtocol::Unix { .. } => LocalProtocol::Tcp { proxy_protocol: false },
