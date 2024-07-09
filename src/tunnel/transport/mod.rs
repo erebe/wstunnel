@@ -21,6 +21,7 @@ pub trait TunnelWrite: Send + 'static {
     fn write(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
     fn ping(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
     fn close(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
+    fn handle_message(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
 }
 
 pub trait TunnelRead: Send + 'static {
@@ -75,6 +76,13 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.close().await,
             Self::Http2(s) => s.close().await,
+        }
+    }
+
+    async fn handle_message(&mut self) -> Result<(), std::io::Error> {
+        match self {
+            Self::Websocket(s) => s.handle_message().await,
+            Self::Http2(s) => s.handle_message().await,
         }
     }
 }

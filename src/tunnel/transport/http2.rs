@@ -95,6 +95,10 @@ impl TunnelWrite for Http2TunnelWrite {
     async fn close(&mut self) -> Result<(), io::Error> {
         Ok(())
     }
+
+    async fn handle_message(&mut self) -> Result<(), std::io::Error> {
+        Ok(())
+    }
 }
 
 pub async fn connect(

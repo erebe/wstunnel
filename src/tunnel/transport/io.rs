@@ -65,6 +65,12 @@ pub async fn propagate_local_to_remote(
             warn!("error while writing to tx tunnel {}", err);
             break;
         }
+
+        // Handle outstanding messages
+        if let Err(err) = ws_tx.handle_message().await {
+            warn!("error while dispatching message: {}", err);
+            break;
+        }
     }
 
     // Send normal close
