@@ -8,6 +8,7 @@ use std::future::Future;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use tokio::task::JoinSet;
 
 use log::warn;
 use std::pin::{pin, Pin};
@@ -18,9 +19,9 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::futures::Notified;
 
-use crate::dns::DnsResolver;
+use crate::dns::{self, DnsResolver};
 use tokio::sync::Notify;
-use tokio::time::{timeout, Interval};
+use tokio::time::{sleep, timeout, Interval};
 use tracing::{debug, error, info};
 use url::Host;
 
@@ -337,7 +338,9 @@ pub async fn connect(
 
     let mut cnx = None;
     let mut last_err = None;
-    for addr in socket_addrs {
+    let mut join_set = JoinSet::new();
+
+    for (ix, addr) in dns::sort_socket_addrs(&socket_addrs).copied().enumerate() {
         debug!("connecting to {}", addr);
 
         let socket = match &addr {
@@ -353,18 +356,47 @@ pub async fn connect(
             }
         };
 
-        match timeout(connect_timeout, socket.connect(addr)).await {
-            Ok(Ok(_)) => {
-                cnx = Some(socket);
-                break;
+        // Spawn the connection attempt in the join set.
+        // We include a delay of ix * 250 milliseconds, as per RFC8305.
+        // See https://datatracker.ietf.org/doc/html/rfc8305#section-5
+        let fut = async move {
+            if ix > 0 {
+                sleep(Duration::from_millis(250 * ix as u64)).await;
             }
-            Ok(Err(err)) => {
-                debug!("Cannot connect udp socket to specified peer {addr} reason {err}");
+
+            match timeout(connect_timeout, socket.connect(addr)).await {
+                Ok(Ok(())) => Ok(Ok(socket)),
+                Ok(Err(e)) => Ok(Err((addr, e))),
+                Err(e) => Err((addr, e)),
+            }
+        };
+        join_set.spawn(fut);
+    }
+
+    // Wait for the next future that finishes in the join set, until we got one
+    // that resulted in a successful connection.
+    // If cnx is no longer None, we exit the loop, since this means that we got
+    // a successful connection.
+    while let (None, Some(res)) = (&cnx, join_set.join_next().await) {
+        match res? {
+            Ok(Ok(socket)) => {
+                // We've got a successful connection, so we can abort all other
+                // on-going attempts.
+                join_set.abort_all();
+
+                debug!(
+                    "Connected to udp endpoint {}, aborted all other connection attempts",
+                    socket.peer_addr()?
+                );
+                cnx = Some(socket);
+            }
+            Ok(Err((addr, err))) => {
+                debug!("Cannot connect to udp endpoint {addr} reason {err}");
                 last_err = Some(err);
             }
-            Err(_) => {
-                debug!(
-                    "Cannot connect udp socket to specified peer {addr} due to timeout of {}s elapsed",
+            Err((addr, _)) => {
+                warn!(
+                    "Cannot connect to udp endpoint {addr} due to timeout of {}s elapsed",
                     connect_timeout.as_secs()
                 );
             }
