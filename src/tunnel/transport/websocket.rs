@@ -3,7 +3,7 @@ use crate::tunnel::{tunnel_to_jwt_token, RemoteAddr, JWT_HEADER_PREFIX};
 use crate::WsClientConfig;
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
-use fastwebsockets::{Frame, OpCode, Payload, WebSocketRead, WebSocketWrite};
+use fastwebsockets::{CloseCode, Frame, OpCode, Payload, WebSocketRead, WebSocketWrite};
 use http_body_util::Empty;
 use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
@@ -186,7 +186,11 @@ impl TunnelWrite for WebsocketTunnelWrite {
     }
 
     async fn close(&mut self) -> Result<(), io::Error> {
-        if let Err(err) = self.inner.write_frame(Frame::close(1000, &[])).await {
+        if let Err(err) = self
+            .inner
+            .write_frame(Frame::close(CloseCode::Normal.into(), &[]))
+            .await
+        {
             return Err(io::Error::new(ErrorKind::BrokenPipe, err));
         }
 
