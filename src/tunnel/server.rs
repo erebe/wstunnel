@@ -546,11 +546,7 @@ async fn ws_server_upgrade(
     tokio::spawn(
         async move {
             let (ws_rx, mut ws_tx) = match fut.await {
-                Ok(mut ws) => {
-                    ws.set_auto_pong(false);
-                    ws.set_auto_close(false);
-                    ws.split(tokio::io::split)
-                }
+                Ok(ws) => ws.split(tokio::io::split),
                 Err(err) => {
                     error!("Error during http upgrade request: {:?}", err);
                     return;

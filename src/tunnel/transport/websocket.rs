@@ -22,11 +22,10 @@ use tracing::{debug, trace};
 use uuid::Uuid;
 
 // Messages that can be passed from the reader half to the writer half
-#[derive(Debug)]
 pub enum WebSocketTunnelMessage {
-    Ping(u8),
     Pong(u8),
-    Close,
+    // In practice we will only ever get frame variants without a lifetime here
+    SendFrame(Frame<'static>),
 }
 
 #[derive(Debug)]
@@ -166,20 +165,11 @@ impl TunnelWrite for WebsocketTunnelWrite {
                 self.ping_state.set_pong_seq(seq);
                 Ok(())
             }
-            Ok(WebSocketTunnelMessage::Ping(seq)) => {
-                debug!("Sending pong({})", seq);
-                self.inner
-                    .write_frame(Frame::pong(Payload::BorrowedMut(&mut [seq])))
-                    .await
-                    .map_err(|err| io::Error::new(ErrorKind::BrokenPipe, err))
-            }
-            Ok(WebSocketTunnelMessage::Close) => {
-                debug!("Sending close confirmation");
-                self.inner
-                    .write_frame(Frame::close(1000, &[]))
-                    .await
-                    .map_err(|err| io::Error::new(ErrorKind::BrokenPipe, err))
-            }
+            Ok(WebSocketTunnelMessage::SendFrame(frame)) => self
+                .inner
+                .write_frame(frame)
+                .await
+                .map_err(|err| io::Error::new(ErrorKind::BrokenPipe, err)),
             Err(TryRecvError::Empty) => Ok(()),
             Err(TryRecvError::Disconnected) => Err(io::Error::new(ErrorKind::BrokenPipe, "channel closed")),
         }
@@ -212,15 +202,20 @@ impl WebsocketTunnelRead {
     }
 }
 
-// Since we disable auto_pong and auto_close, we should never end up here.
-// So let's panic so that we don't accidentally end up calling this.
-fn frame_reader(_: Frame<'_>) -> futures_util::future::Ready<anyhow::Result<()>> {
-    unimplemented!()
+async fn send_frame(sender: &Sender<WebSocketTunnelMessage>, frame: Frame<'static>) -> Result<(), io::Error> {
+    sender
+        .send(WebSocketTunnelMessage::SendFrame(frame))
+        .await
+        .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))
 }
 
 impl TunnelRead for WebsocketTunnelRead {
     async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> Result<(), io::Error> {
-        let msg = match self.inner.read_frame(&mut frame_reader).await {
+        let msg = match self
+            .inner
+            .read_frame(&mut |f| send_frame(&self.send_to_writer, f))
+            .await
+        {
             Ok(msg) => msg,
             Err(err) => return Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
         };
@@ -233,20 +228,6 @@ impl TunnelRead for WebsocketTunnelRead {
                     Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
                 }
             }
-            OpCode::Close => {
-                // Sending back the close confirmation is best effort, if we fail, we just close
-                // the connection anyway
-                _ = self.send_to_writer.send(WebSocketTunnelMessage::Close).await;
-                Err(io::Error::new(ErrorKind::NotConnected, "websocket close"))
-            }
-            OpCode::Ping => {
-                let seq = msg.payload[0];
-                debug!("Received ping({})", seq);
-                self.send_to_writer
-                    .send(WebSocketTunnelMessage::Ping(seq))
-                    .await
-                    .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))
-            }
             OpCode::Pong => {
                 let seq = msg.payload[0];
                 debug!("Received pong({})", seq);
@@ -255,6 +236,12 @@ impl TunnelRead for WebsocketTunnelRead {
                     .await
                     .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))
             }
+            // We use auto_close so the write half will automatically get closed
+            // and we automatically send a close frame back.
+            // We can just break out of the read loop here.
+            OpCode::Close => Err(io::Error::new(ErrorKind::NotConnected, "websocket close")),
+            // We use auto_pong , so we'll never see this variant
+            OpCode::Ping => unreachable!(),
         }
     }
 }
@@ -319,8 +306,6 @@ pub async fn connect(
         .with_context(|| format!("failed to do websocket handshake with the server {:?}", client_cfg.remote_addr))?;
 
     ws.set_auto_apply_mask(client_cfg.websocket_mask_frame);
-    ws.set_auto_pong(false);
-    ws.set_auto_close(false);
 
     let (ws_rx, ws_tx) = ws.split(tokio::io::split);
     let (ch_tx, ch_rx) = mpsc::channel::<WebSocketTunnelMessage>(32);
