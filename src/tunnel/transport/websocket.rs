@@ -15,7 +15,9 @@ use hyper_util::rt::TokioIo;
 use std::io;
 use std::io::ErrorKind;
 use std::ops::DerefMut;
-use tokio::io::{AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use std::pin::Pin;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::select;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tracing::{debug, trace};
@@ -100,6 +102,36 @@ impl WebsocketTunnelWrite {
 impl TunnelWrite for WebsocketTunnelWrite {
     fn buf_mut(&mut self) -> &mut BytesMut {
         &mut self.buf
+    }
+
+    async fn write_from(&mut self, local_rx: &mut Pin<&mut impl AsyncRead>) -> Result<(), io::Error> {
+        enum SelectResult {
+            Write(Result<usize, io::Error>),
+            FromReader(Option<WebSocketTunnelMessage>),
+        }
+
+        let res = select! {
+            biased;
+
+            read_len = local_rx.read_buf(&mut self.buf) => SelectResult::Write(read_len),
+            msg = self.receive_from_reader.recv() => SelectResult::FromReader(msg)
+        };
+
+        match res {
+            SelectResult::Write(Ok(0)) => Err(io::Error::new(ErrorKind::BrokenPipe, "could not read from local")),
+            SelectResult::Write(Ok(_read_len)) => self.write().await,
+            SelectResult::Write(Err(err)) => Err(err),
+            SelectResult::FromReader(Some(WebSocketTunnelMessage::Pong(seq))) => {
+                self.ping_state.set_pong_seq(seq);
+                Ok(())
+            }
+            SelectResult::FromReader(Some(WebSocketTunnelMessage::SendFrame(frame))) => self
+                .inner
+                .write_frame(frame)
+                .await
+                .map_err(|err| io::Error::new(ErrorKind::BrokenPipe, err)),
+            SelectResult::FromReader(None) => Err(io::Error::new(ErrorKind::BrokenPipe, "channel closed")),
+        }
     }
 
     async fn write(&mut self) -> Result<(), io::Error> {

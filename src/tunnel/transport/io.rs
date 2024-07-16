@@ -2,7 +2,7 @@ use crate::tunnel::transport::{TunnelRead, TunnelWrite};
 use bytes::BufMut;
 use futures_util::{pin_mut, FutureExt};
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::select;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
@@ -37,10 +37,10 @@ pub async fn propagate_local_to_remote(
             "buffer must be large enough to receive a whole packet length"
         );
 
-        let read_len = select! {
+        let res = select! {
             biased;
 
-            read_len = local_rx.read_buf(ws_tx.buf_mut()) => read_len,
+            res = ws_tx.write_from(&mut local_rx) => res,
 
             _ = &mut should_close => break,
 
@@ -51,24 +51,8 @@ pub async fn propagate_local_to_remote(
             }
         };
 
-        let _read_len = match read_len {
-            Ok(0) => break,
-            Ok(read_len) => read_len,
-            Err(err) => {
-                warn!("error while reading incoming bytes from local tx tunnel: {}", err);
-                break;
-            }
-        };
-
-        //debug!("read {} wasted {}% usable {} capa {}", read_len, 100 - (read_len * 100 / buffer.capacity()), buffer.as_slice().len(), buffer.capacity());
-        if let Err(err) = ws_tx.write().await {
-            warn!("error while writing to tx tunnel {}", err);
-            break;
-        }
-
-        // Handle outstanding messages
-        if let Err(err) = ws_tx.handle_message().await {
-            warn!("error while dispatching message: {}", err);
+        if let Err(err) = res {
+            warn!("error while writing from local to tunnel: {}", err);
             break;
         }
     }
