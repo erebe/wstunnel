@@ -1,4 +1,4 @@
-use crate::tcp;
+use crate::{tcp};
 use anyhow::{anyhow, Context};
 use futures_util::{FutureExt, TryFutureExt};
 use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
@@ -68,15 +68,15 @@ impl DnsResolver {
         so_mark: Option<u32>,
         prefer_ipv6: bool,
     ) -> anyhow::Result<Self> {
-        if resolvers.is_empty() {
-            // no dns resolver specified, fall-back to default one
-            let Ok((cfg, mut opts)) = hickory_resolver::system_conf::read_system_conf() else {
-                warn!("Fall-backing to system dns resolver. You should consider specifying a dns resolver. To avoid performance issue");
-                return Ok(Self::System);
-            };
-
+        fn mk_resolver(
+            cfg: ResolverConfig,
+            mut opts: ResolverOpts,
+            proxy: Option<Url>,
+            so_mark: Option<u32>,
+        ) -> AsyncResolver<GenericConnector<TokioRuntimeProviderWithSoMark>> {
             opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
             opts.timeout = Duration::from_secs(1);
+
             // Windows end-up with too many dns resolvers, which causes a performance issue
             // https://github.com/hickory-dns/hickory-dns/issues/1968
             #[cfg(target_os = "windows")]
@@ -84,42 +84,28 @@ impl DnsResolver {
                 opts.cache_size = 1024;
                 opts.num_concurrent_reqs = cfg.name_servers().len();
             }
-            return Ok(Self::TrustDns {
-                resolver: AsyncResolver::new(
-                    cfg,
-                    opts,
-                    GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
-                ),
-                prefer_ipv6,
-            });
-        };
 
-        // if one is specified as system, use the default one from libc
-        if resolvers.iter().any(|r| r.scheme() == "system") {
-            return Ok(Self::System);
+            AsyncResolver::new(
+                cfg,
+                opts,
+                GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
+            )
         }
 
-        // otherwise, use the specified resolvers
-        let mut cfg = ResolverConfig::new();
-        for resolver in resolvers.iter() {
+        fn get_sni(resolver: &Url) -> anyhow::Result<String> {
+            Ok(resolver
+                .query_pairs()
+                .find(|(k, _)| k == "sni")
+                .with_context(|| "Missing `sni` query parameter for dns over https")?
+                .1
+                .to_string())
+        }
+
+        fn url_to_ns_config(resolver: &Url) -> anyhow::Result<NameServerConfig> {
             let (protocol, port, tls_sni) = match resolver.scheme() {
                 "dns" => (Protocol::Udp, resolver.port().unwrap_or(53), None),
-                "dns+https" => {
-                    let tls_sni = resolver
-                        .query_pairs()
-                        .find(|(k, _)| k == "sni")
-                        .with_context(|| "Missing `sni` query parameter for dns over https")?
-                        .1;
-                    (Protocol::Https, resolver.port().unwrap_or(443), Some(tls_sni.to_string()))
-                }
-                "dns+tls" => {
-                    let tls_sni = resolver
-                        .query_pairs()
-                        .find(|(k, _)| k == "sni")
-                        .with_context(|| "Missing `sni` query parameter for dns over tls")?
-                        .1;
-                    (Protocol::Tls, resolver.port().unwrap_or(853), Some(tls_sni.to_string()))
-                }
+                "dns+https" => (Protocol::Https, resolver.port().unwrap_or(443), Some(get_sni(resolver)?)),
+                "dns+tls" => (Protocol::Tls, resolver.port().unwrap_or(853), Some(get_sni(resolver)?)),
                 _ => return Err(anyhow!("invalid protocol for dns resolver")),
             };
             let host = resolver
@@ -139,18 +125,36 @@ impl DnsResolver {
 
             let mut ns = NameServerConfig::new(sock, protocol);
             ns.tls_dns_name = tls_sni;
-            cfg.add_name_server(ns);
+
+            Ok(ns)
         }
 
-        let mut opts = ResolverOpts::default();
-        opts.timeout = Duration::from_secs(1);
-        opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+        // no dns resolver specified, fall-back to default one
+        if resolvers.is_empty() {
+            let Ok((cfg, opts)) = hickory_resolver::system_conf::read_system_conf() else {
+                warn!("Fall-backing to system dns resolver. You should consider specifying a dns resolver. To avoid performance issue");
+                return Ok(Self::System);
+            };
+
+            return Ok(Self::TrustDns {
+                resolver: mk_resolver(cfg, opts, proxy, so_mark),
+                prefer_ipv6,
+            });
+        };
+
+        // if one is specified as system, use the default one from libc
+        if resolvers.iter().any(|r| r.scheme() == "system") {
+            return Ok(Self::System);
+        }
+
+        // otherwise, use the specified resolvers
+        let mut cfg = ResolverConfig::new();
+        for resolver in resolvers.iter() {
+            cfg.add_name_server(url_to_ns_config(resolver)?);
+        }
+
         Ok(Self::TrustDns {
-            resolver: AsyncResolver::new(
-                cfg,
-                opts,
-                GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
-            ),
+            resolver: mk_resolver(cfg, ResolverOpts::default(), proxy, so_mark),
             prefer_ipv6,
         })
     }
@@ -196,8 +200,8 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
         let proxy = self.proxy.clone();
         let socket = async move {
             let host = match server_addr.ip() {
-                IpAddr::V4(addr) => Host::<String>::Ipv4(addr),
-                IpAddr::V6(addr) => Host::<String>::Ipv6(addr),
+                IpAddr::V4(addr) => Host::Ipv4(addr),
+                IpAddr::V6(addr) => Host::Ipv6(addr),
             };
 
             if let Some(proxy) = &proxy {
