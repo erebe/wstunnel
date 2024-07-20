@@ -32,7 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, io};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::TcpStream;
 use tokio::select;
 
 use tokio_rustls::rustls::pki_types::{CertificateDer, DnsName, PrivateKeyDer, ServerName};
@@ -777,13 +777,6 @@ impl WsClientConfig {
 #[tokio::main]
 async fn main() {
     let args = Wstunnel::parse();
-    let socket = UdpSocket::bind(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0))
-        .await
-        .unwrap();
-    socket
-        .connect("[2001:4810:0:3::78]:443".parse::<SocketAddr>().unwrap())
-        .await
-        .unwrap();
 
     // Setup logging
     let mut env_filter = EnvFilter::builder().parse(&args.log_lvl).expect("Invalid log level");

@@ -75,8 +75,15 @@ pub async fn connect(
 
     for (ix, addr) in socket_addrs.into_iter().enumerate() {
         let socket = match &addr {
-            SocketAddr::V4(_) => TcpSocket::new_v4()?,
-            SocketAddr::V6(_) => TcpSocket::new_v6()?,
+            SocketAddr::V4(_) => TcpSocket::new_v4(),
+            SocketAddr::V6(_) => TcpSocket::new_v6(),
+        };
+        let socket = match socket {
+            Ok(s) => s,
+            Err(err) => {
+                last_err = Some(err);
+                continue;
+            }
         };
         configure_socket(socket2::SockRef::from(&socket), &so_mark)?;
 
