@@ -3,7 +3,7 @@ use crate::tunnel::{tunnel_to_jwt_token, RemoteAddr, JWT_HEADER_PREFIX};
 use crate::WsClientConfig;
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
-use fastwebsockets::{Frame, OpCode, Payload, WebSocketRead, WebSocketWrite};
+use fastwebsockets::{CloseCode, Frame, OpCode, Payload, WebSocketRead, WebSocketWrite};
 use http_body_util::Empty;
 use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
@@ -12,24 +12,89 @@ use hyper::upgrade::Upgraded;
 use hyper::Request;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
-use log::debug;
 use std::io;
 use std::io::ErrorKind;
 use std::ops::DerefMut;
-use tokio::io::{AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
-use tracing::trace;
+use std::pin::Pin;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::select;
+use tokio::sync::mpsc::error::TryRecvError;
+use tokio::sync::mpsc::{self, Receiver, Sender};
+use tracing::{debug, trace};
 use uuid::Uuid;
+
+// Messages that can be passed from the reader half to the writer half
+pub enum WebSocketTunnelMessage {
+    Pong(u8),
+    // In practice we will only ever get frame variants without a lifetime here
+    SendFrame(Frame<'static>),
+}
+
+#[derive(Debug)]
+pub struct PingState {
+    ping_seq: u8,
+    pong_seq: u8,
+    max_diff: u8,
+}
+
+impl PingState {
+    pub const fn new() -> Self {
+        Self {
+            ping_seq: 0,
+            pong_seq: 0,
+            // TODO: make this configurable
+            max_diff: 3,
+        }
+    }
+
+    fn is_ok(&self) -> bool {
+        self.ping_seq - self.pong_seq <= self.max_diff
+    }
+
+    fn ping_inc(&mut self) {
+        match self.ping_seq.checked_add(1) {
+            Some(ping) => self.ping_seq = ping,
+            // We reached the end of the range, so we will just start over from zero.
+            None => self.reset(),
+        }
+    }
+
+    fn set_pong_seq(&mut self, seq: u8) {
+        if seq > self.pong_seq && seq <= self.ping_seq {
+            self.pong_seq = seq;
+        }
+
+        // Try to reset once we reached half the range, since we will potentially
+        // miss some pongs if we reach the actual end of the range where we need
+        // to forcefully reset.
+        if self.ping_seq == self.pong_seq && self.ping_seq > u8::MAX / 2 {
+            self.reset();
+        }
+    }
+
+    fn reset(&mut self) {
+        self.ping_seq = 0;
+        self.pong_seq = 0;
+    }
+}
 
 pub struct WebsocketTunnelWrite {
     inner: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
     buf: BytesMut,
+    ping_state: PingState,
+    receive_from_reader: Receiver<WebSocketTunnelMessage>,
 }
 
 impl WebsocketTunnelWrite {
-    pub fn new(ws: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>) -> Self {
+    pub fn new(
+        ws: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
+        receive_from_reader: Receiver<WebSocketTunnelMessage>,
+    ) -> Self {
         Self {
             inner: ws,
             buf: BytesMut::with_capacity(MAX_PACKET_LENGTH),
+            ping_state: PingState::new(),
+            receive_from_reader,
         }
     }
 }
@@ -37,6 +102,36 @@ impl WebsocketTunnelWrite {
 impl TunnelWrite for WebsocketTunnelWrite {
     fn buf_mut(&mut self) -> &mut BytesMut {
         &mut self.buf
+    }
+
+    async fn write_from(&mut self, local_rx: &mut Pin<&mut impl AsyncRead>) -> Result<(), io::Error> {
+        enum SelectResult {
+            Write(Result<usize, io::Error>),
+            FromReader(Option<WebSocketTunnelMessage>),
+        }
+
+        let res = select! {
+            biased;
+
+            read_len = local_rx.read_buf(&mut self.buf) => SelectResult::Write(read_len),
+            msg = self.receive_from_reader.recv() => SelectResult::FromReader(msg)
+        };
+
+        match res {
+            SelectResult::Write(Ok(0)) => Err(io::Error::new(ErrorKind::BrokenPipe, "could not read from local")),
+            SelectResult::Write(Ok(_read_len)) => self.write().await,
+            SelectResult::Write(Err(err)) => Err(err),
+            SelectResult::FromReader(Some(WebSocketTunnelMessage::Pong(seq))) => {
+                self.ping_state.set_pong_seq(seq);
+                Ok(())
+            }
+            SelectResult::FromReader(Some(WebSocketTunnelMessage::SendFrame(frame))) => self
+                .inner
+                .write_frame(frame)
+                .await
+                .map_err(|err| io::Error::new(ErrorKind::BrokenPipe, err)),
+            SelectResult::FromReader(None) => Err(io::Error::new(ErrorKind::BrokenPipe, "channel closed")),
+        }
     }
 
     async fn write(&mut self) -> Result<(), io::Error> {
@@ -74,9 +169,20 @@ impl TunnelWrite for WebsocketTunnelWrite {
     }
 
     async fn ping(&mut self) -> Result<(), io::Error> {
+        debug!("{:?}", self.ping_state);
+        if !self.ping_state.is_ok() {
+            return Err(io::Error::new(ErrorKind::BrokenPipe, "No pong received"));
+        }
+        self.ping_state.ping_inc();
+        debug!("Sending ping({})", self.ping_state.ping_seq);
         if let Err(err) = self
             .inner
-            .write_frame(Frame::new(true, OpCode::Ping, None, Payload::BorrowedMut(&mut [])))
+            .write_frame(Frame::new(
+                true,
+                OpCode::Ping,
+                None,
+                Payload::BorrowedMut(&mut [self.ping_state.ping_seq]),
+            ))
             .await
         {
             return Err(io::Error::new(ErrorKind::BrokenPipe, err));
@@ -85,8 +191,28 @@ impl TunnelWrite for WebsocketTunnelWrite {
         Ok(())
     }
 
+    async fn handle_message(&mut self) -> Result<(), io::Error> {
+        match self.receive_from_reader.try_recv() {
+            Ok(WebSocketTunnelMessage::Pong(seq)) => {
+                self.ping_state.set_pong_seq(seq);
+                Ok(())
+            }
+            Ok(WebSocketTunnelMessage::SendFrame(frame)) => self
+                .inner
+                .write_frame(frame)
+                .await
+                .map_err(|err| io::Error::new(ErrorKind::BrokenPipe, err)),
+            Err(TryRecvError::Empty) => Ok(()),
+            Err(TryRecvError::Disconnected) => Err(io::Error::new(ErrorKind::BrokenPipe, "channel closed")),
+        }
+    }
+
     async fn close(&mut self) -> Result<(), io::Error> {
-        if let Err(err) = self.inner.write_frame(Frame::close(1000, &[])).await {
+        if let Err(err) = self
+            .inner
+            .write_frame(Frame::close(CloseCode::Normal.into(), &[]))
+            .await
+        {
             return Err(io::Error::new(ErrorKind::BrokenPipe, err));
         }
 
@@ -96,39 +222,58 @@ impl TunnelWrite for WebsocketTunnelWrite {
 
 pub struct WebsocketTunnelRead {
     inner: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>,
+    send_to_writer: Sender<WebSocketTunnelMessage>,
 }
 
 impl WebsocketTunnelRead {
-    pub const fn new(ws: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>) -> Self {
-        Self { inner: ws }
+    pub const fn new(
+        inner: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>,
+        send_to_writer: Sender<WebSocketTunnelMessage>,
+    ) -> Self {
+        Self { inner, send_to_writer }
     }
 }
 
-fn frame_reader(_: Frame<'_>) -> futures_util::future::Ready<anyhow::Result<()>> {
-    //error!("frame {:?} {:?}", x.opcode, x.payload);
-    futures_util::future::ready(anyhow::Ok(()))
+async fn send_frame(sender: &Sender<WebSocketTunnelMessage>, frame: Frame<'static>) -> Result<(), io::Error> {
+    sender
+        .send(WebSocketTunnelMessage::SendFrame(frame))
+        .await
+        .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))
 }
 
 impl TunnelRead for WebsocketTunnelRead {
     async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> Result<(), io::Error> {
-        loop {
-            let msg = match self.inner.read_frame(&mut frame_reader).await {
-                Ok(msg) => msg,
-                Err(err) => return Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
-            };
+        let msg = match self
+            .inner
+            .read_frame(&mut |f| send_frame(&self.send_to_writer, f))
+            .await
+        {
+            Ok(msg) => msg,
+            Err(err) => return Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
+        };
 
-            trace!("receive ws frame {:?} {:?}", msg.opcode, msg.payload);
-            match msg.opcode {
-                OpCode::Continuation | OpCode::Text | OpCode::Binary => {
-                    return match writer.write_all(msg.payload.as_ref()).await {
-                        Ok(_) => Ok(()),
-                        Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
-                    }
+        trace!("receive ws frame {:?} {:?}", msg.opcode, msg.payload);
+        match msg.opcode {
+            OpCode::Continuation | OpCode::Text | OpCode::Binary => {
+                match writer.write_all(msg.payload.as_ref()).await {
+                    Ok(_) => Ok(()),
+                    Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
                 }
-                OpCode::Close => return Err(io::Error::new(ErrorKind::NotConnected, "websocket close")),
-                OpCode::Ping => continue,
-                OpCode::Pong => continue,
-            };
+            }
+            OpCode::Pong => {
+                let seq = msg.payload[0];
+                debug!("Received pong({})", seq);
+                self.send_to_writer
+                    .send(WebSocketTunnelMessage::Pong(seq))
+                    .await
+                    .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))
+            }
+            // We use auto_close so the write half will automatically get closed
+            // and we automatically send a close frame back.
+            // We can just break out of the read loop here.
+            OpCode::Close => Err(io::Error::new(ErrorKind::NotConnected, "websocket close")),
+            // We use auto_pong , so we'll never see this variant
+            OpCode::Ping => unreachable!(),
         }
     }
 }
@@ -195,10 +340,70 @@ pub async fn connect(
     ws.set_auto_apply_mask(client_cfg.websocket_mask_frame);
 
     let (ws_rx, ws_tx) = ws.split(tokio::io::split);
+    let (ch_tx, ch_rx) = mpsc::channel::<WebSocketTunnelMessage>(32);
 
     Ok((
-        WebsocketTunnelRead::new(ws_rx),
-        WebsocketTunnelWrite::new(ws_tx),
+        WebsocketTunnelRead::new(ws_rx, ch_tx),
+        WebsocketTunnelWrite::new(ws_tx, ch_rx),
         response.into_parts().0,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ping_state() {
+        let mut ping_state = PingState::new();
+
+        // An initial ping state has zeroes and is OK
+        assert!(ping_state.is_ok());
+        assert_eq!(ping_state.ping_seq, 0);
+        assert_eq!(ping_state.pong_seq, 0);
+
+        // Send 3 pings, the ping sequence increases, pong sequence doesn't
+        for it in 1..=3 {
+            ping_state.ping_inc();
+            assert_eq!(ping_state.ping_seq, it);
+            assert_eq!(ping_state.pong_seq, 0);
+            assert!(ping_state.is_ok());
+        }
+
+        // After the fourth ping with no pong received, the ping state is not OK
+        ping_state.ping_inc();
+        assert_eq!(ping_state.ping_seq, 4);
+        assert_eq!(ping_state.pong_seq, 0);
+        assert!(!ping_state.is_ok());
+
+        // We received two pongs, the pin state is OK again
+        ping_state.set_pong_seq(1);
+        assert!(ping_state.is_ok());
+        ping_state.set_pong_seq(4);
+        assert!(ping_state.is_ok());
+
+        // Advance the ping state beyond the middle of the u8 range,
+        // it won't wrap since we didn't receive pongs
+        for _ in 5..=130 {
+            ping_state.ping_inc();
+        }
+        assert_eq!(ping_state.ping_seq, 130);
+        assert_eq!(ping_state.pong_seq, 4);
+        assert!(!ping_state.is_ok());
+
+        // As soon as we do receive a pong, we wrap the sequence numbers around
+        ping_state.set_pong_seq(130);
+        assert_eq!(ping_state.ping_seq, 0);
+        assert_eq!(ping_state.pong_seq, 0);
+        assert!(ping_state.is_ok());
+
+        // If we receive pongs for every ping, we wrap at 128, half of the u8 range
+        for it in 1..=128 {
+            ping_state.ping_inc();
+            ping_state.set_pong_seq(it)
+        }
+        assert_eq!(ping_state.ping_seq, 0);
+        assert_eq!(ping_state.pong_seq, 0);
+        assert!(ping_state.is_ok());
+    }
 }

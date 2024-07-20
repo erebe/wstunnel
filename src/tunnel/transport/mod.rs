@@ -5,9 +5,10 @@ use hyper::http::{HeaderName, HeaderValue};
 use std::future::Future;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::pin::Pin;
 use std::str::FromStr;
 
-use tokio::io::AsyncWrite;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::error;
 
 pub mod http2;
@@ -19,8 +20,13 @@ static MAX_PACKET_LENGTH: usize = 64 * 1024;
 pub trait TunnelWrite: Send + 'static {
     fn buf_mut(&mut self) -> &mut BytesMut;
     fn write(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
+    fn write_from(
+        &mut self,
+        local_rx: &mut Pin<&mut impl AsyncRead>,
+    ) -> impl Future<Output = Result<(), std::io::Error>>;
     fn ping(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
     fn close(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
+    fn handle_message(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
 }
 
 pub trait TunnelRead: Send + 'static {
@@ -57,6 +63,13 @@ impl TunnelWrite for TunnelWriter {
         }
     }
 
+    async fn write_from(&mut self, local_rx: &mut Pin<&mut impl AsyncRead>) -> Result<(), std::io::Error> {
+        match self {
+            Self::Websocket(s) => s.write_from(local_rx).await,
+            Self::Http2(s) => s.write_from(local_rx).await,
+        }
+    }
+
     async fn write(&mut self) -> Result<(), std::io::Error> {
         match self {
             Self::Websocket(s) => s.write().await,
@@ -75,6 +88,13 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.close().await,
             Self::Http2(s) => s.close().await,
+        }
+    }
+
+    async fn handle_message(&mut self) -> Result<(), std::io::Error> {
+        match self {
+            Self::Websocket(s) => s.handle_message().await,
+            Self::Http2(s) => s.handle_message().await,
         }
     }
 }

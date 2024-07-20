@@ -13,7 +13,8 @@ use log::{debug, error, warn};
 use std::io;
 use std::io::ErrorKind;
 use std::ops::DerefMut;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use std::pin::Pin;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
@@ -73,6 +74,14 @@ impl TunnelWrite for Http2TunnelWrite {
         &mut self.buf
     }
 
+    async fn write_from(&mut self, local_rx: &mut Pin<&mut impl AsyncRead>) -> Result<(), io::Error> {
+        match local_rx.read_buf(&mut self.buf).await {
+            Ok(0) => Err(io::Error::new(ErrorKind::BrokenPipe, "could not read from local")),
+            Ok(_read_len) => self.write().await,
+            Err(err) => Err(err),
+        }
+    }
+
     async fn write(&mut self) -> Result<(), io::Error> {
         let data = self.buf.split().freeze();
         let ret = match self.inner.send(data).await {
@@ -93,6 +102,10 @@ impl TunnelWrite for Http2TunnelWrite {
     }
 
     async fn close(&mut self) -> Result<(), io::Error> {
+        Ok(())
+    }
+
+    async fn handle_message(&mut self) -> Result<(), std::io::Error> {
         Ok(())
     }
 }
