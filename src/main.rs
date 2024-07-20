@@ -991,8 +991,14 @@ async fn main() {
                                 port,
                             };
                             let connect_to_dest = |_| async {
-                                udp::connect(&tunnel.remote.0, tunnel.remote.1, cfg.timeout_connect, &cfg.dns_resolver)
-                                    .await
+                                udp::connect(
+                                    &tunnel.remote.0,
+                                    tunnel.remote.1,
+                                    cfg.timeout_connect,
+                                    cfg.socket_so_mark,
+                                    &cfg.dns_resolver,
+                                )
+                                .await
                             };
 
                             if let Err(err) =
@@ -1033,7 +1039,7 @@ async fn main() {
                                                 .map(|s| Box::new(s) as Box<dyn T>)
                                         }
                                         LocalProtocol::Udp { .. } => {
-                                            udp::connect(&remote.host, remote.port, timeout, dns_resolver)
+                                            udp::connect(&remote.host, remote.port, timeout, so_mark, dns_resolver)
                                                 .await
                                                 .map(|s| Box::new(s) as Box<dyn T>)
                                         }

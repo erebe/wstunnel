@@ -11,6 +11,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use tokio::task::JoinSet;
 
 use log::warn;
+use socket2::SockRef;
 use std::pin::{pin, Pin};
 use std::sync::{Arc, Weak};
 use std::task::{ready, Poll};
@@ -323,6 +324,7 @@ pub async fn connect(
     host: &Host<String>,
     port: u16,
     connect_timeout: Duration,
+    so_mark: Option<u32>,
     dns_resolver: &DnsResolver,
 ) -> anyhow::Result<MyUdpSocket> {
     info!("Opening UDP connection to {}:{}", host, port);
@@ -353,6 +355,13 @@ pub async fn connect(
                 continue;
             }
         };
+
+        #[cfg(target_os = "linux")]
+        if let Some(so_mark) = so_mark {
+            SockRef::from(&socket)
+                .set_mark(so_mark)
+                .with_context(|| format!("cannot set SO_MARK on socket: {:?}", io::Error::last_os_error()))?;
+        }
 
         // Spawn the connection attempt in the join set.
         // We include a delay of ix * 250 milliseconds, as per RFC8305.

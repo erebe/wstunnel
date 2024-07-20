@@ -60,6 +60,7 @@ async fn run_tunnel(
                 &remote.host,
                 remote.port,
                 timeout.unwrap_or(Duration::from_secs(10)),
+                server_config.socket_so_mark,
                 &server_config.dns_resolver,
             )
             .await?;

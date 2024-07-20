@@ -1,4 +1,4 @@
-use crate::{tcp};
+use crate::tcp;
 use anyhow::{anyhow, Context};
 use futures_util::{FutureExt, TryFutureExt};
 use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
