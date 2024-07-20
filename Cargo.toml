@@ -1,6 +1,6 @@
 [package]
 name = "wstunnel"
-version = "9.7.3"
+version = "9.7.2"
 edition = "2021"
 repository = "https://github.com/erebe/wstunnel.git"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -13,7 +13,7 @@ base64 = "0.22.1"
 scopeguard = "1.2.0"
 
 bb8 = { version = "0.8", features = [] }
-bytes = { version = "1.6.0", features = [] }
+bytes = { version = "1.6.1", features = [] }
 clap = { version = "4.5.9", features = ["derive", "env"] }
 fast-socks5 = { version = "0.9.6", features = [] }
 fastwebsockets = { version = "0.8.0", features = ["upgrade", "simd", "unstable-split"] }
@@ -27,7 +27,7 @@ serde_regex = "1.1.0"
 serde_yaml = { version = "0.9.34", features = [] }
 ipnet = { version = "2.9.0", features = ["serde"] }
 
-hyper = { version = "1.4.0", features = ["client", "http1", "http2"] }
+hyper = { version = "1.4.1", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1.6", features = ["tokio", "server", "server-auto"] }
 http-body-util = { version = "0.1.2" }
 jsonwebtoken = { version = "9.3.0", default-features = false }
@@ -43,7 +43,7 @@ rustls-pemfile = { version = "2.1.2", features = [] }
 x509-parser = "0.16.0"
 serde = { version = "1.0.204", features = ["derive"] }
 socket2 = { version = "0.5.7", features = [] }
-tokio = { version = "1.38.0", features = ["full"] }
+tokio = { version = "1.38.1", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["net"] }
 
 [target.'cfg(any(os = "linux", os = "macos"))'.dependencies]
