@@ -19,7 +19,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::futures::Notified;
 
-use crate::dns::{self, DnsResolver};
+use crate::dns::DnsResolver;
 use tokio::sync::Notify;
 use tokio::time::{sleep, timeout, Interval};
 use tracing::{debug, error, info};
@@ -340,9 +340,7 @@ pub async fn connect(
     let mut last_err = None;
     let mut join_set = JoinSet::new();
 
-    for (ix, addr) in dns::sort_socket_addrs(&socket_addrs).copied().enumerate() {
-        debug!("connecting to {}", addr);
-
+    for (ix, addr) in socket_addrs.into_iter().enumerate() {
         let socket = match &addr {
             SocketAddr::V4(_) => UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).await,
             SocketAddr::V6(_) => UdpSocket::bind(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)).await,
@@ -364,6 +362,7 @@ pub async fn connect(
                 sleep(Duration::from_millis(250 * ix as u64)).await;
             }
 
+            debug!("connecting to {}", addr);
             match timeout(connect_timeout, socket.connect(addr)).await {
                 Ok(Ok(())) => Ok(Ok(socket)),
                 Ok(Err(e)) => Ok(Err((addr, e))),
@@ -381,7 +380,7 @@ pub async fn connect(
         match res? {
             Ok(Ok(socket)) => {
                 // We've got a successful connection, so we can abort all other
-                // on-going attempts.
+                // ongoing attempts.
                 join_set.abort_all();
 
                 debug!(

@@ -15,10 +15,11 @@ use std::time::Duration;
 use tokio::net::{TcpStream, UdpSocket};
 use url::{Host, Url};
 
-// Interweave v4 and v6 addresses as per RFC8305.
+// Interleave v4 and v6 addresses as per RFC8305.
 // The first address is v6 if we have any v6 addresses.
-pub fn sort_socket_addrs(socket_addrs: &[SocketAddr]) -> impl Iterator<Item = &'_ SocketAddr> {
-    let mut pick_v6 = false;
+#[inline]
+fn sort_socket_addrs(socket_addrs: &[SocketAddr], prefer_ipv6: bool) -> impl Iterator<Item = &'_ SocketAddr> {
+    let mut pick_v6 = !prefer_ipv6;
     let mut v6 = socket_addrs.iter().filter(|s| matches!(s, SocketAddr::V6(_)));
     let mut v4 = socket_addrs.iter().filter(|s| matches!(s, SocketAddr::V4(_)));
     std::iter::from_fn(move || {
@@ -34,28 +35,39 @@ pub fn sort_socket_addrs(socket_addrs: &[SocketAddr]) -> impl Iterator<Item = &'
 #[derive(Clone)]
 pub enum DnsResolver {
     System,
-    TrustDns(AsyncResolver<GenericConnector<TokioRuntimeProviderWithSoMark>>),
+    TrustDns {
+        resolver: AsyncResolver<GenericConnector<TokioRuntimeProviderWithSoMark>>,
+        prefer_ipv6: bool,
+    },
 }
 
 impl DnsResolver {
     pub async fn lookup_host(&self, domain: &str, port: u16) -> anyhow::Result<Vec<SocketAddr>> {
         let addrs: Vec<SocketAddr> = match self {
             Self::System => tokio::net::lookup_host(format!("{}:{}", domain, port)).await?.collect(),
-            Self::TrustDns(dns_resolver) => dns_resolver
-                .lookup_ip(domain)
-                .await?
-                .into_iter()
-                .map(|ip| match ip {
-                    IpAddr::V4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
-                    IpAddr::V6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
-                })
-                .collect(),
+            Self::TrustDns { resolver, prefer_ipv6 } => {
+                let addrs: Vec<_> = resolver
+                    .lookup_ip(domain)
+                    .await?
+                    .into_iter()
+                    .map(|ip| match ip {
+                        IpAddr::V4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
+                        IpAddr::V6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
+                    })
+                    .collect();
+                sort_socket_addrs(&addrs, *prefer_ipv6).copied().collect()
+            }
         };
 
         Ok(addrs)
     }
 
-    pub fn new_from_urls(resolvers: &[Url], proxy: Option<Url>, so_mark: Option<u32>) -> anyhow::Result<Self> {
+    pub fn new_from_urls(
+        resolvers: &[Url],
+        proxy: Option<Url>,
+        so_mark: Option<u32>,
+        prefer_ipv6: bool,
+    ) -> anyhow::Result<Self> {
         if resolvers.is_empty() {
             // no dns resolver specified, fall-back to default one
             let Ok((cfg, mut opts)) = hickory_resolver::system_conf::read_system_conf() else {
@@ -63,7 +75,8 @@ impl DnsResolver {
                 return Ok(Self::System);
             };
 
-            opts.timeout = std::time::Duration::from_secs(1);
+            opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+            opts.timeout = Duration::from_secs(1);
             // Windows end-up with too many dns resolvers, which causes a performance issue
             // https://github.com/hickory-dns/hickory-dns/issues/1968
             #[cfg(target_os = "windows")]
@@ -71,11 +84,14 @@ impl DnsResolver {
                 opts.cache_size = 1024;
                 opts.num_concurrent_reqs = cfg.name_servers().len();
             }
-            return Ok(Self::TrustDns(AsyncResolver::new(
-                cfg,
-                opts,
-                GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
-            )));
+            return Ok(Self::TrustDns {
+                resolver: AsyncResolver::new(
+                    cfg,
+                    opts,
+                    GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
+                ),
+                prefer_ipv6,
+            });
         };
 
         // if one is specified as system, use the default one from libc
@@ -127,13 +143,16 @@ impl DnsResolver {
         }
 
         let mut opts = ResolverOpts::default();
-        opts.timeout = std::time::Duration::from_secs(1);
+        opts.timeout = Duration::from_secs(1);
         opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
-        Ok(Self::TrustDns(AsyncResolver::new(
-            cfg,
-            opts,
-            GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
-        )))
+        Ok(Self::TrustDns {
+            resolver: AsyncResolver::new(
+                cfg,
+                opts,
+                GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
+            ),
+            prefer_ipv6,
+        })
     }
 }
 
@@ -233,5 +252,31 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
         };
 
         Box::pin(socket)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::dns::sort_socket_addrs;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+
+    #[test]
+    fn test_sort_socket_addrs() {
+        let addrs = [
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 1)),
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 1), 1, 0, 0)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 3), 1)),
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 2), 1, 0, 0)),
+        ];
+        let expected = [
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 1), 1, 0, 0)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1)),
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 2), 1, 0, 0)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 1)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 3), 1)),
+        ];
+        let actual: Vec<_> = sort_socket_addrs(&addrs, true).copied().collect();
+        assert_eq!(expected, *actual);
     }
 }

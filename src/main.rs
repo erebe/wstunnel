@@ -258,6 +258,17 @@ struct Client {
     /// **WARN** On windows you may want to specify explicitly the DNS resolver to avoid excessive DNS queries
     #[arg(long, verbatim_doc_comment)]
     dns_resolver: Vec<Url>,
+
+    /// Enable if you prefer the dns resolver to prioritize IPv4 over IPv6
+    /// This is useful if you have a broken IPv6 connection, and want to avoid the delay of trying to connect to IPv6
+    /// If you don't have any IPv6 this does not change anything.
+    #[arg(
+        long,
+        default_value = "false",
+        env = "WSTUNNEL_DNS_PREFER_IPV4",
+        verbatim_doc_comment
+    )]
+    dns_resolver_prefer_ipv4: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -294,6 +305,17 @@ struct Server {
     /// system://0.0.0.0
     #[arg(long, verbatim_doc_comment)]
     dns_resolver: Vec<Url>,
+
+    /// Enable if you prefer the dns resolver to prioritize IPv4 over IPv6
+    /// This is useful if you have a broken IPv6 connection, and want to avoid the delay of trying to connect to IPv6
+    /// If you don't have any IPv6 this does not change anything.
+    #[arg(
+        long,
+        default_value = "false",
+        env = "WSTUNNEL_DNS_PREFER_IPV4",
+        verbatim_doc_comment
+    )]
+    dns_resolver_prefer_ipv4: bool,
 
     /// Server will only accept connection from the specified tunnel information.
     /// Can be specified multiple time
@@ -755,8 +777,13 @@ impl WsClientConfig {
 #[tokio::main]
 async fn main() {
     let args = Wstunnel::parse();
-    let socket =  UdpSocket::bind(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)).await.unwrap();
-    socket.connect("[2001:4810:0:3::78]:443".parse::<SocketAddr>().unwrap()).await.unwrap();
+    let socket = UdpSocket::bind(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0))
+        .await
+        .unwrap();
+    socket
+        .connect("[2001:4810:0:3::78]:443".parse::<SocketAddr>().unwrap())
+        .await
+        .unwrap();
 
     // Setup logging
     let mut env_filter = EnvFilter::builder().parse(&args.log_lvl).expect("Invalid log level");
@@ -902,8 +929,13 @@ async fn main() {
                 websocket_mask_frame: args.websocket_mask_frame,
                 cnx_pool: None,
                 tls_reloader: None,
-                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver, http_proxy.clone(), args.socket_so_mark)
-                    .expect("cannot create dns resolver"),
+                dns_resolver: DnsResolver::new_from_urls(
+                    &args.dns_resolver,
+                    http_proxy.clone(),
+                    args.socket_so_mark,
+                    !args.dns_resolver_prefer_ipv4,
+                )
+                .expect("cannot create dns resolver"),
                 http_proxy,
             };
 
@@ -1324,8 +1356,13 @@ async fn main() {
                 timeout_connect: Duration::from_secs(10),
                 websocket_mask_frame: args.websocket_mask_frame,
                 tls: tls_config,
-                dns_resolver: DnsResolver::new_from_urls(&args.dns_resolver, None, args.socket_so_mark)
-                    .expect("Cannot create DNS resolver"),
+                dns_resolver: DnsResolver::new_from_urls(
+                    &args.dns_resolver,
+                    None,
+                    args.socket_so_mark,
+                    !args.dns_resolver_prefer_ipv4,
+                )
+                .expect("Cannot create DNS resolver"),
                 restriction_config: args.restrict_config,
             };
 

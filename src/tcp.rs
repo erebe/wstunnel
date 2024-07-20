@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context};
 use std::{io, vec};
 use tokio::task::JoinSet;
 
-use crate::dns::{self, DnsResolver};
+use crate::dns::DnsResolver;
 use base64::Engine;
 use bytes::BytesMut;
 use log::warn;
@@ -73,14 +73,11 @@ pub async fn connect(
     let mut last_err = None;
     let mut join_set = JoinSet::new();
 
-    for (ix, addr) in dns::sort_socket_addrs(&socket_addrs).copied().enumerate() {
-        debug!("Connecting to {}", addr);
-
+    for (ix, addr) in socket_addrs.into_iter().enumerate() {
         let socket = match &addr {
             SocketAddr::V4(_) => TcpSocket::new_v4()?,
             SocketAddr::V6(_) => TcpSocket::new_v6()?,
         };
-
         configure_socket(socket2::SockRef::from(&socket), &so_mark)?;
 
         // Spawn the connection attempt in the join set.
@@ -90,6 +87,7 @@ pub async fn connect(
             if ix > 0 {
                 sleep(Duration::from_millis(250 * ix as u64)).await;
             }
+            debug!("Connecting to {}", addr);
             match timeout(connect_timeout, socket.connect(addr)).await {
                 Ok(Ok(s)) => Ok(Ok(s)),
                 Ok(Err(e)) => Ok(Err((addr, e))),
@@ -107,7 +105,7 @@ pub async fn connect(
         match res? {
             Ok(Ok(stream)) => {
                 // We've got a successful connection, so we can abort all other
-                // on-going attempts.
+                // ongoing attempts.
                 join_set.abort_all();
 
                 debug!(
@@ -227,7 +225,7 @@ pub async fn run_server(bind: SocketAddr, ip_transparent: bool) -> Result<TcpLis
 mod tests {
     use super::*;
     use futures_util::pin_mut;
-    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+    use std::net::SocketAddr;
     use testcontainers::core::WaitFor;
     use testcontainers::runners::AsyncRunner;
     use testcontainers::{ContainerAsync, Image, ImageArgs, RunnableImage};
@@ -257,26 +255,6 @@ mod tests {
                 length: Duration::from_secs(5),
             }]
         }
-    }
-
-    #[test]
-    fn test_sort_socket_addrs() {
-        let addrs = [
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1)),
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 1)),
-            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 1), 1, 0, 0)),
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 3), 1)),
-            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 2), 1, 0, 0)),
-        ];
-        let expected = [
-            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 1), 1, 0, 0)),
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1)),
-            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 127, 0, 0, 2), 1, 0, 0)),
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 1)),
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 3), 1)),
-        ];
-        let actual: Vec<_> = dns::sort_socket_addrs(&addrs).copied().collect();
-        assert_eq!(expected, *actual);
     }
 
     #[tokio::test]
