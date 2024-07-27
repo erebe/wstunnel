@@ -78,6 +78,7 @@ pub enum ReverseTunnelConfigProtocol {
     Udp,
     Socks5,
     Unix,
+    HttpProxy,
     Unknown,
 }
 
@@ -160,11 +161,13 @@ impl From<&LocalProtocol> for ReverseTunnelConfigProtocol {
             | LocalProtocol::Socks5 { .. }
             | LocalProtocol::TProxyTcp { .. }
             | LocalProtocol::TProxyUdp { .. }
+            | LocalProtocol::HttpProxy { .. }
             | LocalProtocol::Unix { .. } => Self::Unknown,
             LocalProtocol::ReverseTcp => Self::Tcp,
             LocalProtocol::ReverseUdp { .. } => Self::Udp,
             LocalProtocol::ReverseSocks5 { .. } => Self::Socks5,
             LocalProtocol::ReverseUnix { .. } => Self::Unix,
+            LocalProtocol::ReverseHttpProxy { .. } => Self::HttpProxy,
         }
     }
 }
@@ -179,6 +182,8 @@ impl From<&LocalProtocol> for TunnelConfigProtocol {
             | LocalProtocol::Socks5 { .. }
             | LocalProtocol::TProxyTcp { .. }
             | LocalProtocol::TProxyUdp { .. }
+            | LocalProtocol::HttpProxy { .. }
+            | LocalProtocol::ReverseHttpProxy { .. }
             | LocalProtocol::Unix { .. } => Self::Unknown,
             LocalProtocol::Tcp { .. } => Self::Tcp,
             LocalProtocol::Udp { .. } => Self::Udp,

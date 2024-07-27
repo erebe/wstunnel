@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
-use crate::{socks5, tcp, tls, udp, LocalProtocol, TlsServerConfig, WsServerConfig};
+use crate::{http_proxy, socks5, tcp, tls, udp, LocalProtocol, TlsServerConfig, WsServerConfig};
 use hyper::body::{Frame, Incoming};
 use hyper::header::{CONTENT_TYPE, COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::http::HeaderValue;
@@ -150,6 +150,25 @@ async fn run_tunnel(
             };
             Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
         }
+        LocalProtocol::ReverseHttpProxy { timeout, credentials } => {
+            #[allow(clippy::type_complexity)]
+            static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<(TcpStream, (Host, u16))>>>> =
+                Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
+
+            let remote_port = find_mapped_port(remote.port, restriction);
+            let local_srv = (remote.host, remote_port);
+            let bind = format!("{}:{}", local_srv.0, local_srv.1);
+            let listening_server = http_proxy::run_server(bind.parse()?, timeout, credentials);
+            let (stream, local_srv) = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
+            let (local_rx, local_tx) = tokio::io::split(stream);
+
+            let remote = RemoteAddr {
+                protocol: LocalProtocol::Tcp { proxy_protocol: false },
+                host: local_srv.0,
+                port: local_srv.1,
+            };
+            Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
+        }
         #[cfg(unix)]
         LocalProtocol::ReverseUnix { ref path } => {
             use crate::unix_socket;
@@ -181,6 +200,7 @@ async fn run_tunnel(
         | LocalProtocol::Socks5 { .. }
         | LocalProtocol::TProxyTcp
         | LocalProtocol::TProxyUdp { .. }
+        | LocalProtocol::HttpProxy { .. }
         | LocalProtocol::Unix { .. } => {
             error!("Received an unsupported target protocol {:?}", remote);
             Err(anyhow::anyhow!("Invalid upgrade request"))
@@ -572,7 +592,10 @@ async fn ws_server_upgrade(
         .instrument(Span::current()),
     );
 
-    if matches!(req_protocol, LocalProtocol::ReverseSocks5 { .. }) {
+    if matches!(
+        req_protocol,
+        LocalProtocol::ReverseSocks5 { .. } | LocalProtocol::ReverseHttpProxy { .. }
+    ) {
         let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), &remote_addr)) else {
             error!("Bad headervalue for reverse socks5: {} {}", remote_addr.host, remote_addr.port);
             return http::Response::builder()
