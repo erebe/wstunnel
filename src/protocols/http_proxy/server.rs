@@ -33,7 +33,7 @@ impl Stream for HttpProxyListener {
     }
 }
 
-fn server_client(
+fn handle_request(
     credentials: &Option<String>,
     dest: &Mutex<(Host, u16)>,
     req: Request<Incoming>,
@@ -112,7 +112,7 @@ pub async fn run_server(
             let forward_to = Mutex::new((Host::Ipv4(Ipv4Addr::new(0, 0, 0, 0)), 0));
             let conn_fut = http1.serve_connection(
                 hyper_util::rt::TokioIo::new(&mut stream),
-                service_fn(|req| server_client(&auth_header, &forward_to, req)),
+                service_fn(|req| handle_request(&auth_header, &forward_to, req)),
             );
             match conn_fut.await {
                 Ok(_) => return Some((Ok((stream, forward_to.into_inner())), (listener, http1, auth_header))),

@@ -2,13 +2,13 @@ use anyhow::{anyhow, Context};
 use std::{io, vec};
 use tokio::task::JoinSet;
 
-use crate::dns::DnsResolver;
 use base64::Engine;
 use bytes::BytesMut;
 use log::warn;
 use socket2::{SockRef, TcpKeepalive};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
+use crate::protocols::dns::DnsResolver;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};

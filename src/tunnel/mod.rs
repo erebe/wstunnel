@@ -1,9 +1,11 @@
 pub mod client;
+pub mod listeners;
 pub mod server;
 pub mod tls_reloader;
 mod transport;
 
-use crate::{tcp, tls, LocalProtocol, TlsClientConfig, WsClientConfig};
+use crate::protocols::tls;
+use crate::{protocols, LocalProtocol, TlsClientConfig, WsClientConfig};
 use async_trait::async_trait;
 use bb8::ManageConnection;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -312,7 +314,7 @@ impl ManageConnection for WsClientConfig {
         let timeout = self.timeout_connect;
 
         let tcp_stream = if let Some(http_proxy) = &self.http_proxy {
-            tcp::connect_with_http_proxy(
+            protocols::tcp::connect_with_http_proxy(
                 http_proxy,
                 self.remote_addr.host(),
                 self.remote_addr.port(),
@@ -322,7 +324,7 @@ impl ManageConnection for WsClientConfig {
             )
             .await?
         } else {
-            tcp::connect(
+            protocols::tcp::connect(
                 self.remote_addr.host(),
                 self.remote_addr.port(),
                 so_mark,

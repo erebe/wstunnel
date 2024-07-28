@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
-use crate::{http_proxy, socks5, tcp, tls, udp, LocalProtocol, TlsServerConfig, WsServerConfig};
+use crate::{protocols, socks5, LocalProtocol, TlsServerConfig, WsServerConfig};
 use hyper::body::{Frame, Incoming};
 use hyper::header::{CONTENT_TYPE, COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::http::HeaderValue;
@@ -28,16 +28,16 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use socket2::SockRef;
 
+use crate::protocols::udp::UdpStream;
+use crate::protocols::{http_proxy, tls, udp};
 use crate::restrictions::config_reloader::RestrictionsRulesReloader;
 use crate::restrictions::types::{
     AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules, ReverseTunnelConfigProtocol, TunnelConfigProtocol,
 };
 use crate::socks5::Socks5Stream;
-use crate::tls_utils::{cn_from_certificate, find_leaf_certificate};
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
-use crate::udp::UdpStream;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
@@ -68,7 +68,7 @@ async fn run_tunnel(
             Ok((remote, Box::pin(cnx.clone()), Box::pin(cnx)))
         }
         LocalProtocol::Tcp { proxy_protocol } => {
-            let mut socket = tcp::connect(
+            let mut socket = protocols::tcp::connect(
                 &remote.host,
                 remote.port,
                 server_config.socket_so_mark,
@@ -99,7 +99,7 @@ async fn run_tunnel(
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
-            let listening_server = tcp::run_server(bind.parse()?, false);
+            let listening_server = protocols::tcp::run_server(bind.parse()?, false);
             let tcp = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let (local_rx, local_tx) = tcp.into_split();
 
@@ -172,7 +172,7 @@ async fn run_tunnel(
         }
         #[cfg(unix)]
         LocalProtocol::ReverseUnix { ref path } => {
-            use crate::unix_socket;
+            use protocols::unix_sock;
             use tokio::net::UnixStream;
 
             #[allow(clippy::type_complexity)]
@@ -181,7 +181,7 @@ async fn run_tunnel(
 
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
-            let listening_server = unix_socket::run_server(path);
+            let listening_server = unix_sock::run_server(path);
             let stream = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
             let (local_rx, local_tx) = stream.into_split();
 
@@ -862,7 +862,7 @@ pub async fn run_server(server_config: Arc<WsServerConfig>, restrictions: Restri
             }
         };
 
-        if let Err(err) = tcp::configure_socket(SockRef::from(&stream), &None) {
+        if let Err(err) = protocols::tcp::configure_socket(SockRef::from(&stream), &None) {
             warn!("Error while configuring server socket {:?}", err);
         }
 
@@ -898,8 +898,8 @@ pub async fn run_server(server_config: Arc<WsServerConfig>, restrictions: Restri
                     // extract client certificate common name if any
                     let restrict_path = tls_ctx
                         .peer_certificates()
-                        .and_then(find_leaf_certificate)
-                        .and_then(|c| cn_from_certificate(&c));
+                        .and_then(tls::find_leaf_certificate)
+                        .and_then(|c| tls::cn_from_certificate(&c));
                     match tls_ctx.alpn_protocol() {
                         // http2
                         Some(b"h2") => {

@@ -1,18 +1,7 @@
-mod dns;
 mod embedded_certificate;
-mod http_proxy;
+mod protocols;
 mod restrictions;
-mod socks5;
-mod socks5_udp;
-mod stdio;
-mod tcp;
-mod tls;
-mod tls_utils;
 mod tunnel;
-mod types;
-mod udp;
-#[cfg(unix)]
-mod unix_socket;
 
 use anyhow::anyhow;
 use base64::Engine;
@@ -41,16 +30,15 @@ use tokio_rustls::TlsConnector;
 
 use tracing::{error, info};
 
-use crate::dns::DnsResolver;
+use crate::protocols::dns::DnsResolver;
+use crate::protocols::udp::MyUdpSocket;
+use crate::protocols::{socks5, tls, udp};
 use crate::restrictions::types::RestrictionsRules;
-use crate::tls_utils::{cn_from_certificate, find_leaf_certificate};
+use crate::tunnel::listeners::{
+    new_stdio_listener, new_udp_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener,
+};
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
-use crate::types::{
-    HttpProxyTunnelListener, Socks5TunnelListener, StdioTunnelListener, TProxyUdpTunnelListener, TcpTunnelListener,
-    TproxyTcpTunnelListener, UdpTunnelListener, UnixTunnelListener,
-};
-use crate::udp::MyUdpSocket;
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
@@ -823,7 +811,7 @@ impl WsClientConfig {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let args = Wstunnel::parse();
 
     // Setup logging
@@ -870,8 +858,8 @@ async fn main() {
                 // to be the common name (CN) of the client's certificate.
                 tls_certificate
                     .as_ref()
-                    .and_then(|certs| find_leaf_certificate(certs.as_slice()))
-                    .and_then(|leaf_cert| cn_from_certificate(&leaf_cert))
+                    .and_then(|certs| tls::find_leaf_certificate(certs.as_slice()))
+                    .and_then(|leaf_cert| tls::cn_from_certificate(&leaf_cert))
                     .unwrap_or(args.http_upgrade_path_prefix)
             } else {
                 args.http_upgrade_path_prefix
@@ -1004,7 +992,7 @@ async fn main() {
                             let remote = tunnel.remote.clone();
                             let cfg = client_config.clone();
                             let connect_to_dest = |_| async {
-                                tcp::connect(
+                                protocols::tcp::connect(
                                     &remote.0,
                                     remote.1,
                                     cfg.socket_so_mark,
@@ -1081,11 +1069,15 @@ async fn main() {
                                     };
 
                                     match remote.protocol {
-                                        LocalProtocol::Tcp { proxy_protocol: _ } => {
-                                            tcp::connect(&remote.host, remote.port, so_mark, timeout, dns_resolver)
-                                                .await
-                                                .map(|s| Box::new(s) as Box<dyn T>)
-                                        }
+                                        LocalProtocol::Tcp { proxy_protocol: _ } => protocols::tcp::connect(
+                                            &remote.host,
+                                            remote.port,
+                                            so_mark,
+                                            timeout,
+                                            dns_resolver,
+                                        )
+                                        .await
+                                        .map(|s| Box::new(s) as Box<dyn T>),
                                         LocalProtocol::Udp { .. } => {
                                             udp::connect(&remote.host, remote.port, timeout, so_mark, dns_resolver)
                                                 .await
@@ -1125,7 +1117,8 @@ async fn main() {
                                         return Err(anyhow!("Missing remote destination for reverse socks5"));
                                     };
 
-                                    tcp::connect(&remote.host, remote.port, so_mark, timeout, dns_resolver).await
+                                    protocols::tcp::connect(&remote.host, remote.port, so_mark, timeout, dns_resolver)
+                                        .await
                                 }
                             };
 
@@ -1143,7 +1136,7 @@ async fn main() {
                             let remote = tunnel.remote.clone();
                             let cfg = client_config.clone();
                             let connect_to_dest = |_| async {
-                                tcp::connect(
+                                protocols::tcp::connect(
                                     &remote.0,
                                     remote.1,
                                     cfg.socket_so_mark,
@@ -1188,10 +1181,8 @@ async fn main() {
 
                 match &tunnel.local_protocol {
                     LocalProtocol::Tcp { proxy_protocol } => {
-                        let server = tcp::run_server(tunnel.local, false)
-                            .await
-                            .unwrap_or_else(|err| panic!("Cannot start TCP server on {}: {}", tunnel.local, err));
-                        let server = TcpTunnelListener::new(server, tunnel.remote.clone(), *proxy_protocol);
+                        let server =
+                            TcpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *proxy_protocol).await?;
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1200,10 +1191,8 @@ async fn main() {
                     }
                     #[cfg(target_os = "linux")]
                     LocalProtocol::TProxyTcp => {
-                        let server = tcp::run_server(tunnel.local, true).await.unwrap_or_else(|err| {
-                            panic!("Cannot start TProxy TCP server on {}: {}", tunnel.local, err)
-                        });
-                        let server = TproxyTcpTunnelListener::new(server, false); // TODO: support proxy protocol
+                        use crate::tunnel::listeners::TproxyTcpTunnelListener;
+                        let server = TproxyTcpTunnelListener::new(tunnel.local, false).await?;
 
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
@@ -1213,11 +1202,8 @@ async fn main() {
                     }
                     #[cfg(unix)]
                     LocalProtocol::Unix { path } => {
-                        let server = unix_socket::run_server(path).await.unwrap_or_else(|err| {
-                            panic!("Cannot start Unix domain server on {}: {}", tunnel.local, err)
-                        });
-
-                        let server = UnixTunnelListener::new(server, tunnel.remote.clone(), false); // TODO: support proxy protocol
+                        use crate::tunnel::listeners::UnixTunnelListener;
+                        let server = UnixTunnelListener::new(path, tunnel.remote.clone(), false).await?; // TODO: support proxy protocol
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1231,14 +1217,8 @@ async fn main() {
 
                     #[cfg(target_os = "linux")]
                     LocalProtocol::TProxyUdp { timeout } => {
-                        let server =
-                            udp::run_server(tunnel.local, *timeout, udp::configure_tproxy, udp::mk_send_socket_tproxy)
-                                .await
-                                .unwrap_or_else(|err| {
-                                    panic!("Cannot start TProxy UDP server on {}: {}", tunnel.local, err)
-                                });
-
-                        let server = TProxyUdpTunnelListener::new(server, *timeout);
+                        use crate::tunnel::listeners::new_tproxy_udp;
+                        let server = new_tproxy_udp(tunnel.local, *timeout).await?;
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1250,10 +1230,7 @@ async fn main() {
                         panic!("Transparent proxy is not available for non Linux platform")
                     }
                     LocalProtocol::Udp { timeout } => {
-                        let server = udp::run_server(tunnel.local, *timeout, |_| Ok(()), |s| Ok(s.clone()))
-                            .await
-                            .unwrap_or_else(|err| panic!("Cannot start UDP server on {}: {}", tunnel.local, err));
-                        let server = UdpTunnelListener::new(server, tunnel.remote.clone(), *timeout);
+                        let server = new_udp_listener(tunnel.local, tunnel.remote.clone(), *timeout).await?;
 
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
@@ -1262,11 +1239,7 @@ async fn main() {
                         });
                     }
                     LocalProtocol::Socks5 { timeout, credentials } => {
-                        let server = socks5::run_server(tunnel.local, *timeout, credentials.clone())
-                            .await
-                            .unwrap_or_else(|err| panic!("Cannot start Socks5 server on {}: {}", tunnel.local, err));
-
-                        let server = Socks5TunnelListener::new(server);
+                        let server = Socks5TunnelListener::new(tunnel.local, *timeout, credentials.clone()).await?;
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1278,13 +1251,9 @@ async fn main() {
                         credentials,
                         proxy_protocol,
                     } => {
-                        let server = http_proxy::run_server(tunnel.local, *timeout, credentials.clone())
-                            .await
-                            .unwrap_or_else(|err| {
-                                panic!("Cannot start http proxy server on {}: {}", tunnel.local, err)
-                            });
-
-                        let server = HttpProxyTunnelListener::new(server, *proxy_protocol);
+                        let server =
+                            HttpProxyTunnelListener::new(tunnel.local, *timeout, credentials.clone(), *proxy_protocol)
+                                .await?;
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1293,10 +1262,7 @@ async fn main() {
                     }
 
                     LocalProtocol::Stdio => {
-                        let (server, mut handle) = stdio::server::run_server().await.unwrap_or_else(|err| {
-                            panic!("Cannot start STDIO server: {}", err);
-                        });
-                        let server = StdioTunnelListener::new(server, tunnel.remote.clone(), false);
+                        let (server, mut handle) = new_stdio_listener(tunnel.remote.clone(), false).await?; // TODO: support proxy protocol
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1410,4 +1376,5 @@ async fn main() {
     }
 
     tokio::signal::ctrl_c().await.unwrap();
+    Ok(())
 }

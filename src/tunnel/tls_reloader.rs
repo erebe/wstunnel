@@ -1,5 +1,6 @@
+use crate::protocols::tls;
 use crate::tunnel::tls_reloader::TlsReloaderState::{Client, Server};
-use crate::{tls, WsClientConfig, WsServerConfig};
+use crate::{WsClientConfig, WsServerConfig};
 use anyhow::Context;
 use log::trace;
 use notify::{EventKind, RecommendedWatcher, Watcher};

@@ -1,4 +1,4 @@
-use crate::tcp;
+use crate::protocols;
 use anyhow::{anyhow, Context};
 use futures_util::{FutureExt, TryFutureExt};
 use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
@@ -205,7 +205,7 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
             };
 
             if let Some(proxy) = &proxy {
-                tcp::connect_with_http_proxy(
+                protocols::tcp::connect_with_http_proxy(
                     proxy,
                     &host,
                     server_addr.port(),
@@ -217,7 +217,7 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
                 .map(|s| s.map(AsyncIoTokioAsStd))
                 .await
             } else {
-                tcp::connect(
+                protocols::tcp::connect(
                     &host,
                     server_addr.port(),
                     so_mark,
@@ -261,7 +261,7 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
 
 #[cfg(test)]
 mod tests {
-    use crate::dns::sort_socket_addrs;
+    use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
     #[test]

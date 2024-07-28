@@ -1,6 +1,6 @@
 use super::{JwtTunnelConfig, RemoteAddr, TransportScheme, JWT_DECODE};
+use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::transport::{TunnelReader, TunnelWriter};
-use crate::types::TunnelListener;
 use crate::{tunnel, WsClientConfig};
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
@@ -57,8 +57,7 @@ where
     Ok(())
 }
 
-pub async fn run_tunnel(client_config: Arc<WsClientConfig>, incoming_cnx: impl TunnelListener) -> anyhow::Result<()>
-{
+pub async fn run_tunnel(client_config: Arc<WsClientConfig>, incoming_cnx: impl TunnelListener) -> anyhow::Result<()> {
     pin_mut!(incoming_cnx);
     while let Some(cnx) = incoming_cnx.next().await {
         let (cnx_stream, remote_addr) = match cnx {

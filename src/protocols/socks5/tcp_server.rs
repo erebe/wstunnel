@@ -1,5 +1,5 @@
-use crate::socks5_udp::Socks5UdpStream;
-use crate::{socks5_udp, LocalProtocol};
+use super::udp_server::Socks5UdpStream;
+use crate::LocalProtocol;
 use anyhow::Context;
 use fast_socks5::server::{Config, DenyAuthentication, SimpleUserPassword, Socks5Server};
 use fast_socks5::util::target_addr::TargetAddr;
@@ -29,7 +29,7 @@ pub enum Socks5Stream {
 impl Socks5Stream {
     pub fn local_protocol(&self) -> LocalProtocol {
         match self {
-            Self::Tcp(_) => LocalProtocol::Tcp { proxy_protocol: false },
+            Self::Tcp(_) => LocalProtocol::Tcp { proxy_protocol: false }, // TODO: Implement proxy protocol
             Self::Udp(s) => LocalProtocol::Udp {
                 timeout: s.watchdog_deadline.as_ref().map(|x| x.period()),
             },
@@ -72,7 +72,7 @@ pub async fn run_server(
     cfg.set_execute_command(false);
     cfg.set_udp_support(true);
 
-    let udp_server = socks5_udp::run_server(bind, timeout).await?;
+    let udp_server = super::udp_server::run_server(bind, timeout).await?;
     let server = server.with_config(cfg);
     let stream = stream::unfold((server, Box::pin(udp_server)), move |(server, mut udp_server)| async move {
         let mut acceptor = server.incoming();

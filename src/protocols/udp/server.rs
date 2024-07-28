@@ -5,9 +5,9 @@ use parking_lot::RwLock;
 use pin_project::{pin_project, pinned_drop};
 use std::collections::HashMap;
 use std::future::Future;
-use std::{io, task};
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::{io, task};
 use tokio::task::JoinSet;
 
 use log::warn;
@@ -20,7 +20,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::futures::Notified;
 
-use crate::dns::DnsResolver;
+use crate::protocols::dns::DnsResolver;
 use tokio::sync::Notify;
 use tokio::time::{sleep, timeout, Interval};
 use tracing::{debug, error, info};
@@ -173,11 +173,7 @@ impl UdpStream {
 }
 
 impl AsyncRead for UdpStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut task::Context<'_>,
-        obuf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut task::Context<'_>, obuf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         let mut project = self.project();
         // Look that the timeout for client has not elapsed
         if let Some(mut deadline) = project.watchdog_deadline.as_pin_mut() {
