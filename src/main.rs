@@ -101,8 +101,8 @@ struct Client {
     /// 'socks5://[::1]:1212'            =>       listen locally with socks5 on port 1212 and forward dynamically requested tunnel
     /// 'socks5://[::1]:1212?login=admin&password=admin' => listen locally with socks5 on port 1212 and only accept connection with login=admin and password=admin
     ///
-    /// 'httpproxy://[::1]:1212'         =>       start a http proxy on port 1212 and forward dynamically requested tunnel
-    /// 'httpproxy://[::1]:1212?login=admin&password=admin' => start a http proxy on port 1212 and only accept connection with login=admin and password=admin
+    /// 'http://[::1]:1212'              =>       start a http proxy on port 1212 and forward dynamically requested tunnel
+    /// 'http://[::1]:1212?login=admin&password=admin' => start a http proxy on port 1212 and only accept connection with login=admin and password=admin
     ///
     /// 'tproxy+tcp://[::1]:1212'        =>       listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
     /// 'tproxy+udp://[::1]:1212?timeout_sec=10'  listen locally on udp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
@@ -119,7 +119,7 @@ struct Client {
     /// 'tcp://1212:google.com:443'      =>     listen on server for incoming tcp cnx on port 1212 and forward to google.com on port 443 from local machine
     /// 'udp://1212:1.1.1.1:53'          =>     listen on server for incoming udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53 from local machine
     /// 'socks5://[::1]:1212'            =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine (login/password is supported)
-    /// 'httpproxy://[::1]:1212'         =>     listen on server for incoming http proxy request on port 1212 and forward dynamically request from local machine (login/password is supported)
+    /// 'http://[::1]:1212'         =>     listen on server for incoming http proxy request on port 1212 and forward dynamically request from local machine (login/password is supported)
     /// 'unix://wstunnel.sock:g.com:443' =>     listen on server for incoming data from unix socket of path wstunnel.sock and forward to g.com:443 from local machine
     #[arg(short='R', long, value_name = "{tcp,udp,socks5,unix}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
     remote_to_local: Vec<LocalToRemote>,
@@ -550,6 +550,29 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
                 remote: (dest_host, dest_port),
             })
         }
+        "http:/" => {
+            let (local_bind, remaining) = parse_local_bind(&arg["http://".len()..])?;
+            let x = format!("0.0.0.0:0?{}", remaining);
+            let (dest_host, dest_port, options) = parse_tunnel_dest(&x)?;
+            let proxy_protocol = options.contains_key("proxy_protocol");
+            let timeout = options
+                .get("timeout_sec")
+                .and_then(|x| x.parse::<u64>().ok())
+                .map(|d| if d == 0 { None } else { Some(Duration::from_secs(d)) })
+                .unwrap_or(Some(Duration::from_secs(30)));
+            let credentials = options
+                .get("login")
+                .and_then(|login| options.get("password").map(|p| (login.to_string(), p.to_string())));
+            Ok(LocalToRemote {
+                local_protocol: LocalProtocol::HttpProxy {
+                    timeout,
+                    credentials,
+                    proxy_protocol,
+                },
+                local: local_bind,
+                remote: (dest_host, dest_port),
+            })
+        }
         _ => match &arg[..8] {
             "socks5:/" => {
                 let (local_bind, remaining) = parse_local_bind(&arg["socks5://".len()..])?;
@@ -565,29 +588,6 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
                     .and_then(|login| options.get("password").map(|p| (login.to_string(), p.to_string())));
                 Ok(LocalToRemote {
                     local_protocol: LocalProtocol::Socks5 { timeout, credentials },
-                    local: local_bind,
-                    remote: (dest_host, dest_port),
-                })
-            }
-            "httpprox" => {
-                let (local_bind, remaining) = parse_local_bind(&arg["httpproxy://".len()..])?;
-                let x = format!("0.0.0.0:0?{}", remaining);
-                let (dest_host, dest_port, options) = parse_tunnel_dest(&x)?;
-                let proxy_protocol = options.contains_key("proxy_protocol");
-                let timeout = options
-                    .get("timeout_sec")
-                    .and_then(|x| x.parse::<u64>().ok())
-                    .map(|d| if d == 0 { None } else { Some(Duration::from_secs(d)) })
-                    .unwrap_or(Some(Duration::from_secs(30)));
-                let credentials = options
-                    .get("login")
-                    .and_then(|login| options.get("password").map(|p| (login.to_string(), p.to_string())));
-                Ok(LocalToRemote {
-                    local_protocol: LocalProtocol::HttpProxy {
-                        timeout,
-                        credentials,
-                        proxy_protocol,
-                    },
                     local: local_bind,
                     remote: (dest_host, dest_port),
                 })
