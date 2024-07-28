@@ -9,6 +9,7 @@ mod tcp;
 mod tls;
 mod tls_utils;
 mod tunnel;
+mod types;
 mod udp;
 #[cfg(unix)]
 mod unix_socket;
@@ -16,7 +17,6 @@ mod unix_socket;
 use anyhow::anyhow;
 use base64::Engine;
 use clap::Parser;
-use futures_util::{stream, TryStreamExt};
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
 use log::debug;
@@ -46,6 +46,10 @@ use crate::restrictions::types::RestrictionsRules;
 use crate::tls_utils::{cn_from_certificate, find_leaf_certificate};
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
+use crate::types::{
+    HttpProxyTunnelListener, Socks5TunnelListener, StdioTunnelListener, TProxyUdpTunnelListener, TcpTunnelListener,
+    TproxyTcpTunnelListener, UdpTunnelListener, UnixTunnelListener,
+};
 use crate::udp::MyUdpSocket;
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
@@ -1184,21 +1188,10 @@ async fn main() {
 
                 match &tunnel.local_protocol {
                     LocalProtocol::Tcp { proxy_protocol } => {
-                        let proxy_protocol = *proxy_protocol;
-                        let remote = tunnel.remote.clone();
                         let server = tcp::run_server(tunnel.local, false)
                             .await
-                            .unwrap_or_else(|err| panic!("Cannot start TCP server on {}: {}", tunnel.local, err))
-                            .map_err(anyhow::Error::new)
-                            .map_ok(move |stream| {
-                                let remote = RemoteAddr {
-                                    protocol: LocalProtocol::Tcp { proxy_protocol },
-                                    host: remote.0.clone(),
-                                    port: remote.1,
-                                };
-                                (stream.into_split(), remote)
-                            });
-
+                            .unwrap_or_else(|err| panic!("Cannot start TCP server on {}: {}", tunnel.local, err));
+                        let server = TcpTunnelListener::new(server, tunnel.remote.clone(), *proxy_protocol);
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1207,20 +1200,10 @@ async fn main() {
                     }
                     #[cfg(target_os = "linux")]
                     LocalProtocol::TProxyTcp => {
-                        let server = tcp::run_server(tunnel.local, true)
-                            .await
-                            .unwrap_or_else(|err| panic!("Cannot start TProxy TCP server on {}: {}", tunnel.local, err))
-                            .map_err(anyhow::Error::new)
-                            .map_ok(move |stream| {
-                                // In TProxy mode local destination is the final ip:port destination
-                                let (host, port) = to_host_port(stream.local_addr().unwrap());
-                                let remote = RemoteAddr {
-                                    protocol: LocalProtocol::Tcp { proxy_protocol: false },
-                                    host,
-                                    port,
-                                };
-                                (stream.into_split(), remote)
-                            });
+                        let server = tcp::run_server(tunnel.local, true).await.unwrap_or_else(|err| {
+                            panic!("Cannot start TProxy TCP server on {}: {}", tunnel.local, err)
+                        });
+                        let server = TproxyTcpTunnelListener::new(server, false); // TODO: support proxy protocol
 
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
@@ -1230,22 +1213,11 @@ async fn main() {
                     }
                     #[cfg(unix)]
                     LocalProtocol::Unix { path } => {
-                        let remote = tunnel.remote.clone();
-                        let server = unix_socket::run_server(path)
-                            .await
-                            .unwrap_or_else(|err| {
-                                panic!("Cannot start Unix domain server on {}: {}", tunnel.local, err)
-                            })
-                            .map_err(anyhow::Error::new)
-                            .map_ok(move |stream| {
-                                let remote = RemoteAddr {
-                                    protocol: LocalProtocol::Tcp { proxy_protocol: false },
-                                    host: remote.0.clone(),
-                                    port: remote.1,
-                                };
-                                (stream.into_split(), remote)
-                            });
+                        let server = unix_socket::run_server(path).await.unwrap_or_else(|err| {
+                            panic!("Cannot start Unix domain server on {}: {}", tunnel.local, err)
+                        });
 
+                        let server = UnixTunnelListener::new(server, tunnel.remote.clone(), false); // TODO: support proxy protocol
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1259,25 +1231,14 @@ async fn main() {
 
                     #[cfg(target_os = "linux")]
                     LocalProtocol::TProxyUdp { timeout } => {
-                        let timeout = *timeout;
                         let server =
-                            udp::run_server(tunnel.local, timeout, udp::configure_tproxy, udp::mk_send_socket_tproxy)
+                            udp::run_server(tunnel.local, *timeout, udp::configure_tproxy, udp::mk_send_socket_tproxy)
                                 .await
                                 .unwrap_or_else(|err| {
                                     panic!("Cannot start TProxy UDP server on {}: {}", tunnel.local, err)
-                                })
-                                .map_err(anyhow::Error::new)
-                                .map_ok(move |stream| {
-                                    // In TProxy mode local destination is the final ip:port destination
-                                    let (host, port) = to_host_port(stream.local_addr().unwrap());
-                                    let remote = RemoteAddr {
-                                        protocol: LocalProtocol::Udp { timeout },
-                                        host,
-                                        port,
-                                    };
-                                    (tokio::io::split(stream), remote)
                                 });
 
+                        let server = TProxyUdpTunnelListener::new(server, *timeout);
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1289,20 +1250,10 @@ async fn main() {
                         panic!("Transparent proxy is not available for non Linux platform")
                     }
                     LocalProtocol::Udp { timeout } => {
-                        let (host, port) = tunnel.remote.clone();
-                        let timeout = *timeout;
-                        let server = udp::run_server(tunnel.local, timeout, |_| Ok(()), |s| Ok(s.clone()))
+                        let server = udp::run_server(tunnel.local, *timeout, |_| Ok(()), |s| Ok(s.clone()))
                             .await
-                            .unwrap_or_else(|err| panic!("Cannot start UDP server on {}: {}", tunnel.local, err))
-                            .map_err(anyhow::Error::new)
-                            .map_ok(move |stream| {
-                                let remote = RemoteAddr {
-                                    protocol: LocalProtocol::Udp { timeout },
-                                    host: host.clone(),
-                                    port,
-                                };
-                                (tokio::io::split(stream), remote)
-                            });
+                            .unwrap_or_else(|err| panic!("Cannot start UDP server on {}: {}", tunnel.local, err));
+                        let server = UdpTunnelListener::new(server, tunnel.remote.clone(), *timeout);
 
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
@@ -1313,16 +1264,9 @@ async fn main() {
                     LocalProtocol::Socks5 { timeout, credentials } => {
                         let server = socks5::run_server(tunnel.local, *timeout, credentials.clone())
                             .await
-                            .unwrap_or_else(|err| panic!("Cannot start Socks5 server on {}: {}", tunnel.local, err))
-                            .map_ok(|(stream, (host, port))| {
-                                let remote = RemoteAddr {
-                                    protocol: stream.local_protocol(),
-                                    host,
-                                    port,
-                                };
-                                (tokio::io::split(stream), remote)
-                            });
+                            .unwrap_or_else(|err| panic!("Cannot start Socks5 server on {}: {}", tunnel.local, err));
 
+                        let server = Socks5TunnelListener::new(server);
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1334,19 +1278,13 @@ async fn main() {
                         credentials,
                         proxy_protocol,
                     } => {
-                        let proxy_protocol = *proxy_protocol;
                         let server = http_proxy::run_server(tunnel.local, *timeout, credentials.clone())
                             .await
-                            .unwrap_or_else(|err| panic!("Cannot start http proxy server on {}: {}", tunnel.local, err))
-                            .map_ok(move |(stream, (host, port))| {
-                                let remote = RemoteAddr {
-                                    protocol: LocalProtocol::Tcp { proxy_protocol },
-                                    host,
-                                    port,
-                                };
-                                (tokio::io::split(stream), remote)
+                            .unwrap_or_else(|err| {
+                                panic!("Cannot start http proxy server on {}: {}", tunnel.local, err)
                             });
 
+                        let server = HttpProxyTunnelListener::new(server, *proxy_protocol);
                         tokio::spawn(async move {
                             if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
@@ -1358,20 +1296,9 @@ async fn main() {
                         let (server, mut handle) = stdio::server::run_server().await.unwrap_or_else(|err| {
                             panic!("Cannot start STDIO server: {}", err);
                         });
+                        let server = StdioTunnelListener::new(server, tunnel.remote.clone(), false);
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(
-                                client_config,
-                                stream::once(async move {
-                                    let remote = RemoteAddr {
-                                        protocol: LocalProtocol::Tcp { proxy_protocol: false },
-                                        host: tunnel.remote.0,
-                                        port: tunnel.remote.1,
-                                    };
-                                    Ok((server, remote))
-                                }),
-                            )
-                            .await
-                            {
+                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
                                 error!("{:?}", err);
                             }
                         });

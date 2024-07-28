@@ -121,7 +121,8 @@ async fn run_tunnel(
             let listening_server =
                 udp::run_server(bind.parse()?, timeout, |_| Ok(()), |send_socket| Ok(send_socket.clone()));
             let udp = run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
-            let (local_rx, local_tx) = tokio::io::split(udp);
+            let udp_writer = udp.writer();
+            let (local_rx, local_tx) = (udp, udp_writer);
 
             let remote = RemoteAddr {
                 protocol: remote.protocol,

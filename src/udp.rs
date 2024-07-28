@@ -5,7 +5,7 @@ use parking_lot::RwLock;
 use pin_project::{pin_project, pinned_drop};
 use std::collections::HashMap;
 use std::future::Future;
-use std::io;
+use std::{io, task};
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use tokio::task::JoinSet;
@@ -164,12 +164,18 @@ impl UdpStream {
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.send_socket.local_addr()
     }
+    pub fn writer(&self) -> UdpStreamWriter {
+        UdpStreamWriter {
+            send_socket: self.send_socket.clone(),
+            peer: self.peer,
+        }
+    }
 }
 
 impl AsyncRead for UdpStream {
     fn poll_read(
         self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        cx: &mut task::Context<'_>,
         obuf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let mut project = self.project();
@@ -209,16 +215,21 @@ impl AsyncRead for UdpStream {
     }
 }
 
-impl AsyncWrite for UdpStream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
+pub struct UdpStreamWriter {
+    send_socket: Arc<UdpSocket>,
+    peer: SocketAddr,
+}
+
+impl AsyncWrite for UdpStreamWriter {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         self.send_socket.poll_send_to(cx, buf, self.peer)
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         self.send_socket.poll_send_ready(cx)
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
     }
 }
@@ -299,7 +310,7 @@ impl MyUdpSocket {
 }
 
 impl AsyncRead for MyUdpSocket {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut task::Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         unsafe { self.map_unchecked_mut(|x| &mut x.socket) }
             .poll_recv_from(cx, buf)
             .map(|x| x.map(|_| ()))
@@ -307,15 +318,15 @@ impl AsyncRead for MyUdpSocket {
 }
 
 impl AsyncWrite for MyUdpSocket {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         unsafe { self.map_unchecked_mut(|x| &mut x.socket) }.poll_send(cx, buf)
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
     }
 }

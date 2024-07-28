@@ -1,5 +1,6 @@
 use super::{JwtTunnelConfig, RemoteAddr, TransportScheme, JWT_DECODE};
 use crate::tunnel::transport::{TunnelReader, TunnelWriter};
+use crate::types::TunnelListener;
 use crate::{tunnel, WsClientConfig};
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
@@ -10,7 +11,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::StreamExt;
 use tracing::{error, event, span, Instrument, Level, Span};
 use url::Host;
 use uuid::Uuid;
@@ -56,11 +57,7 @@ where
     Ok(())
 }
 
-pub async fn run_tunnel<T, R, W>(client_config: Arc<WsClientConfig>, incoming_cnx: T) -> anyhow::Result<()>
-where
-    T: Stream<Item = anyhow::Result<((R, W), RemoteAddr)>>,
-    R: AsyncRead + Send + 'static,
-    W: AsyncWrite + Send + 'static,
+pub async fn run_tunnel(client_config: Arc<WsClientConfig>, incoming_cnx: impl TunnelListener) -> anyhow::Result<()>
 {
     pin_mut!(incoming_cnx);
     while let Some(cnx) = incoming_cnx.next().await {
