@@ -3,7 +3,6 @@ mod protocols;
 mod restrictions;
 mod tunnel;
 
-use anyhow::anyhow;
 use base64::Engine;
 use clap::Parser;
 use hyper::header::HOST;
@@ -21,8 +20,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, io};
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
 use tokio::select;
 
 use tokio_rustls::rustls::pki_types::{CertificateDer, DnsName, PrivateKeyDer, ServerName};
@@ -31,9 +28,9 @@ use tokio_rustls::TlsConnector;
 use tracing::{error, info};
 
 use crate::protocols::dns::DnsResolver;
-use crate::protocols::udp::MyUdpSocket;
-use crate::protocols::{socks5, tls, udp};
+use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
+use crate::tunnel::connectors::{Socks5TunnelConnector, TcpTunnelConnector, UdpTunnelConnector};
 use crate::tunnel::listeners::{
     new_stdio_listener, new_udp_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener,
 };
@@ -989,19 +986,14 @@ async fn main() -> anyhow::Result<()> {
                 match &tunnel.local_protocol {
                     LocalProtocol::Tcp { proxy_protocol: _ } => {
                         tokio::spawn(async move {
-                            let remote = tunnel.remote.clone();
                             let cfg = client_config.clone();
-                            let connect_to_dest = |_| async {
-                                protocols::tcp::connect(
-                                    &remote.0,
-                                    remote.1,
-                                    cfg.socket_so_mark,
-                                    cfg.timeout_connect,
-                                    &cfg.dns_resolver,
-                                )
-                                .await
-                            };
-
+                            let tcp_connector = TcpTunnelConnector::new(
+                                &tunnel.remote.0,
+                                tunnel.remote.1,
+                                cfg.socket_so_mark,
+                                cfg.timeout_connect,
+                                &cfg.dns_resolver,
+                            );
                             let (host, port) = to_host_port(tunnel.local);
                             let remote = RemoteAddr {
                                 protocol: LocalProtocol::ReverseTcp,
@@ -1009,7 +1001,7 @@ async fn main() -> anyhow::Result<()> {
                                 port,
                             };
                             if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, remote, connect_to_dest).await
+                                tunnel::client::run_reverse_tunnel(client_config, remote, tcp_connector).await
                             {
                                 error!("{:?}", err);
                             }
@@ -1026,29 +1018,22 @@ async fn main() -> anyhow::Result<()> {
                                 host,
                                 port,
                             };
-                            let connect_to_dest = |_| async {
-                                udp::connect(
-                                    &tunnel.remote.0,
-                                    tunnel.remote.1,
-                                    cfg.timeout_connect,
-                                    cfg.socket_so_mark,
-                                    &cfg.dns_resolver,
-                                )
-                                .await
-                            };
+                            let udp_connector = UdpTunnelConnector::new(
+                                &remote.host,
+                                remote.port,
+                                cfg.socket_so_mark,
+                                cfg.timeout_connect,
+                                &cfg.dns_resolver,
+                            );
 
                             if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, remote, connect_to_dest).await
+                                tunnel::client::run_reverse_tunnel(client_config, remote.clone(), udp_connector).await
                             {
                                 error!("{:?}", err);
                             }
                         });
                     }
                     LocalProtocol::Socks5 { timeout, credentials } => {
-                        trait T: AsyncWrite + AsyncRead + Unpin + Send {}
-                        impl T for TcpStream {}
-                        impl T for MyUdpSocket {}
-
                         let credentials = credentials.clone();
                         let timeout = *timeout;
                         tokio::spawn(async move {
@@ -1059,37 +1044,11 @@ async fn main() -> anyhow::Result<()> {
                                 host,
                                 port,
                             };
-                            let connect_to_dest = |remote: Option<RemoteAddr>| {
-                                let so_mark = cfg.socket_so_mark;
-                                let timeout = cfg.timeout_connect;
-                                let dns_resolver = &cfg.dns_resolver;
-                                async move {
-                                    let Some(remote) = remote else {
-                                        return Err(anyhow!("Missing remote destination for reverse socks5"));
-                                    };
-
-                                    match remote.protocol {
-                                        LocalProtocol::Tcp { proxy_protocol: _ } => protocols::tcp::connect(
-                                            &remote.host,
-                                            remote.port,
-                                            so_mark,
-                                            timeout,
-                                            dns_resolver,
-                                        )
-                                        .await
-                                        .map(|s| Box::new(s) as Box<dyn T>),
-                                        LocalProtocol::Udp { .. } => {
-                                            udp::connect(&remote.host, remote.port, timeout, so_mark, dns_resolver)
-                                                .await
-                                                .map(|s| Box::new(s) as Box<dyn T>)
-                                        }
-                                        _ => Err(anyhow!("Invalid protocol for reverse socks5 {:?}", remote.protocol)),
-                                    }
-                                }
-                            };
+                            let socks_connector =
+                                Socks5TunnelConnector::new(cfg.socket_so_mark, cfg.timeout_connect, &cfg.dns_resolver);
 
                             if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, remote, connect_to_dest).await
+                                tunnel::client::run_reverse_tunnel(client_config, remote, socks_connector).await
                             {
                                 error!("{:?}", err);
                             }
@@ -1108,22 +1067,16 @@ async fn main() -> anyhow::Result<()> {
                                 host,
                                 port,
                             };
-                            let connect_to_dest = |remote: Option<RemoteAddr>| {
-                                let so_mark = cfg.socket_so_mark;
-                                let timeout = cfg.timeout_connect;
-                                let dns_resolver = &cfg.dns_resolver;
-                                async move {
-                                    let Some(remote) = remote else {
-                                        return Err(anyhow!("Missing remote destination for reverse socks5"));
-                                    };
-
-                                    protocols::tcp::connect(&remote.host, remote.port, so_mark, timeout, dns_resolver)
-                                        .await
-                                }
-                            };
+                            let tcp_connector = TcpTunnelConnector::new(
+                                &remote.host,
+                                remote.port,
+                                cfg.socket_so_mark,
+                                cfg.timeout_connect,
+                                &cfg.dns_resolver,
+                            );
 
                             if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, remote, connect_to_dest).await
+                                tunnel::client::run_reverse_tunnel(client_config, remote.clone(), tcp_connector).await
                             {
                                 error!("{:?}", err);
                             }
@@ -1133,18 +1086,14 @@ async fn main() -> anyhow::Result<()> {
                     LocalProtocol::Unix { path } => {
                         let path = path.clone();
                         tokio::spawn(async move {
-                            let remote = tunnel.remote.clone();
                             let cfg = client_config.clone();
-                            let connect_to_dest = |_| async {
-                                protocols::tcp::connect(
-                                    &remote.0,
-                                    remote.1,
-                                    cfg.socket_so_mark,
-                                    cfg.timeout_connect,
-                                    &cfg.dns_resolver,
-                                )
-                                .await
-                            };
+                            let tcp_connector = TcpTunnelConnector::new(
+                                &tunnel.remote.0,
+                                tunnel.remote.1,
+                                cfg.socket_so_mark,
+                                cfg.timeout_connect,
+                                &cfg.dns_resolver,
+                            );
 
                             let (host, port) = to_host_port(tunnel.local);
                             let remote = RemoteAddr {
@@ -1153,7 +1102,7 @@ async fn main() -> anyhow::Result<()> {
                                 port,
                             };
                             if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, remote, connect_to_dest).await
+                                tunnel::client::run_reverse_tunnel(client_config, remote, tcp_connector).await
                             {
                                 error!("{:?}", err);
                             }

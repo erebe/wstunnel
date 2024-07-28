@@ -23,22 +23,23 @@ pub use udp::new_udp_listener;
 #[cfg(unix)]
 pub use unix_sock::UnixTunnelListener;
 
+use crate::tunnel::RemoteAddr;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::Stream;
 
-pub trait TunnelListener:
-    Stream<Item = anyhow::Result<((Self::Reader, Self::Writer), crate::tunnel::RemoteAddr)>>
-{
+pub trait TunnelListener: Stream<Item = anyhow::Result<((Self::Reader, Self::Writer), RemoteAddr)>> {
     type Reader: AsyncRead + Send + 'static;
     type Writer: AsyncWrite + Send + 'static;
+    type OkReturn; // = ((Self::Reader, Self::Writer), RemoteAddr);
 }
 
 impl<T, R, W> TunnelListener for T
 where
-    T: Stream<Item = anyhow::Result<((R, W), crate::tunnel::RemoteAddr)>>,
+    T: Stream<Item = anyhow::Result<((R, W), RemoteAddr)>>,
     R: AsyncRead + Send + 'static,
     W: AsyncWrite + Send + 'static,
 {
     type Reader = R;
     type Writer = W;
+    type OkReturn = ((R, W), RemoteAddr);
 }

@@ -1,4 +1,5 @@
 use super::{JwtTunnelConfig, RemoteAddr, TransportScheme, JWT_DECODE};
+use crate::tunnel::connectors::TunnelConnector;
 use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::transport::{TunnelReader, TunnelWriter};
 use crate::{tunnel, WsClientConfig};
@@ -6,7 +7,6 @@ use futures_util::pin_mut;
 use hyper::header::COOKIE;
 use jsonwebtoken::TokenData;
 use log::debug;
-use std::future::Future;
 use std::ops::Deref;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -90,16 +90,11 @@ pub async fn run_tunnel(client_config: Arc<WsClientConfig>, incoming_cnx: impl T
     Ok(())
 }
 
-pub async fn run_reverse_tunnel<F, Fut, T>(
+pub async fn run_reverse_tunnel(
     client_cfg: Arc<WsClientConfig>,
     remote_addr: RemoteAddr,
-    connect_to_dest: F,
-) -> anyhow::Result<()>
-where
-    F: Fn(Option<RemoteAddr>) -> Fut,
-    Fut: Future<Output = anyhow::Result<T>>,
-    T: AsyncRead + AsyncWrite + Send + 'static,
-{
+    connector: impl TunnelConnector,
+) -> anyhow::Result<()> {
     loop {
         let client_config = client_cfg.clone();
         let request_id = Uuid::now_v7();
@@ -156,17 +151,15 @@ where
                 port: jwt.claims.rp,
             });
 
-        let stream = match connect_to_dest(remote).instrument(span.clone()).await {
+        let (local_rx, local_tx) = match connector.connect(&remote).instrument(span.clone()).await {
             Ok(s) => s,
             Err(err) => {
-                event!(parent: &span, Level::ERROR, "Cannot connect to xxxx: {err:?}");
+                event!(parent: &span, Level::ERROR, "Cannot connect to {remote:?}: {err:?}");
                 continue;
             }
         };
 
-        let (local_rx, local_tx) = tokio::io::split(stream);
         let (close_tx, close_rx) = oneshot::channel::<()>();
-
         let tunnel = async move {
             let ping_frequency = client_config.websocket_ping_frequency;
             tokio::spawn(

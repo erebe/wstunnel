@@ -1,0 +1,48 @@
+use crate::protocols;
+use crate::protocols::dns::DnsResolver;
+use crate::tunnel::connectors::TunnelConnector;
+use crate::tunnel::RemoteAddr;
+use std::time::Duration;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use url::Host;
+
+pub struct TcpTunnelConnector<'a> {
+    host: &'a Host,
+    port: u16,
+    so_mark: Option<u32>,
+    connect_timeout: Duration,
+    dns_resolver: &'a DnsResolver,
+}
+
+impl<'a> TcpTunnelConnector<'a> {
+    pub fn new(
+        host: &'a Host,
+        port: u16,
+        so_mark: Option<u32>,
+        connect_timeout: Duration,
+        dns_resolver: &'a DnsResolver,
+    ) -> TcpTunnelConnector<'a> {
+        TcpTunnelConnector {
+            host,
+            port,
+            so_mark,
+            connect_timeout,
+            dns_resolver,
+        }
+    }
+}
+
+impl TunnelConnector for TcpTunnelConnector<'_> {
+    type Reader = OwnedReadHalf;
+    type Writer = OwnedWriteHalf;
+
+    async fn connect(&self, remote: &Option<RemoteAddr>) -> anyhow::Result<(Self::Reader, Self::Writer)> {
+        let (host, port) = match remote {
+            Some(remote) => (&remote.host, remote.port),
+            None => (self.host, self.port),
+        };
+
+        let stream = protocols::tcp::connect(host, port, self.so_mark, self.connect_timeout, self.dns_resolver).await?;
+        Ok(stream.into_split())
+    }
+}
