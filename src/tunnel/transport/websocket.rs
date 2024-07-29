@@ -1,6 +1,6 @@
+use crate::tunnel::client::WsClient;
 use crate::tunnel::transport::{headers_from_file, TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
 use crate::tunnel::{tunnel_to_jwt_token, RemoteAddr, JWT_HEADER_PREFIX};
-use crate::WsClientConfig;
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use fastwebsockets::{Frame, OpCode, Payload, WebSocketRead, WebSocketWrite};
@@ -135,10 +135,11 @@ impl TunnelRead for WebsocketTunnelRead {
 
 pub async fn connect(
     request_id: Uuid,
-    client_cfg: &WsClientConfig,
+    client: &WsClient,
     dest_addr: &RemoteAddr,
 ) -> anyhow::Result<(WebsocketTunnelRead, WebsocketTunnelWrite, Parts)> {
-    let mut pooled_cnx = match client_cfg.cnx_pool().get().await {
+    let client_cfg = &client.config;
+    let mut pooled_cnx = match client.cnx_pool.get().await {
         Ok(cnx) => Ok(cnx),
         Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
     }?;

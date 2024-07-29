@@ -1,4 +1,4 @@
-use crate::{TlsServerConfig, WsClientConfig};
+use crate::TlsServerConfig;
 use anyhow::{anyhow, Context};
 use std::fs::File;
 
@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
+use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::TransportAddr;
 use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};

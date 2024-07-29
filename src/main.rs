@@ -3,15 +3,23 @@ mod protocols;
 mod restrictions;
 mod tunnel;
 
+use crate::protocols::dns::DnsResolver;
+use crate::protocols::tls;
+use crate::restrictions::types::RestrictionsRules;
+use crate::tunnel::client::{TlsClientConfig, WsClient, WsClientConfig};
+use crate::tunnel::connectors::{Socks5TunnelConnector, TcpTunnelConnector, UdpTunnelConnector};
+use crate::tunnel::listeners::{
+    new_stdio_listener, new_udp_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener,
+};
+use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
 use base64::Engine;
 use clap::Parser;
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
 use log::debug;
-use once_cell::sync::Lazy;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -21,21 +29,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, io};
 use tokio::select;
-
-use tokio_rustls::rustls::pki_types::{CertificateDer, DnsName, PrivateKeyDer, ServerName};
-use tokio_rustls::TlsConnector;
-
+use tokio_rustls::rustls::pki_types::{CertificateDer, DnsName, PrivateKeyDer};
 use tracing::{error, info};
-
-use crate::protocols::dns::DnsResolver;
-use crate::protocols::tls;
-use crate::restrictions::types::RestrictionsRules;
-use crate::tunnel::connectors::{Socks5TunnelConnector, TcpTunnelConnector, UdpTunnelConnector};
-use crate::tunnel::listeners::{
-    new_stdio_listener, new_udp_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener,
-};
-use crate::tunnel::tls_reloader::TlsReloader;
-use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 use url::{Host, Url};
@@ -695,22 +690,6 @@ fn parse_server_url(arg: &str) -> Result<Url, io::Error> {
     Ok(url)
 }
 
-#[derive(Clone)]
-pub struct TlsClientConfig {
-    pub tls_sni_disabled: bool,
-    pub tls_sni_override: Option<DnsName<'static>>,
-    pub tls_verify_certificate: bool,
-    tls_connector: Arc<RwLock<TlsConnector>>,
-    pub tls_certificate_path: Option<PathBuf>,
-    pub tls_key_path: Option<PathBuf>,
-}
-
-impl TlsClientConfig {
-    pub fn tls_connector(&self) -> TlsConnector {
-        self.tls_connector.read().clone()
-    }
-}
-
 #[derive(Debug)]
 pub struct TlsServerConfig {
     pub tls_certificate: Mutex<Vec<CertificateDer<'static>>>,
@@ -751,59 +730,6 @@ impl Debug for WsServerConfig {
                     .unwrap_or(false),
             )
             .finish()
-    }
-}
-
-#[derive(Clone)]
-pub struct WsClientConfig {
-    pub remote_addr: TransportAddr,
-    pub socket_so_mark: Option<u32>,
-    pub http_upgrade_path_prefix: String,
-    pub http_upgrade_credentials: Option<HeaderValue>,
-    pub http_headers: HashMap<HeaderName, HeaderValue>,
-    pub http_headers_file: Option<PathBuf>,
-    pub http_header_host: HeaderValue,
-    pub timeout_connect: Duration,
-    pub websocket_ping_frequency: Duration,
-    pub websocket_mask_frame: bool,
-    pub http_proxy: Option<Url>,
-    cnx_pool: Option<bb8::Pool<WsClientConfig>>,
-    tls_reloader: Option<Arc<TlsReloader>>,
-    pub dns_resolver: DnsResolver,
-}
-
-impl WsClientConfig {
-    pub const fn websocket_scheme(&self) -> &'static str {
-        match self.remote_addr.tls().is_some() {
-            false => "ws",
-            true => "wss",
-        }
-    }
-
-    pub fn cnx_pool(&self) -> &bb8::Pool<Self> {
-        self.cnx_pool.as_ref().unwrap()
-    }
-
-    pub fn websocket_host_url(&self) -> String {
-        format!("{}:{}", self.remote_addr.host(), self.remote_addr.port())
-    }
-
-    pub fn tls_server_name(&self) -> ServerName<'static> {
-        static INVALID_DNS_NAME: Lazy<DnsName> = Lazy::new(|| DnsName::try_from("dns-name-invalid.com").unwrap());
-
-        self.remote_addr
-            .tls()
-            .and_then(|tls| tls.tls_sni_override.as_ref())
-            .map_or_else(
-                || match &self.remote_addr.host() {
-                    Host::Domain(domain) => ServerName::DnsName(
-                        DnsName::try_from(domain.clone()).unwrap_or_else(|_| INVALID_DNS_NAME.clone()),
-                    ),
-                    Host::Ipv4(ip) => ServerName::IpAddress(IpAddr::V4(*ip).into()),
-                    Host::Ipv6(ip) => ServerName::IpAddress(IpAddr::V6(*ip).into()),
-                },
-                |sni_override| ServerName::DnsName(sni_override.clone()),
-            )
     }
 }
 
@@ -866,24 +792,7 @@ async fn main() -> anyhow::Result<()> {
                 TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
             let tls = match transport_scheme {
                 TransportScheme::Ws | TransportScheme::Http => None,
-                TransportScheme::Wss => Some(TlsClientConfig {
-                    tls_connector: Arc::new(RwLock::new(
-                        tls::tls_connector(
-                            args.tls_verify_certificate,
-                            transport_scheme.alpn_protocols(),
-                            !args.tls_sni_disable,
-                            tls_certificate,
-                            tls_key,
-                        )
-                        .expect("Cannot create tls connector"),
-                    )),
-                    tls_sni_override: args.tls_sni_override,
-                    tls_verify_certificate: args.tls_verify_certificate,
-                    tls_sni_disabled: args.tls_sni_disable,
-                    tls_certificate_path: args.tls_certificate.clone(),
-                    tls_key_path: args.tls_private_key.clone(),
-                }),
-                TransportScheme::Https => Some(TlsClientConfig {
+                TransportScheme::Wss | TransportScheme::Https => Some(TlsClientConfig {
                     tls_connector: Arc::new(RwLock::new(
                         tls::tls_connector(
                             args.tls_verify_certificate,
@@ -936,7 +845,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
-            let mut client_config = WsClientConfig {
+            let client_config = WsClientConfig {
                 remote_addr: TransportAddr::new(
                     TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
                     args.remote_addr.host().unwrap().to_owned(),
@@ -953,8 +862,6 @@ async fn main() -> anyhow::Result<()> {
                 timeout_connect: Duration::from_secs(10),
                 websocket_ping_frequency: args.websocket_ping_frequency_sec.unwrap_or(Duration::from_secs(30)),
                 websocket_mask_frame: args.websocket_mask_frame,
-                cnx_pool: None,
-                tls_reloader: None,
                 dns_resolver: DnsResolver::new_from_urls(
                     &args.dns_resolver,
                     http_proxy.clone(),
@@ -965,28 +872,16 @@ async fn main() -> anyhow::Result<()> {
                 http_proxy,
             };
 
-            let tls_reloader =
-                TlsReloader::new_for_client(Arc::new(client_config.clone())).expect("Cannot create tls reloader");
-            client_config.tls_reloader = Some(Arc::new(tls_reloader));
-            let pool = bb8::Pool::builder()
-                .max_size(1000)
-                .min_idle(Some(args.connection_min_idle))
-                .max_lifetime(Some(Duration::from_secs(30)))
-                .connection_timeout(args.connection_retry_max_backoff_sec)
-                .retry_connection(true)
-                .build(client_config.clone())
-                .await
-                .unwrap();
-            client_config.cnx_pool = Some(pool);
-            let client_config = Arc::new(client_config);
+            let client =
+                WsClient::new(client_config, args.connection_min_idle, args.connection_retry_max_backoff_sec).await?;
 
             // Start tunnels
             for tunnel in args.remote_to_local.into_iter() {
-                let client_config = client_config.clone();
+                let client = client.clone();
                 match &tunnel.local_protocol {
                     LocalProtocol::Tcp { proxy_protocol: _ } => {
                         tokio::spawn(async move {
-                            let cfg = client_config.clone();
+                            let cfg = client.config.clone();
                             let tcp_connector = TcpTunnelConnector::new(
                                 &tunnel.remote.0,
                                 tunnel.remote.1,
@@ -1000,9 +895,7 @@ async fn main() -> anyhow::Result<()> {
                                 host,
                                 port,
                             };
-                            if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, remote, tcp_connector).await
-                            {
+                            if let Err(err) = client.run_reverse_tunnel(remote, tcp_connector).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1011,7 +904,7 @@ async fn main() -> anyhow::Result<()> {
                         let timeout = *timeout;
 
                         tokio::spawn(async move {
-                            let cfg = client_config.clone();
+                            let cfg = client.config.clone();
                             let (host, port) = to_host_port(tunnel.local);
                             let remote = RemoteAddr {
                                 protocol: LocalProtocol::ReverseUdp { timeout },
@@ -1026,9 +919,7 @@ async fn main() -> anyhow::Result<()> {
                                 &cfg.dns_resolver,
                             );
 
-                            if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, remote.clone(), udp_connector).await
-                            {
+                            if let Err(err) = client.run_reverse_tunnel(remote.clone(), udp_connector).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1037,7 +928,7 @@ async fn main() -> anyhow::Result<()> {
                         let credentials = credentials.clone();
                         let timeout = *timeout;
                         tokio::spawn(async move {
-                            let cfg = client_config.clone();
+                            let cfg = client.config.clone();
                             let (host, port) = to_host_port(tunnel.local);
                             let remote = RemoteAddr {
                                 protocol: LocalProtocol::ReverseSocks5 { timeout, credentials },
@@ -1047,9 +938,7 @@ async fn main() -> anyhow::Result<()> {
                             let socks_connector =
                                 Socks5TunnelConnector::new(cfg.socket_so_mark, cfg.timeout_connect, &cfg.dns_resolver);
 
-                            if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, remote, socks_connector).await
-                            {
+                            if let Err(err) = client.run_reverse_tunnel(remote, socks_connector).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1060,7 +949,7 @@ async fn main() -> anyhow::Result<()> {
                         let credentials = credentials.clone();
                         let timeout = *timeout;
                         tokio::spawn(async move {
-                            let cfg = client_config.clone();
+                            let cfg = client.config.clone();
                             let (host, port) = to_host_port(tunnel.local);
                             let remote = RemoteAddr {
                                 protocol: LocalProtocol::ReverseHttpProxy { timeout, credentials },
@@ -1075,9 +964,7 @@ async fn main() -> anyhow::Result<()> {
                                 &cfg.dns_resolver,
                             );
 
-                            if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, remote.clone(), tcp_connector).await
-                            {
+                            if let Err(err) = client.run_reverse_tunnel(remote.clone(), tcp_connector).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1086,7 +973,7 @@ async fn main() -> anyhow::Result<()> {
                     LocalProtocol::Unix { path } => {
                         let path = path.clone();
                         tokio::spawn(async move {
-                            let cfg = client_config.clone();
+                            let cfg = client.config.clone();
                             let tcp_connector = TcpTunnelConnector::new(
                                 &tunnel.remote.0,
                                 tunnel.remote.1,
@@ -1101,9 +988,7 @@ async fn main() -> anyhow::Result<()> {
                                 host,
                                 port,
                             };
-                            if let Err(err) =
-                                tunnel::client::run_reverse_tunnel(client_config, remote, tcp_connector).await
-                            {
+                            if let Err(err) = client.run_reverse_tunnel(remote, tcp_connector).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1126,14 +1011,14 @@ async fn main() -> anyhow::Result<()> {
             }
 
             for tunnel in args.local_to_remote.into_iter() {
-                let client_config = client_config.clone();
+                let client = client.clone();
 
                 match &tunnel.local_protocol {
                     LocalProtocol::Tcp { proxy_protocol } => {
                         let server =
                             TcpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *proxy_protocol).await?;
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
+                            if let Err(err) = client.run_tunnel(server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1144,7 +1029,7 @@ async fn main() -> anyhow::Result<()> {
                         let server = TproxyTcpTunnelListener::new(tunnel.local, false).await?;
 
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
+                            if let Err(err) = client.run_tunnel(server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1154,7 +1039,7 @@ async fn main() -> anyhow::Result<()> {
                         use crate::tunnel::listeners::UnixTunnelListener;
                         let server = UnixTunnelListener::new(path, tunnel.remote.clone(), false).await?; // TODO: support proxy protocol
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
+                            if let Err(err) = client.run_tunnel(server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1169,7 +1054,7 @@ async fn main() -> anyhow::Result<()> {
                         use crate::tunnel::listeners::new_tproxy_udp;
                         let server = new_tproxy_udp(tunnel.local, *timeout).await?;
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
+                            if let Err(err) = client.run_tunnel(server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1182,7 +1067,7 @@ async fn main() -> anyhow::Result<()> {
                         let server = new_udp_listener(tunnel.local, tunnel.remote.clone(), *timeout).await?;
 
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
+                            if let Err(err) = client.run_tunnel(server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1190,7 +1075,7 @@ async fn main() -> anyhow::Result<()> {
                     LocalProtocol::Socks5 { timeout, credentials } => {
                         let server = Socks5TunnelListener::new(tunnel.local, *timeout, credentials.clone()).await?;
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
+                            if let Err(err) = client.run_tunnel(server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1204,7 +1089,7 @@ async fn main() -> anyhow::Result<()> {
                             HttpProxyTunnelListener::new(tunnel.local, *timeout, credentials.clone(), *proxy_protocol)
                                 .await?;
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
+                            if let Err(err) = client.run_tunnel(server).await {
                                 error!("{:?}", err);
                             }
                         });
@@ -1213,7 +1098,7 @@ async fn main() -> anyhow::Result<()> {
                     LocalProtocol::Stdio => {
                         let (server, mut handle) = new_stdio_listener(tunnel.remote.clone(), false).await?; // TODO: support proxy protocol
                         tokio::spawn(async move {
-                            if let Err(err) = tunnel::client::run_tunnel(client_config, server).await {
+                            if let Err(err) = client.run_tunnel(server).await {
                                 error!("{:?}", err);
                             }
                         });
