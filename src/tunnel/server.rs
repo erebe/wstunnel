@@ -9,15 +9,15 @@ use std::time::Duration;
 use ahash::{HashMap, HashMapExt};
 use anyhow::anyhow;
 use bytes::Bytes;
-use futures_util::{pin_mut, FutureExt, StreamExt};
-use http_body_util::combinators::BoxBody;
+use futures_util::{FutureExt, pin_mut, StreamExt};
 use http_body_util::{BodyStream, Either, StreamBody};
+use http_body_util::combinators::BoxBody;
+use hyper::{http, Request, Response, StatusCode, Version};
 use hyper::body::{Frame, Incoming};
 use hyper::header::{CONTENT_TYPE, COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::http::HeaderValue;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
-use hyper::{http, Request, Response, StatusCode, Version};
 use hyper_util::rt::TokioExecutor;
 use jsonwebtoken::TokenData;
 use once_cell::sync::Lazy;
@@ -29,26 +29,26 @@ use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tokio_rustls::TlsAcceptor;
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{error, info, span, warn, Instrument, Level, Span};
+use tracing::{error, info, Instrument, Level, span, Span, warn};
 use url::Host;
 use uuid::Uuid;
 
-use crate::protocols::udp::{UdpStream, UdpStreamWriter};
+use crate::{LocalProtocol, protocols, TlsServerConfig, WsServerConfig};
 use crate::protocols::{tcp, tls, udp};
+use crate::protocols::udp::{UdpStream, UdpStreamWriter};
 use crate::restrictions::config_reloader::RestrictionsRulesReloader;
 use crate::restrictions::types::{
     AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules, ReverseTunnelConfigProtocol, TunnelConfigProtocol,
 };
 use crate::tunnel::connectors::{TcpTunnelConnector, TunnelConnector, UdpTunnelConnector};
 use crate::tunnel::listeners::{
-    new_udp_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, TunnelListener,
+    HttpProxyTunnelListener, new_udp_listener, Socks5TunnelListener, TcpTunnelListener, TunnelListener,
 };
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
-use crate::{protocols, LocalProtocol, TlsServerConfig, WsServerConfig};
 
-use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
+use super::{JWT_DECODE, JWT_HEADER_PREFIX, JwtTunnelConfig, RemoteAddr, tunnel_to_jwt_token};
 
 async fn run_tunnel(
     server_config: &WsServerConfig,
@@ -67,7 +67,7 @@ async fn run_tunnel(
             );
             let (rx, tx) = match &server_config.http_proxy {
                 None => connector.connect(&None).await?,
-                Some(proxy_url) => connector.connect_with_http_proxy(proxy_url, &None).await?,
+                Some(_) => Err(anyhow!("UDP tunneling is not supported with HTTP proxy"))?,
             };
 
             Ok((remote, Box::pin(rx), Box::pin(tx)))
@@ -104,10 +104,6 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<Item>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
-            if server_config.http_proxy.is_some() {
-                return Err(anyhow!("Reverse TCP tunneling is not supported with HTTP proxy"));
-            }
-
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let listening_server = async {
@@ -125,10 +121,6 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<Item>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
-            if server_config.http_proxy.is_some() {
-                return Err(anyhow!("Reverse UDP tunneling is not supported with HTTP proxy"));
-            }
-
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let listening_server = async {
@@ -144,10 +136,6 @@ async fn run_tunnel(
             #[allow(clippy::type_complexity)]
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<Item>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
-
-            if server_config.http_proxy.is_some() {
-                return Err(anyhow!("Reverse SOCKS5 tunneling is not supported with HTTP proxy"));
-            }
 
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
@@ -165,10 +153,6 @@ async fn run_tunnel(
             #[allow(clippy::type_complexity)]
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<Item>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
-
-            if server_config.http_proxy.is_some() {
-                return Err(anyhow!("Reverse HTTP proxy tunneling is not supported with HTTP proxy"));
-            }
 
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
@@ -188,10 +172,6 @@ async fn run_tunnel(
             #[allow(clippy::type_complexity)]
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<Item>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
-
-            if server_config.http_proxy.is_some() {
-                return Err(anyhow!("Reverse Unix socket tunneling is not supported with HTTP proxy"));
-            }
 
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
