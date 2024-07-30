@@ -11,6 +11,7 @@ use crate::tunnel::connectors::{Socks5TunnelConnector, TcpTunnelConnector, UdpTu
 use crate::tunnel::listeners::{
     new_stdio_listener, new_udp_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener,
 };
+use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
 use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
 use base64::Engine;
 use clap::Parser;
@@ -20,16 +21,16 @@ use log::debug;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
+use std::io;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{fmt, io};
 use tokio::select;
-use tokio_rustls::rustls::pki_types::{CertificateDer, DnsName, PrivateKeyDer};
+use tokio_rustls::rustls::pki_types::DnsName;
 use tracing::{error, info};
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
@@ -690,49 +691,6 @@ fn parse_server_url(arg: &str) -> Result<Url, io::Error> {
     Ok(url)
 }
 
-#[derive(Debug)]
-pub struct TlsServerConfig {
-    pub tls_certificate: Mutex<Vec<CertificateDer<'static>>>,
-    pub tls_key: Mutex<PrivateKeyDer<'static>>,
-    pub tls_client_ca_certificates: Option<Mutex<Vec<CertificateDer<'static>>>>,
-    pub tls_certificate_path: Option<PathBuf>,
-    pub tls_key_path: Option<PathBuf>,
-    pub tls_client_ca_certs_path: Option<PathBuf>,
-}
-
-pub struct WsServerConfig {
-    pub socket_so_mark: Option<u32>,
-    pub bind: SocketAddr,
-    pub websocket_ping_frequency: Option<Duration>,
-    pub timeout_connect: Duration,
-    pub websocket_mask_frame: bool,
-    pub tls: Option<TlsServerConfig>,
-    pub dns_resolver: DnsResolver,
-    pub restriction_config: Option<PathBuf>,
-}
-
-impl Debug for WsServerConfig {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WsServerConfig")
-            .field("socket_so_mark", &self.socket_so_mark)
-            .field("bind", &self.bind)
-            .field("websocket_ping_frequency", &self.websocket_ping_frequency)
-            .field("timeout_connect", &self.timeout_connect)
-            .field("websocket_mask_frame", &self.websocket_mask_frame)
-            .field("restriction_config", &self.restriction_config)
-            .field("tls", &self.tls.is_some())
-            .field(
-                "mTLS",
-                &self
-                    .tls
-                    .as_ref()
-                    .map(|x| x.tls_client_ca_certificates.is_some())
-                    .unwrap_or(false),
-            )
-            .finish()
-    }
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Wstunnel::parse();
@@ -1194,18 +1152,17 @@ async fn main() -> anyhow::Result<()> {
                 .expect("Cannot create DNS resolver"),
                 restriction_config: args.restrict_config,
             };
+            let server = WsServer::new(server_config);
 
             info!(
                 "Starting wstunnel server v{} with config {:?}",
                 env!("CARGO_PKG_VERSION"),
-                server_config
+                server.config
             );
             debug!("Restriction rules: {:#?}", restrictions);
-            tunnel::server::run_server(Arc::new(server_config), restrictions)
-                .await
-                .unwrap_or_else(|err| {
-                    panic!("Cannot start wstunnel server: {:?}", err);
-                });
+            server.serve(restrictions).await.unwrap_or_else(|err| {
+                panic!("Cannot start wstunnel server: {:?}", err);
+            });
         }
     }
 

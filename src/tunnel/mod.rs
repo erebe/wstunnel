@@ -2,7 +2,7 @@ pub mod client;
 pub mod connectors;
 pub mod listeners;
 pub mod server;
-pub mod tls_reloader;
+mod tls_reloader;
 mod transport;
 
 use crate::{LocalProtocol, TlsClientConfig};
