@@ -258,7 +258,7 @@ impl WsServer {
                 async move {
                     if fastwebsockets::upgrade::is_upgrade_request(&req) {
                         ws_server_upgrade(server.clone(), restrictions.clone(), restrict_path, client_addr, req)
-                            .map(|response| Ok::<_, anyhow::Error>(response.map(Either::Left)))
+                            .map::<anyhow::Result<_>, _>(Ok)
                             .await
                     } else if req.version() == Version::HTTP_2 {
                         http_server_upgrade(

@@ -2,7 +2,6 @@ use crate::restrictions::types::{
     AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules, ReverseTunnelConfigProtocol, TunnelConfigProtocol,
 };
 use crate::tunnel::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
-use crate::LocalProtocol;
 use hyper::body::{Body, Incoming};
 use hyper::header::{HeaderValue, COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{http, Request, Response, StatusCode};
@@ -216,7 +215,6 @@ pub(super) fn validate_tunnel<'a>(
 }
 
 pub(super) fn inject_cookie<B>(
-    req_protocol: &LocalProtocol,
     response: &mut http::Response<B>,
     remote_addr: &RemoteAddr,
     mk_body: impl FnOnce(String) -> B,
@@ -224,19 +222,14 @@ pub(super) fn inject_cookie<B>(
 where
     B: Body,
 {
-    if matches!(
-        req_protocol,
-        LocalProtocol::ReverseSocks5 { .. } | LocalProtocol::ReverseHttpProxy { .. }
-    ) {
-        let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), remote_addr)) else {
-            error!("Bad header value for reverse socks5: {} {}", remote_addr.host, remote_addr.port);
-            return Err(http::Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(mk_body("Invalid upgrade request".to_string()))
-                .unwrap());
-        };
-        response.headers_mut().insert(COOKIE, header_val);
-    }
+    let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), remote_addr)) else {
+        error!("Bad header value for reverse socks5: {} {}", remote_addr.host, remote_addr.port);
+        return Err(http::Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(mk_body("Invalid upgrade request".to_string()))
+            .unwrap());
+    };
+    response.headers_mut().insert(COOKIE, header_val);
 
     Ok(())
 }

@@ -1,109 +1,49 @@
 use crate::restrictions::types::RestrictionsRules;
-use crate::tunnel::server::utils::{
-    extract_path_prefix, extract_tunnel_info, extract_x_forwarded_for, inject_cookie, validate_tunnel,
-};
+use crate::tunnel::server::handler_http2::exec_tunnel_request;
+use crate::tunnel::server::utils::inject_cookie;
 use crate::tunnel::server::WsServer;
+use crate::tunnel::transport;
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
-use crate::tunnel::{transport, RemoteAddr};
+use bytes::Bytes;
+use http_body_util::combinators::BoxBody;
+use http_body_util::Either;
 use hyper::body::Incoming;
 use hyper::header::{HeaderValue, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{http, Request, Response, StatusCode};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::oneshot;
-use tracing::{error, info, warn, Instrument, Span};
+use tracing::{error, warn, Instrument, Span};
 
 pub(super) async fn ws_server_upgrade(
     server: WsServer,
     restrictions: Arc<RestrictionsRules>,
     restrict_path_prefix: Option<String>,
-    mut client_addr: SocketAddr,
+    client_addr: SocketAddr,
     mut req: Request<Incoming>,
-) -> Response<String> {
+) -> Response<Either<String, BoxBody<Bytes, anyhow::Error>>> {
     if !fastwebsockets::upgrade::is_upgrade_request(&req) {
         warn!("Rejecting connection with bad upgrade request: {}", req.uri());
         return http::Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .body("Invalid upgrade request".to_string())
+            .body(Either::Left("Invalid upgrade request".to_string()))
             .unwrap();
     }
 
-    match extract_x_forwarded_for(&req) {
-        Ok(Some((x_forward_for, x_forward_for_str))) => {
-            info!("Request X-Forwarded-For: {:?}", x_forward_for);
-            Span::current().record("forwarded_for", x_forward_for_str);
-            client_addr.set_ip(x_forward_for);
-        }
-        Ok(_) => {}
-        Err(err) => return err,
-    };
+    let mask_frame = server.config.websocket_mask_frame;
+    let (remote_addr, local_rx, local_tx, need_cookie) =
+        match exec_tunnel_request(server, restrictions, restrict_path_prefix, client_addr, &req).await {
+            Ok(ret) => ret,
+            Err(err) => return err,
+        };
 
-    let path_prefix = match extract_path_prefix(&req) {
-        Ok(p) => p,
-        Err(err) => return err,
-    };
-
-    if let Some(restrict_path) = restrict_path_prefix {
-        if path_prefix != restrict_path {
-            warn!(
-                "Client requested upgrade path '{}' does not match upgrade path restriction '{}' (mTLS, etc.)",
-                path_prefix, restrict_path
-            );
-            return http::Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid upgrade request".to_string())
-                .unwrap();
-        }
-    }
-
-    let jwt = match extract_tunnel_info(&req) {
-        Ok(jwt) => jwt,
-        Err(err) => return err,
-    };
-
-    Span::current().record("id", &jwt.claims.id);
-    Span::current().record("remote", format!("{}:{}", jwt.claims.r, jwt.claims.rp));
-
-    let remote = match RemoteAddr::try_from(jwt.claims) {
-        Ok(remote) => remote,
-        Err(err) => {
-            warn!("Rejecting connection with bad tunnel info: {} {}", err, req.uri());
-            return http::Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid upgrade request".to_string())
-                .unwrap();
-        }
-    };
-
-    let restriction = match validate_tunnel(&remote, path_prefix, &restrictions) {
-        Ok(matched_restriction) => {
-            info!("Tunnel accepted due to matched restriction: {}", matched_restriction.name);
-            matched_restriction
-        }
-        Err(err) => return err,
-    };
-
-    let req_protocol = remote.protocol.clone();
-    let tunnel = match server.run_tunnel(restriction, remote, client_addr).await {
-        Ok(ret) => ret,
-        Err(err) => {
-            warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
-            return http::Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid upgrade request".to_string())
-                .unwrap();
-        }
-    };
-
-    let (remote_addr, local_rx, local_tx) = tunnel;
-    info!("connected to {:?} {}:{}", req_protocol, remote_addr.host, remote_addr.port);
     let (response, fut) = match fastwebsockets::upgrade::upgrade(&mut req) {
         Ok(ret) => ret,
         Err(err) => {
             warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
             return http::Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(format!("Invalid upgrade request: {:?}", err))
+                .body(Either::Left(format!("Invalid upgrade request: {:?}", err)))
                 .unwrap();
         }
     };
@@ -118,7 +58,7 @@ pub(super) async fn ws_server_upgrade(
                 }
             };
             let (close_tx, close_rx) = oneshot::channel::<()>();
-            ws_tx.set_auto_apply_mask(server.config.websocket_mask_frame);
+            ws_tx.set_auto_apply_mask(mask_frame);
 
             tokio::task::spawn(
                 transport::io::propagate_remote_to_local(local_tx, WebsocketTunnelRead::new(ws_rx), close_rx)
@@ -132,9 +72,11 @@ pub(super) async fn ws_server_upgrade(
         .instrument(Span::current()),
     );
 
-    let mut response = Response::from_parts(response.into_parts().0, "".to_string());
-    if let Err(response) = inject_cookie(&req_protocol, &mut response, &remote_addr, |s| s) {
-        return response;
+    let mut response = Response::from_parts(response.into_parts().0, Either::Right(BoxBody::default()));
+    if need_cookie {
+        if let Err(response) = inject_cookie(&mut response, &remote_addr, Either::Left) {
+            return response;
+        }
     }
 
     response
