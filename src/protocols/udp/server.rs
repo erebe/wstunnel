@@ -295,17 +295,17 @@ pub async fn run_server(
 }
 
 #[derive(Clone)]
-pub struct MyUdpSocket {
+pub struct WsUdpSocket {
     socket: Arc<UdpSocket>,
 }
 
-impl MyUdpSocket {
+impl WsUdpSocket {
     pub fn new(socket: Arc<UdpSocket>) -> Self {
         Self { socket }
     }
 }
 
-impl AsyncRead for MyUdpSocket {
+impl AsyncRead for WsUdpSocket {
     fn poll_read(self: Pin<&mut Self>, cx: &mut task::Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         unsafe { self.map_unchecked_mut(|x| &mut x.socket) }
             .poll_recv_from(cx, buf)
@@ -313,7 +313,7 @@ impl AsyncRead for MyUdpSocket {
     }
 }
 
-impl AsyncWrite for MyUdpSocket {
+impl AsyncWrite for WsUdpSocket {
     fn poll_write(self: Pin<&mut Self>, cx: &mut task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         unsafe { self.map_unchecked_mut(|x| &mut x.socket) }.poll_send(cx, buf)
     }
@@ -333,7 +333,7 @@ pub async fn connect(
     connect_timeout: Duration,
     so_mark: Option<u32>,
     dns_resolver: &DnsResolver,
-) -> anyhow::Result<MyUdpSocket> {
+) -> anyhow::Result<WsUdpSocket> {
     info!("Opening UDP connection to {}:{}", host, port);
 
     let socket_addrs: Vec<SocketAddr> = match host {
@@ -419,7 +419,7 @@ pub async fn connect(
     }
 
     if let Some(cnx) = cnx {
-        Ok(MyUdpSocket::new(Arc::new(cnx)))
+        Ok(WsUdpSocket::new(Arc::new(cnx)))
     } else {
         Err(anyhow!("Cannot connect to udp peer {}:{} reason {:?}", host, port, last_err))
     }

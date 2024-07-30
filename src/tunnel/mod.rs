@@ -1,4 +1,5 @@
 pub mod client;
+pub mod connectors;
 pub mod listeners;
 pub mod server;
 pub mod tls_reloader;
@@ -76,7 +77,7 @@ static JWT_DECODE: Lazy<(Validation, DecodingKey)> = Lazy::new(|| {
     (validation, DecodingKey::from_secret(JWT_SECRET))
 });
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RemoteAddr {
     pub protocol: LocalProtocol,
     pub host: Host,
