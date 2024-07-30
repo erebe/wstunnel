@@ -6,6 +6,8 @@ use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::future::Future;
 
+use bytes::Bytes;
+use http_body_util::combinators::BoxBody;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -18,7 +20,7 @@ use crate::{protocols, LocalProtocol};
 use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
-use hyper::{http, Request, StatusCode, Version};
+use hyper::{http, Request, Response, StatusCode, Version};
 use hyper_util::rt::TokioExecutor;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -35,7 +37,9 @@ use crate::tunnel::listeners::{
 };
 use crate::tunnel::server::handler_http2::http_server_upgrade;
 use crate::tunnel::server::handler_websocket::ws_server_upgrade;
-use crate::tunnel::server::utils::find_mapped_port;
+use crate::tunnel::server::utils::{
+    bad_request, extract_path_prefix, extract_tunnel_info, extract_x_forwarded_for, find_mapped_port, validate_tunnel,
+};
 use crate::tunnel::tls_reloader::TlsReloader;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -79,7 +83,88 @@ impl WsServer {
         }
     }
 
-    pub(super) async fn run_tunnel(
+    pub(super) async fn handle_tunnel_request(
+        &self,
+        restrictions: Arc<RestrictionsRules>,
+        restrict_path_prefix: Option<String>,
+        mut client_addr: SocketAddr,
+        req: &Request<Incoming>,
+    ) -> Result<
+        (
+            RemoteAddr,
+            Pin<Box<dyn AsyncRead + Send>>,
+            Pin<Box<dyn AsyncWrite + Send>>,
+            bool,
+        ),
+        Response<Either<String, BoxBody<Bytes, anyhow::Error>>>,
+    > {
+        match extract_x_forwarded_for(req) {
+            Ok(Some((x_forward_for, x_forward_for_str))) => {
+                info!("Request X-Forwarded-For: {:?}", x_forward_for);
+                Span::current().record("forwarded_for", x_forward_for_str);
+                client_addr.set_ip(x_forward_for);
+            }
+            Ok(_) => {}
+            Err(_err) => return Err(bad_request()),
+        };
+
+        let path_prefix = match extract_path_prefix(req) {
+            Ok(p) => p,
+            Err(_err) => return Err(bad_request()),
+        };
+
+        if let Some(restrict_path) = restrict_path_prefix {
+            if path_prefix != restrict_path {
+                warn!(
+                    "Client requested upgrade path '{}' does not match upgrade path restriction '{}' (mTLS, etc.)",
+                    path_prefix, restrict_path
+                );
+                return Err(bad_request());
+            }
+        }
+
+        let jwt = match extract_tunnel_info(req) {
+            Ok(jwt) => jwt,
+            Err(_err) => return Err(bad_request()),
+        };
+
+        Span::current().record("id", &jwt.claims.id);
+        Span::current().record("remote", format!("{}:{}", jwt.claims.r, jwt.claims.rp));
+        let remote = match RemoteAddr::try_from(jwt.claims) {
+            Ok(remote) => remote,
+            Err(err) => {
+                warn!("Rejecting connection with bad tunnel info: {} {}", err, req.uri());
+                return Err(bad_request());
+            }
+        };
+
+        let restriction = match validate_tunnel(&remote, path_prefix, &restrictions) {
+            Ok(matched_restriction) => {
+                info!("Tunnel accepted due to matched restriction: {}", matched_restriction.name);
+                matched_restriction
+            }
+            Err(_err) => return Err(bad_request()),
+        };
+
+        let req_protocol = remote.protocol.clone();
+        let inject_cookie = matches!(
+            req_protocol,
+            LocalProtocol::ReverseSocks5 { .. } | LocalProtocol::ReverseHttpProxy { .. }
+        );
+        let tunnel = match self.exec_tunnel(restriction, remote, client_addr).await {
+            Ok(ret) => ret,
+            Err(err) => {
+                warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
+                return Err(bad_request());
+            }
+        };
+
+        let (remote_addr, local_rx, local_tx) = tunnel;
+        info!("connected to {:?} {}:{}", req_protocol, remote_addr.host, remote_addr.port);
+        Ok((remote_addr, local_rx, local_tx, inject_cookie))
+    }
+
+    async fn exec_tunnel(
         &self,
         restriction: &RestrictionConfig,
         remote: RemoteAddr,

@@ -2,6 +2,9 @@ use crate::restrictions::types::{
     AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules, ReverseTunnelConfigProtocol, TunnelConfigProtocol,
 };
 use crate::tunnel::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
+use bytes::Bytes;
+use http_body_util::combinators::BoxBody;
+use http_body_util::Either;
 use hyper::body::{Body, Incoming};
 use hyper::header::{HeaderValue, COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{http, Request, Response, StatusCode};
@@ -12,6 +15,13 @@ use std::ops::Deref;
 use tracing::{error, info, warn};
 use url::Host;
 use uuid::Uuid;
+
+pub(super) fn bad_request() -> Response<Either<String, BoxBody<Bytes, anyhow::Error>>> {
+    http::Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body(Either::Left("Invalid request".to_string()))
+        .unwrap()
+}
 
 /// Checks if the requested (remote) port has been mapped in the configuration to another port.
 /// If it is not mapped the original port number is returned.
@@ -37,7 +47,7 @@ pub(super) fn find_mapped_port(req_port: u16, restriction: &RestrictionConfig) -
 }
 
 #[inline]
-pub(super) fn extract_x_forwarded_for(req: &Request<Incoming>) -> Result<Option<(IpAddr, &str)>, Response<String>> {
+pub(super) fn extract_x_forwarded_for(req: &Request<Incoming>) -> Result<Option<(IpAddr, &str)>, ()> {
     let Some(x_forward_for) = req.headers().get("X-Forwarded-For") else {
         return Ok(None);
     };
@@ -50,38 +60,29 @@ pub(super) fn extract_x_forwarded_for(req: &Request<Incoming>) -> Result<Option<
 }
 
 #[inline]
-pub(super) fn extract_path_prefix(req: &Request<Incoming>) -> Result<&str, Response<String>> {
+pub(super) fn extract_path_prefix(req: &Request<Incoming>) -> Result<&str, ()> {
     let path = req.uri().path();
     let min_len = min(path.len(), 1);
     if &path[0..min_len] != "/" {
         warn!("Rejecting connection with bad path prefix in upgrade request: {}", req.uri());
-        return Err(http::Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body("Invalid upgrade request".to_string())
-            .unwrap());
+        return Err(());
     }
 
     let Some((l, r)) = path[min_len..].split_once('/') else {
         warn!("Rejecting connection with bad upgrade request: {}", req.uri());
-        return Err(http::Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body("Invalid upgrade request".into())
-            .unwrap());
+        return Err(());
     };
 
     if !r.ends_with("events") {
         warn!("Rejecting connection with bad upgrade request: {}", req.uri());
-        return Err(http::Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body("Invalid upgrade request".into())
-            .unwrap());
+        return Err(());
     }
 
     Ok(l)
 }
 
 #[inline]
-pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<JwtTunnelConfig>, Response<String>> {
+pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<JwtTunnelConfig>, ()> {
     let jwt = req
         .headers()
         .get(SEC_WEBSOCKET_PROTOCOL)
@@ -100,10 +101,7 @@ pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<J
                 err,
                 req.headers().get(SEC_WEBSOCKET_PROTOCOL)
             );
-            return Err(http::Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid upgrade request".to_string())
-                .unwrap());
+            return Err(());
         }
     };
 
@@ -115,7 +113,7 @@ pub(super) fn validate_tunnel<'a>(
     remote: &RemoteAddr,
     path_prefix: &str,
     restrictions: &'a RestrictionsRules,
-) -> Result<&'a RestrictionConfig, Response<String>> {
+) -> Result<&'a RestrictionConfig, ()> {
     for restriction in &restrictions.restrictions {
         if !restriction.r#match.iter().all(|m| match m {
             MatchConfig::Any => true,
@@ -208,26 +206,13 @@ pub(super) fn validate_tunnel<'a>(
     }
 
     warn!("Rejecting connection with not allowed destination: {:?}", remote);
-    Err(http::Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body("Invalid upgrade request".to_string())
-        .unwrap())
+    Err(())
 }
 
-pub(super) fn inject_cookie<B>(
-    response: &mut http::Response<B>,
-    remote_addr: &RemoteAddr,
-    mk_body: impl FnOnce(String) -> B,
-) -> Result<(), Response<B>>
-where
-    B: Body,
-{
+pub(super) fn inject_cookie(response: &mut http::Response<impl Body>, remote_addr: &RemoteAddr) -> Result<(), ()> {
     let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), remote_addr)) else {
         error!("Bad header value for reverse socks5: {} {}", remote_addr.host, remote_addr.port);
-        return Err(http::Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body(mk_body("Invalid upgrade request".to_string()))
-            .unwrap());
+        return Err(());
     };
     response.headers_mut().insert(COOKIE, header_val);
 

@@ -1,6 +1,5 @@
 use crate::restrictions::types::RestrictionsRules;
-use crate::tunnel::server::handler_http2::exec_tunnel_request;
-use crate::tunnel::server::utils::inject_cookie;
+use crate::tunnel::server::utils::{bad_request, inject_cookie};
 use crate::tunnel::server::WsServer;
 use crate::tunnel::transport;
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
@@ -9,7 +8,7 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::Either;
 use hyper::body::Incoming;
 use hyper::header::{HeaderValue, SEC_WEBSOCKET_PROTOCOL};
-use hyper::{http, Request, Response, StatusCode};
+use hyper::{Request, Response};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -24,27 +23,23 @@ pub(super) async fn ws_server_upgrade(
 ) -> Response<Either<String, BoxBody<Bytes, anyhow::Error>>> {
     if !fastwebsockets::upgrade::is_upgrade_request(&req) {
         warn!("Rejecting connection with bad upgrade request: {}", req.uri());
-        return http::Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body(Either::Left("Invalid upgrade request".to_string()))
-            .unwrap();
+        return bad_request();
     }
 
     let mask_frame = server.config.websocket_mask_frame;
-    let (remote_addr, local_rx, local_tx, need_cookie) =
-        match exec_tunnel_request(server, restrictions, restrict_path_prefix, client_addr, &req).await {
-            Ok(ret) => ret,
-            Err(err) => return err,
-        };
+    let (remote_addr, local_rx, local_tx, need_cookie) = match server
+        .handle_tunnel_request(restrictions, restrict_path_prefix, client_addr, &req)
+        .await
+    {
+        Ok(ret) => ret,
+        Err(err) => return err,
+    };
 
     let (response, fut) = match fastwebsockets::upgrade::upgrade(&mut req) {
         Ok(ret) => ret,
         Err(err) => {
             warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
-            return http::Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Either::Left(format!("Invalid upgrade request: {:?}", err)))
-                .unwrap();
+            return bad_request();
         }
     };
 
@@ -73,10 +68,8 @@ pub(super) async fn ws_server_upgrade(
     );
 
     let mut response = Response::from_parts(response.into_parts().0, Either::Right(BoxBody::default()));
-    if need_cookie {
-        if let Err(response) = inject_cookie(&mut response, &remote_addr, Either::Left) {
-            return response;
-        }
+    if need_cookie && inject_cookie(&mut response, &remote_addr).is_err() {
+        return bad_request();
     }
 
     response
