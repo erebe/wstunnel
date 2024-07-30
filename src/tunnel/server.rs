@@ -1,20 +1,17 @@
-use ahash::{HashMap, HashMapExt};
-use anyhow::anyhow;
-use bytes::Bytes;
-use futures_util::{pin_mut, FutureExt, StreamExt};
-use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyStream, Either, StreamBody};
 use std::cmp::min;
 use std::future::Future;
-
 use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
-use crate::{protocols, LocalProtocol, TlsServerConfig, WsServerConfig};
+use ahash::{HashMap, HashMapExt};
+use anyhow::anyhow;
+use bytes::Bytes;
+use futures_util::{pin_mut, FutureExt, StreamExt};
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyStream, Either, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::header::{CONTENT_TYPE, COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::http::HeaderValue;
@@ -26,9 +23,18 @@ use jsonwebtoken::TokenData;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use socket2::SockRef;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::select;
+use tokio::sync::{mpsc, oneshot};
+use tokio_rustls::TlsAcceptor;
+use tokio_stream::wrappers::ReceiverStream;
+use tracing::{error, info, span, warn, Instrument, Level, Span};
+use url::Host;
+use uuid::Uuid;
 
-use crate::protocols::{http_proxy, tcp, tls, udp};
 use crate::protocols::udp::{UdpStream, UdpStreamWriter};
+use crate::protocols::{tcp, tls, udp};
 use crate::restrictions::config_reloader::RestrictionsRulesReloader;
 use crate::restrictions::types::{
     AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules, ReverseTunnelConfigProtocol, TunnelConfigProtocol,
@@ -40,15 +46,9 @@ use crate::tunnel::listeners::{
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::select;
-use tokio::sync::{mpsc, oneshot};
-use tokio_rustls::TlsAcceptor;
-use tokio_stream::wrappers::ReceiverStream;
-use tracing::{error, info, span, warn, Instrument, Level, Span};
-use url::Host;
-use uuid::Uuid;
+use crate::{protocols, LocalProtocol, TlsServerConfig, WsServerConfig};
+
+use super::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
 
 async fn run_tunnel(
     server_config: &WsServerConfig,
@@ -58,46 +58,31 @@ async fn run_tunnel(
 ) -> anyhow::Result<(RemoteAddr, Pin<Box<dyn AsyncRead + Send>>, Pin<Box<dyn AsyncWrite + Send>>)> {
     match remote.protocol {
         LocalProtocol::Udp { timeout, .. } => {
-            if server_config.http_proxy.is_some() { 
-                return Err(anyhow!("UDP tunneling is not supported with HTTP proxy"));
-            }
-            
-            let (rx, tx) = UdpTunnelConnector::new(
+            let connector = UdpTunnelConnector::new(
                 &remote.host,
                 remote.port,
                 server_config.socket_so_mark,
                 timeout.unwrap_or(Duration::from_secs(10)),
                 &server_config.dns_resolver,
-            )
-            .connect(&None)
-            .await?;
+            );
+            let (rx, tx) = match &server_config.http_proxy {
+                None => connector.connect(&None).await?,
+                Some(proxy_url) => connector.connect_with_http_proxy(proxy_url, &None).await?,
+            };
 
             Ok((remote, Box::pin(rx), Box::pin(tx)))
         }
         LocalProtocol::Tcp { proxy_protocol } => {
-            let mut socket = match &server_config.http_proxy {
-                None => {
-                    let (rx, mut tx) = TcpTunnelConnector::new(
-                        &remote.host,
-                        remote.port,
-                        server_config.socket_so_mark,
-                        Duration::from_secs(10),
-                        &server_config.dns_resolver,
-                    )
-                    .connect(&None)
-                    .await?;
-                }
-                Some(proxy_url) => {
-                    let (rx, mut tx) = TcpTunnelConnector::new(
-                        &remote.host,
-                        remote.port,
-                        server_config.socket_so_mark,
-                        Duration::from_secs(10),
-                        &server_config.dns_resolver,
-                    )
-                    .connect_with_http_proxy(proxy_url)
-                    .await?
-                }
+            let connector = TcpTunnelConnector::new(
+                &remote.host,
+                remote.port,
+                server_config.socket_so_mark,
+                Duration::from_secs(10),
+                &server_config.dns_resolver,
+            );
+            let (rx, mut tx) = match &server_config.http_proxy {
+                None => connector.connect(&None).await?,
+                Some(proxy_url) => connector.connect_with_http_proxy(proxy_url, &None).await?,
             };
 
             if proxy_protocol {
@@ -122,7 +107,7 @@ async fn run_tunnel(
             if server_config.http_proxy.is_some() {
                 return Err(anyhow!("Reverse TCP tunneling is not supported with HTTP proxy"));
             }
-            
+
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let listening_server = async {
@@ -142,8 +127,8 @@ async fn run_tunnel(
 
             if server_config.http_proxy.is_some() {
                 return Err(anyhow!("Reverse UDP tunneling is not supported with HTTP proxy"));
-            }            
-            
+            }
+
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let listening_server = async {
@@ -184,7 +169,7 @@ async fn run_tunnel(
             if server_config.http_proxy.is_some() {
                 return Err(anyhow!("Reverse HTTP proxy tunneling is not supported with HTTP proxy"));
             }
-            
+
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let listening_server = async {
@@ -207,7 +192,7 @@ async fn run_tunnel(
             if server_config.http_proxy.is_some() {
                 return Err(anyhow!("Reverse Unix socket tunneling is not supported with HTTP proxy"));
             }
-            
+
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let listening_server = async { UnixTunnelListener::new(path, local_srv.clone(), false).await };
