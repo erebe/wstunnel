@@ -29,7 +29,7 @@ use parking_lot::Mutex;
 use socket2::SockRef;
 
 use crate::protocols::udp::UdpStream;
-use crate::protocols::{http_proxy, tls, udp};
+use crate::protocols::{http_proxy, tcp, tls, udp};
 use crate::restrictions::config_reloader::RestrictionsRulesReloader;
 use crate::restrictions::types::{
     AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules, ReverseTunnelConfigProtocol, TunnelConfigProtocol,
@@ -56,6 +56,10 @@ async fn run_tunnel(
 ) -> anyhow::Result<(RemoteAddr, Pin<Box<dyn AsyncRead + Send>>, Pin<Box<dyn AsyncWrite + Send>>)> {
     match remote.protocol {
         LocalProtocol::Udp { timeout, .. } => {
+            if server_config.http_proxy.is_some() { 
+                return Err(anyhow!("UDP tunneling is not supported with HTTP proxy"));
+            }
+            
             let cnx = udp::connect(
                 &remote.host,
                 remote.port,
@@ -68,14 +72,29 @@ async fn run_tunnel(
             Ok((remote, Box::pin(cnx.clone()), Box::pin(cnx)))
         }
         LocalProtocol::Tcp { proxy_protocol } => {
-            let mut socket = protocols::tcp::connect(
-                &remote.host,
-                remote.port,
-                server_config.socket_so_mark,
-                Duration::from_secs(10),
-                &server_config.dns_resolver,
-            )
-            .await?;
+            let mut socket = match &server_config.http_proxy {
+                None => {
+                    tcp::connect(
+                        &remote.host,
+                        remote.port,
+                        server_config.socket_so_mark,
+                        Duration::from_secs(10),
+                        &server_config.dns_resolver,
+                    )
+                    .await?
+                }
+                Some(proxy_url) => {
+                    tcp::connect_with_http_proxy(
+                        proxy_url,
+                        &remote.host,
+                        remote.port,
+                        server_config.socket_so_mark,
+                        Duration::from_secs(10),
+                        &server_config.dns_resolver,
+                    )
+                    .await?
+                }
+            };
 
             if proxy_protocol {
                 let header = ppp::v2::Builder::with_addresses(
@@ -96,6 +115,10 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<TcpStream>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
+            if server_config.http_proxy.is_some() {
+                return Err(anyhow!("Reverse TCP tunneling is not supported with HTTP proxy"));
+            }
+            
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
@@ -115,6 +138,10 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<UdpStream>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
+            if server_config.http_proxy.is_some() {
+                return Err(anyhow!("Reverse UDP tunneling is not supported with HTTP proxy"));
+            }            
+            
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
@@ -136,6 +163,10 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<(Socks5Stream, (Host, u16))>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
+            if server_config.http_proxy.is_some() {
+                return Err(anyhow!("Reverse SOCKS5 tunneling is not supported with HTTP proxy"));
+            }
+
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
@@ -156,6 +187,10 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<(TcpStream, (Host, u16))>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
+            if server_config.http_proxy.is_some() {
+                return Err(anyhow!("Reverse HTTP proxy tunneling is not supported with HTTP proxy"));
+            }
+            
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let bind = format!("{}:{}", local_srv.0, local_srv.1);
@@ -179,6 +214,10 @@ async fn run_tunnel(
             static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<UnixStream>>>> =
                 Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
 
+            if server_config.http_proxy.is_some() {
+                return Err(anyhow!("Reverse Unix socket tunneling is not supported with HTTP proxy"));
+            }
+            
             let remote_port = find_mapped_port(remote.port, restriction);
             let local_srv = (remote.host, remote_port);
             let listening_server = unix_sock::run_server(path);
