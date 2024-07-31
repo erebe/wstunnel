@@ -1,4 +1,4 @@
-use super::udp_server::Socks5UdpStream;
+use super::udp_server::{Socks5UdpStream, Socks5UdpStreamWriter};
 use crate::LocalProtocol;
 use anyhow::Context;
 use fast_socks5::server::{Config, DenyAuthentication, SimpleUserPassword, Socks5Server};
@@ -11,6 +11,7 @@ use std::pin::Pin;
 use std::task::Poll;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 use tokio::select;
 use tracing::{info, warn};
@@ -21,9 +22,19 @@ pub struct Socks5Listener {
     socks_server: Pin<Box<dyn Stream<Item = anyhow::Result<(Socks5Stream, (Host, u16))>> + Send>>,
 }
 
+pub enum Socks5ReadHalf {
+    Tcp(OwnedReadHalf),
+    Udp(Socks5UdpStream),
+}
+
+pub enum Socks5WriteHalf {
+    Tcp(OwnedWriteHalf),
+    Udp(Socks5UdpStreamWriter),
+}
+
 pub enum Socks5Stream {
     Tcp(TcpStream),
-    Udp(Socks5UdpStream),
+    Udp((Socks5UdpStream, Socks5UdpStreamWriter)),
 }
 
 impl Socks5Stream {
@@ -31,8 +42,18 @@ impl Socks5Stream {
         match self {
             Self::Tcp(_) => LocalProtocol::Tcp { proxy_protocol: false }, // TODO: Implement proxy protocol
             Self::Udp(s) => LocalProtocol::Udp {
-                timeout: s.watchdog_deadline.as_ref().map(|x| x.period()),
+                timeout: s.0.watchdog_deadline.as_ref().map(|x| x.period()),
             },
+        }
+    }
+
+    pub fn into_split(self) -> (Socks5ReadHalf, Socks5WriteHalf) {
+        match self {
+            Self::Tcp(s) => {
+                let (r, w) = s.into_split();
+                (Socks5ReadHalf::Tcp(r), Socks5WriteHalf::Tcp(w))
+            }
+            Self::Udp((r, w)) => (Socks5ReadHalf::Udp(r), Socks5WriteHalf::Udp(w)),
         }
     }
 }
@@ -95,7 +116,8 @@ pub async fn run_server(
                     return match udp_conn {
                         Some(Ok(stream)) => {
                             let dest = stream.destination();
-                            Some((Ok((Socks5Stream::Udp(stream), dest)), (server, udp_server)))
+                            let writer = stream.writer();
+                            Some((Ok((Socks5Stream::Udp((stream, writer)), dest)), (server, udp_server)))
                         }
                         Some(Err(err)) => {
                             Some((Err(anyhow::Error::new(err)), (server, udp_server)))
@@ -200,7 +222,7 @@ fn new_reply(error: &ReplyError, sock_addr: SocketAddr) -> Vec<u8> {
 }
 
 impl Unpin for Socks5Stream {}
-impl AsyncRead for Socks5Stream {
+impl AsyncRead for Socks5ReadHalf {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -213,7 +235,7 @@ impl AsyncRead for Socks5Stream {
     }
 }
 
-impl AsyncWrite for Socks5Stream {
+impl AsyncWrite for Socks5WriteHalf {
     fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         match self.get_mut() {
             Self::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_write(cx, buf),

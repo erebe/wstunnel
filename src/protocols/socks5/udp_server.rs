@@ -93,6 +93,12 @@ impl Socks5UdpServer {
     }
 }
 
+pub struct Socks5UdpStreamWriter {
+    send_socket: Arc<UdpSocket>,
+    peer: SocketAddr,
+    udp_header: Vec<u8>,
+}
+
 #[pin_project(PinnedDrop)]
 pub struct Socks5UdpStream {
     #[pin]
@@ -153,6 +159,14 @@ impl Socks5UdpStream {
             TargetAddr::Domain(h, p) => (Host::Domain(h.clone()), *p),
         }
     }
+
+    pub fn writer(&self) -> Socks5UdpStreamWriter {
+        Socks5UdpStreamWriter {
+            send_socket: self.send_socket.clone(),
+            peer: self.peer,
+            udp_header: self.udp_header.clone(),
+        }
+    }
 }
 
 impl AsyncRead for Socks5UdpStream {
@@ -194,15 +208,12 @@ impl AsyncRead for Socks5UdpStream {
     }
 }
 
-impl AsyncWrite for Socks5UdpStream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
-        let this = self.project();
-        let header_len = this.udp_header.len();
-        this.udp_header.extend_from_slice(buf);
-        let ret = this
-            .send_socket
-            .poll_send_to(cx, this.udp_header.as_slice(), *this.peer);
-        this.udp_header.truncate(header_len);
+impl AsyncWrite for Socks5UdpStreamWriter {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
+        let header_len = self.udp_header.len();
+        self.udp_header.extend_from_slice(buf);
+        let ret = self.send_socket.poll_send_to(cx, self.udp_header.as_slice(), self.peer);
+        self.udp_header.truncate(header_len);
         ret.map(|r| r.map(|write_len| write_len - header_len))
     }
 
