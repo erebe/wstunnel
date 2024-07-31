@@ -229,8 +229,8 @@ impl AsyncRead for Socks5ReadHalf {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         match self.get_mut() {
-            Self::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_read(cx, buf),
-            Self::Udp(s) => unsafe { Pin::new_unchecked(s) }.poll_read(cx, buf),
+            Self::Tcp(s) => Pin::new(s).poll_read(cx, buf),
+            Self::Udp(s) => Pin::new(s).poll_read(cx, buf),
         }
     }
 }
@@ -238,22 +238,22 @@ impl AsyncRead for Socks5ReadHalf {
 impl AsyncWrite for Socks5WriteHalf {
     fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         match self.get_mut() {
-            Self::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_write(cx, buf),
-            Self::Udp(s) => unsafe { Pin::new_unchecked(s) }.poll_write(cx, buf),
+            Self::Tcp(s) => Pin::new(s).poll_write(cx, buf),
+            Self::Udp(s) => Pin::new(s).poll_write(cx, buf),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.get_mut() {
-            Self::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_flush(cx),
-            Self::Udp(s) => unsafe { Pin::new_unchecked(s) }.poll_flush(cx),
+            Self::Tcp(s) => Pin::new(s).poll_flush(cx),
+            Self::Udp(s) => Pin::new(s).poll_flush(cx),
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.get_mut() {
-            Self::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_shutdown(cx),
-            Self::Udp(s) => unsafe { Pin::new_unchecked(s) }.poll_shutdown(cx),
+            Self::Tcp(s) => Pin::new(s).poll_shutdown(cx),
+            Self::Udp(s) => Pin::new(s).poll_shutdown(cx),
         }
     }
 
@@ -263,8 +263,8 @@ impl AsyncWrite for Socks5WriteHalf {
         bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, Error>> {
         match self.get_mut() {
-            Self::Tcp(s) => unsafe { Pin::new_unchecked(s) }.poll_write_vectored(cx, bufs),
-            Self::Udp(s) => unsafe { Pin::new_unchecked(s) }.poll_write_vectored(cx, bufs),
+            Self::Tcp(s) => Pin::new(s).poll_write_vectored(cx, bufs),
+            Self::Udp(s) => Pin::new(s).poll_write_vectored(cx, bufs),
         }
     }
 
@@ -275,22 +275,3 @@ impl AsyncWrite for Socks5WriteHalf {
         }
     }
 }
-
-//#[cfg(test)]
-//mod test {
-//    use super::*;
-//    use futures_util::StreamExt;
-//    use std::str::FromStr;
-//
-//    #[tokio::test]
-//    async fn socks5_server() {
-//        let mut x = run_server(SocketAddr::from_str("[::]:4343").unwrap())
-//            .await
-//            .unwrap();
-//
-//        loop {
-//            let cnx = x.next().await.unwrap().unwrap();
-//            eprintln!("{:?}", cnx);
-//        }
-//    }
-//}

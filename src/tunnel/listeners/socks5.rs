@@ -32,7 +32,6 @@ impl Stream for Socks5TunnelListener {
     fn poll_next(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
         let ret = ready!(Pin::new(&mut this.listener).poll_next(cx));
-        // TODO: Check if tokio::io::split can be avoided
         let ret = match ret {
             Some(Ok((stream, (host, port)))) => {
                 let protocol = stream.local_protocol();
