@@ -351,6 +351,29 @@ struct Server {
     /// The ca will be automatically reloaded if it changes
     #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
     tls_client_ca_certs: Option<PathBuf>,
+
+    /// If set, will use this http proxy to connect to the client
+    #[arg(
+        short = 'p',
+        long,
+        value_name = "USER:PASS@HOST:PORT",
+        verbatim_doc_comment,
+        env = "HTTP_PROXY"
+    )]
+    http_proxy: Option<String>,
+
+    /// If set, will use this login to connect to the http proxy. Override the one from --http-proxy
+    #[arg(long, value_name = "LOGIN", verbatim_doc_comment, env = "WSTUNNEL_HTTP_PROXY_LOGIN")]
+    http_proxy_login: Option<String>,
+
+    /// If set, will use this password to connect to the http proxy. Override the one from --http-proxy
+    #[arg(
+        long,
+        value_name = "PASSWORD",
+        verbatim_doc_comment,
+        env = "WSTUNNEL_HTTP_PROXY_PASSWORD"
+    )]
+    http_proxy_password: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -750,7 +773,24 @@ async fn main() -> anyhow::Result<()> {
                 TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
             let tls = match transport_scheme {
                 TransportScheme::Ws | TransportScheme::Http => None,
-                TransportScheme::Wss | TransportScheme::Https => Some(TlsClientConfig {
+                TransportScheme::Wss => Some(TlsClientConfig {
+                    tls_connector: Arc::new(RwLock::new(
+                        tls::tls_connector(
+                            args.tls_verify_certificate,
+                            transport_scheme.alpn_protocols(),
+                            !args.tls_sni_disable,
+                            tls_certificate,
+                            tls_key,
+                        )
+                        .expect("Cannot create tls connector"),
+                    )),
+                    tls_sni_override: args.tls_sni_override,
+                    tls_verify_certificate: args.tls_verify_certificate,
+                    tls_sni_disabled: args.tls_sni_disable,
+                    tls_certificate_path: args.tls_certificate.clone(),
+                    tls_key_path: args.tls_private_key.clone(),
+                }),
+                TransportScheme::Https => Some(TlsClientConfig {
                     tls_connector: Arc::new(RwLock::new(
                         tls::tls_connector(
                             args.tls_verify_certificate,
@@ -1136,6 +1176,26 @@ async fn main() -> anyhow::Result<()> {
                 restriction_cfg
             };
 
+            let http_proxy = if let Some(proxy) = args.http_proxy {
+                let mut proxy = if proxy.starts_with("http://") {
+                    Url::parse(&proxy).expect("Invalid http proxy url")
+                } else {
+                    Url::parse(&format!("http://{}", proxy)).expect("Invalid http proxy url")
+                };
+
+                if let Some(login) = args.http_proxy_login {
+                    proxy.set_username(login.as_str()).expect("Cannot set http proxy login");
+                }
+                if let Some(password) = args.http_proxy_password {
+                    proxy
+                        .set_password(Some(password.as_str()))
+                        .expect("Cannot set http proxy password");
+                }
+                Some(proxy)
+            } else {
+                None
+            };
+
             let server_config = WsServerConfig {
                 socket_so_mark: args.socket_so_mark,
                 bind: args.remote_addr.socket_addrs(|| Some(8080)).unwrap()[0],
@@ -1151,6 +1211,7 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .expect("Cannot create DNS resolver"),
                 restriction_config: args.restrict_config,
+                http_proxy,
             };
             let server = WsServer::new(server_config);
 

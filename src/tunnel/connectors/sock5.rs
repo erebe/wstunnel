@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::anyhow;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use url::Url;
 
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::udp;
@@ -60,6 +61,14 @@ impl TunnelConnector for Socks5TunnelConnector<'_> {
             }
             _ => Err(anyhow!("Invalid protocol for reverse socks5 {:?}", remote.protocol)),
         }
+    }
+
+    async fn connect_with_http_proxy(
+        &self,
+        proxy: &Url,
+        remote: &Option<RemoteAddr>,
+    ) -> anyhow::Result<(Self::Reader, Self::Writer)> {
+        Err(anyhow!("SOCKS5 tunneling is not supported with HTTP proxy"))
     }
 }
 
