@@ -15,8 +15,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::tunnel::RemoteAddr;
-use crate::{protocols, LocalProtocol};
+use crate::protocols;
+use crate::tunnel::{LocalProtocol, RemoteAddr};
 use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;

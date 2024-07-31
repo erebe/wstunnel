@@ -1,7 +1,6 @@
 use crate::protocols::udp;
 use crate::protocols::udp::{UdpStream, UdpStreamWriter};
-use crate::tunnel::RemoteAddr;
-use crate::LocalProtocol;
+use crate::tunnel::{LocalProtocol, RemoteAddr};
 use anyhow::{anyhow, Context};
 use std::io;
 use std::net::SocketAddr;

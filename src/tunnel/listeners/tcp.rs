@@ -1,5 +1,5 @@
-use crate::tunnel::RemoteAddr;
-use crate::{protocols, LocalProtocol};
+use crate::protocols;
+use crate::tunnel::{LocalProtocol, RemoteAddr};
 use anyhow::{anyhow, Context};
 use std::net::SocketAddr;
 use std::pin::Pin;

@@ -1,7 +1,6 @@
 use crate::protocols::unix_sock;
 use crate::protocols::unix_sock::UnixListenerStream;
-use crate::tunnel::RemoteAddr;
-use crate::LocalProtocol;
+use crate::tunnel::{LocalProtocol, RemoteAddr};
 use anyhow::{anyhow, Context};
 use std::path::Path;
 use std::pin::Pin;

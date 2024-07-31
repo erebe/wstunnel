@@ -12,14 +12,14 @@ use crate::tunnel::listeners::{
     new_stdio_listener, new_udp_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener,
 };
 use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
-use crate::tunnel::{to_host_port, RemoteAddr, TransportAddr, TransportScheme};
+use crate::tunnel::{to_host_port, LocalProtocol, RemoteAddr, TransportAddr, TransportScheme};
+use anyhow::{anyhow, Context};
 use base64::Engine;
 use clap::Parser;
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
 use log::debug;
 use parking_lot::{Mutex, RwLock};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::io;
@@ -376,66 +376,11 @@ struct Server {
     http_proxy_password: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-enum LocalProtocol {
-    Tcp {
-        proxy_protocol: bool,
-    },
-    Udp {
-        timeout: Option<Duration>,
-    },
-    Stdio,
-    Socks5 {
-        timeout: Option<Duration>,
-        credentials: Option<(String, String)>,
-    },
-    TProxyTcp,
-    TProxyUdp {
-        timeout: Option<Duration>,
-    },
-    HttpProxy {
-        timeout: Option<Duration>,
-        credentials: Option<(String, String)>,
-        proxy_protocol: bool,
-    },
-    ReverseTcp,
-    ReverseUdp {
-        timeout: Option<Duration>,
-    },
-    ReverseSocks5 {
-        timeout: Option<Duration>,
-        credentials: Option<(String, String)>,
-    },
-    ReverseHttpProxy {
-        timeout: Option<Duration>,
-        credentials: Option<(String, String)>,
-    },
-    ReverseUnix {
-        path: PathBuf,
-    },
-    Unix {
-        path: PathBuf,
-    },
-}
-
-impl LocalProtocol {
-    pub const fn is_reverse_tunnel(&self) -> bool {
-        matches!(
-            self,
-            Self::ReverseTcp
-                | Self::ReverseUdp { .. }
-                | Self::ReverseSocks5 { .. }
-                | Self::ReverseUnix { .. }
-                | Self::ReverseHttpProxy { .. }
-        )
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct LocalToRemote {
     local_protocol: LocalProtocol,
     local: SocketAddr,
-    remote: (Host<String>, u16),
+    remote: (Host, u16),
 }
 
 fn parse_duration_sec(arg: &str) -> Result<Duration, io::Error> {
@@ -773,24 +718,7 @@ async fn main() -> anyhow::Result<()> {
                 TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
             let tls = match transport_scheme {
                 TransportScheme::Ws | TransportScheme::Http => None,
-                TransportScheme::Wss => Some(TlsClientConfig {
-                    tls_connector: Arc::new(RwLock::new(
-                        tls::tls_connector(
-                            args.tls_verify_certificate,
-                            transport_scheme.alpn_protocols(),
-                            !args.tls_sni_disable,
-                            tls_certificate,
-                            tls_key,
-                        )
-                        .expect("Cannot create tls connector"),
-                    )),
-                    tls_sni_override: args.tls_sni_override,
-                    tls_verify_certificate: args.tls_verify_certificate,
-                    tls_sni_disabled: args.tls_sni_disable,
-                    tls_certificate_path: args.tls_certificate.clone(),
-                    tls_key_path: args.tls_private_key.clone(),
-                }),
-                TransportScheme::Https => Some(TlsClientConfig {
+                TransportScheme::Wss | TransportScheme::Https => Some(TlsClientConfig {
                     tls_connector: Arc::new(RwLock::new(
                         tls::tls_connector(
                             args.tls_verify_certificate,
@@ -824,25 +752,8 @@ async fn main() -> anyhow::Result<()> {
                     panic!("http headers file does not exists: {}", path.display());
                 }
             }
-            let http_proxy = if let Some(proxy) = args.http_proxy {
-                let mut proxy = if proxy.starts_with("http://") {
-                    Url::parse(&proxy).expect("Invalid http proxy url")
-                } else {
-                    Url::parse(&format!("http://{}", proxy)).expect("Invalid http proxy url")
-                };
 
-                if let Some(login) = args.http_proxy_login {
-                    proxy.set_username(login.as_str()).expect("Cannot set http proxy login");
-                }
-                if let Some(password) = args.http_proxy_password {
-                    proxy
-                        .set_password(Some(password.as_str()))
-                        .expect("Cannot set http proxy password");
-                }
-                Some(proxy)
-            } else {
-                None
-            };
+            let http_proxy = mk_http_proxy(args.http_proxy, args.http_proxy_login, args.http_proxy_password)?;
             let client_config = WsClientConfig {
                 remote_addr: TransportAddr::new(
                     TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
@@ -1176,26 +1087,7 @@ async fn main() -> anyhow::Result<()> {
                 restriction_cfg
             };
 
-            let http_proxy = if let Some(proxy) = args.http_proxy {
-                let mut proxy = if proxy.starts_with("http://") {
-                    Url::parse(&proxy).expect("Invalid http proxy url")
-                } else {
-                    Url::parse(&format!("http://{}", proxy)).expect("Invalid http proxy url")
-                };
-
-                if let Some(login) = args.http_proxy_login {
-                    proxy.set_username(login.as_str()).expect("Cannot set http proxy login");
-                }
-                if let Some(password) = args.http_proxy_password {
-                    proxy
-                        .set_password(Some(password.as_str()))
-                        .expect("Cannot set http proxy password");
-                }
-                Some(proxy)
-            } else {
-                None
-            };
-
+            let http_proxy = mk_http_proxy(args.http_proxy, args.http_proxy_login, args.http_proxy_password)?;
             let server_config = WsServerConfig {
                 socket_so_mark: args.socket_so_mark,
                 bind: args.remote_addr.socket_addrs(|| Some(8080)).unwrap()[0],
@@ -1229,4 +1121,34 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::signal::ctrl_c().await.unwrap();
     Ok(())
+}
+
+fn mk_http_proxy(
+    http_proxy: Option<String>,
+    proxy_login: Option<String>,
+    proxy_password: Option<String>,
+) -> anyhow::Result<Option<Url>> {
+    let Some(proxy) = http_proxy else {
+        return Ok(None);
+    };
+
+    let mut proxy = if proxy.starts_with("http://") {
+        Url::parse(&proxy).with_context(|| "Invalid http proxy url")?
+    } else {
+        Url::parse(&format!("http://{}", proxy)).with_context(|| "Invalid http proxy url")?
+    };
+
+    if let Some(login) = proxy_login {
+        proxy
+            .set_username(login.as_str())
+            .map_err(|_| anyhow!("Cannot set http proxy login"))?;
+    }
+
+    if let Some(password) = proxy_password {
+        proxy
+            .set_password(Some(password.as_str()))
+            .map_err(|_| anyhow!("Cannot set http proxy password"))?;
+    }
+
+    Ok(Some(proxy))
 }

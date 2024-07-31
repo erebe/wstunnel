@@ -8,12 +8,12 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use url::Url;
 
+use crate::protocols;
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::udp;
 use crate::protocols::udp::WsUdpSocket;
 use crate::tunnel::connectors::TunnelConnector;
-use crate::tunnel::RemoteAddr;
-use crate::{protocols, LocalProtocol};
+use crate::tunnel::{LocalProtocol, RemoteAddr};
 
 pub struct Socks5TunnelConnector<'a> {
     so_mark: Option<u32>,

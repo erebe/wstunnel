@@ -5,21 +5,17 @@ pub mod server;
 mod tls_reloader;
 mod transport;
 
-use crate::{LocalProtocol, TlsClientConfig};
+use crate::TlsClientConfig;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt::{Debug, Display, Formatter};
-use std::io::{Error, IoSlice};
 use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
-use std::pin::Pin;
+use std::path::PathBuf;
 use std::str::FromStr;
-use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::TcpStream;
-use tokio_rustls::client::TlsStream;
+use std::time::Duration;
 use url::Host;
 use uuid::Uuid;
 
@@ -72,6 +68,61 @@ static JWT_DECODE: Lazy<(Validation, DecodingKey)> = Lazy::new(|| {
     validation.required_spec_claims = HashSet::with_capacity(0);
     (validation, DecodingKey::from_secret(JWT_SECRET))
 });
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum LocalProtocol {
+    Tcp {
+        proxy_protocol: bool,
+    },
+    Udp {
+        timeout: Option<Duration>,
+    },
+    Stdio,
+    Socks5 {
+        timeout: Option<Duration>,
+        credentials: Option<(String, String)>,
+    },
+    TProxyTcp,
+    TProxyUdp {
+        timeout: Option<Duration>,
+    },
+    HttpProxy {
+        timeout: Option<Duration>,
+        credentials: Option<(String, String)>,
+        proxy_protocol: bool,
+    },
+    ReverseTcp,
+    ReverseUdp {
+        timeout: Option<Duration>,
+    },
+    ReverseSocks5 {
+        timeout: Option<Duration>,
+        credentials: Option<(String, String)>,
+    },
+    ReverseHttpProxy {
+        timeout: Option<Duration>,
+        credentials: Option<(String, String)>,
+    },
+    ReverseUnix {
+        path: PathBuf,
+    },
+    Unix {
+        path: PathBuf,
+    },
+}
+
+impl LocalProtocol {
+    pub const fn is_reverse_tunnel(&self) -> bool {
+        matches!(
+            self,
+            Self::ReverseTcp
+                | Self::ReverseUdp { .. }
+                | Self::ReverseSocks5 { .. }
+                | Self::ReverseUnix { .. }
+                | Self::ReverseHttpProxy { .. }
+        )
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct RemoteAddr {
@@ -242,61 +293,6 @@ impl TryFrom<JwtTunnelConfig> for RemoteAddr {
             host: Host::parse(&jwt.r)?,
             port: jwt.rp,
         })
-    }
-}
-
-pub enum TransportStream {
-    Plain(TcpStream),
-    Tls(TlsStream<TcpStream>),
-}
-
-impl AsyncRead for TransportStream {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            Self::Plain(cnx) => Pin::new(cnx).poll_read(cx, buf),
-            Self::Tls(cnx) => Pin::new(cnx).poll_read(cx, buf),
-        }
-    }
-}
-
-impl AsyncWrite for TransportStream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
-        match self.get_mut() {
-            Self::Plain(cnx) => Pin::new(cnx).poll_write(cx, buf),
-            Self::Tls(cnx) => Pin::new(cnx).poll_write(cx, buf),
-        }
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        match self.get_mut() {
-            Self::Plain(cnx) => Pin::new(cnx).poll_flush(cx),
-            Self::Tls(cnx) => Pin::new(cnx).poll_flush(cx),
-        }
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        match self.get_mut() {
-            Self::Plain(cnx) => Pin::new(cnx).poll_shutdown(cx),
-            Self::Tls(cnx) => Pin::new(cnx).poll_shutdown(cx),
-        }
-    }
-
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<Result<usize, Error>> {
-        match self.get_mut() {
-            Self::Plain(cnx) => Pin::new(cnx).poll_write_vectored(cx, bufs),
-            Self::Tls(cnx) => Pin::new(cnx).poll_write_vectored(cx, bufs),
-        }
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        match &self {
-            Self::Plain(cnx) => cnx.is_write_vectored(),
-            Self::Tls(cnx) => cnx.is_write_vectored(),
-        }
     }
 }
 

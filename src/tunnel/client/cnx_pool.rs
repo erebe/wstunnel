@@ -1,7 +1,7 @@
 use crate::protocols;
 use crate::protocols::tls;
+use crate::tunnel::client::l4_transport_stream::TransportStream;
 use crate::tunnel::client::WsClientConfig;
-use crate::tunnel::TransportStream;
 use async_trait::async_trait;
 use bb8::ManageConnection;
 use std::ops::Deref;

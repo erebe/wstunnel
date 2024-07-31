@@ -1,6 +1,5 @@
 use crate::protocols::stdio;
-use crate::tunnel::RemoteAddr;
-use crate::LocalProtocol;
+use crate::tunnel::{LocalProtocol, RemoteAddr};
 use anyhow::{anyhow, Context};
 use std::pin::Pin;
 use std::task::Poll;

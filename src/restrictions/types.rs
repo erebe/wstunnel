@@ -1,4 +1,4 @@
-use crate::LocalProtocol;
+use crate::tunnel::LocalProtocol;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use regex::Regex;
 use serde::{Deserialize, Deserializer};

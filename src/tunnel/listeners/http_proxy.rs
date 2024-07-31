@@ -1,7 +1,6 @@
 use crate::protocols::http_proxy;
 use crate::protocols::http_proxy::HttpProxyListener;
-use crate::tunnel::RemoteAddr;
-use crate::LocalProtocol;
+use crate::tunnel::{LocalProtocol, RemoteAddr};
 use anyhow::{anyhow, Context};
 use std::net::SocketAddr;
 use std::pin::Pin;

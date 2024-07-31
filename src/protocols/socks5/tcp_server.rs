@@ -1,5 +1,5 @@
 use super::udp_server::{Socks5UdpStream, Socks5UdpStreamWriter};
-use crate::LocalProtocol;
+use crate::tunnel::LocalProtocol;
 use anyhow::Context;
 use fast_socks5::server::{Config, DenyAuthentication, SimpleUserPassword, Socks5Server};
 use fast_socks5::util::target_addr::TargetAddr;
