@@ -48,7 +48,7 @@ use tokio::sync::mpsc;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::TlsAcceptor;
 use tracing::{error, info, span, warn, Instrument, Level, Span};
-use url::Host;
+use url::{Host, Url};
 
 #[derive(Debug)]
 pub struct TlsServerConfig {
@@ -69,6 +69,7 @@ pub struct WsServerConfig {
     pub tls: Option<TlsServerConfig>,
     pub dns_resolver: DnsResolver,
     pub restriction_config: Option<PathBuf>,
+    pub http_proxy: Option<Url>,
 }
 
 #[derive(Clone)]
@@ -172,28 +173,32 @@ impl WsServer {
     ) -> anyhow::Result<(RemoteAddr, Pin<Box<dyn AsyncRead + Send>>, Pin<Box<dyn AsyncWrite + Send>>)> {
         match remote.protocol {
             LocalProtocol::Udp { timeout, .. } => {
-                let (rx, tx) = UdpTunnelConnector::new(
+                let connector = UdpTunnelConnector::new(
                     &remote.host,
                     remote.port,
                     self.config.socket_so_mark,
                     timeout.unwrap_or(Duration::from_secs(10)),
                     &self.config.dns_resolver,
-                )
-                .connect(&None)
-                .await?;
+                );
+                let (rx, tx) = match &self.config.http_proxy {
+                    None => connector.connect(&None).await?,
+                    Some(_) => Err(anyhow!("UDP tunneling is not supported with HTTP proxy"))?,
+                };
 
                 Ok((remote, Box::pin(rx), Box::pin(tx)))
             }
             LocalProtocol::Tcp { proxy_protocol } => {
-                let (rx, mut tx) = TcpTunnelConnector::new(
+                let connector = TcpTunnelConnector::new(
                     &remote.host,
                     remote.port,
                     self.config.socket_so_mark,
                     Duration::from_secs(10),
                     &self.config.dns_resolver,
-                )
-                .connect(&None)
-                .await?;
+                );
+                let (rx, mut tx) = match &self.config.http_proxy {
+                    None => connector.connect(&None).await?,
+                    Some(proxy_url) => connector.connect_with_http_proxy(proxy_url, &None).await?,
+                };
 
                 if proxy_protocol {
                     let header = ppp::v2::Builder::with_addresses(
@@ -201,8 +206,8 @@ impl WsServer {
                         ppp::v2::Protocol::Stream,
                         (client_address, tx.local_addr().unwrap()),
                     )
-                    .build()
-                    .unwrap();
+                        .build()
+                        .unwrap();
                     let _ = tx.write_all(&header).await;
                 }
 
