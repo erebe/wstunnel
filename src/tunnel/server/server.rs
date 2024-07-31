@@ -206,8 +206,8 @@ impl WsServer {
                         ppp::v2::Protocol::Stream,
                         (client_address, tx.local_addr().unwrap()),
                     )
-                        .build()
-                        .unwrap();
+                    .build()
+                    .unwrap();
                     let _ = tx.write_all(&header).await;
                 }
 

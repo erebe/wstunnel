@@ -65,8 +65,8 @@ impl TunnelConnector for Socks5TunnelConnector<'_> {
 
     async fn connect_with_http_proxy(
         &self,
-        proxy: &Url,
-        remote: &Option<RemoteAddr>,
+        _proxy: &Url,
+        _remote: &Option<RemoteAddr>,
     ) -> anyhow::Result<(Self::Reader, Self::Writer)> {
         Err(anyhow!("SOCKS5 tunneling is not supported with HTTP proxy"))
     }
