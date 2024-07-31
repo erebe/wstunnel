@@ -14,7 +14,7 @@ scopeguard = "1.2.0"
 
 bb8 = { version = "0.8", features = [] }
 bytes = { version = "1.6.1", features = [] }
-clap = { version = "4.5.9", features = ["derive", "env"] }
+clap = { version = "4.5.11", features = ["derive", "env"] }
 fast-socks5 = { version = "0.9.6", features = [] }
 fastwebsockets = { version = "0.8.0", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.30" }
@@ -43,7 +43,7 @@ rustls-pemfile = { version = "2.1.2", features = [] }
 x509-parser = "0.16.0"
 serde = { version = "1.0.204", features = ["derive"] }
 socket2 = { version = "0.5.7", features = [] }
-tokio = { version = "1.38.1", features = ["full"] }
+tokio = { version = "1.39.2", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["net"] }
 
 [target.'cfg(any(os = "linux", os = "macos"))'.dependencies]

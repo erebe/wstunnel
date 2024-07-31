@@ -1,6 +1,6 @@
+use crate::tunnel::client::WsClient;
 use crate::tunnel::transport::{headers_from_file, TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
 use crate::tunnel::{tunnel_to_jwt_token, RemoteAddr, TransportScheme};
-use crate::WsClientConfig;
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use http_body_util::{BodyExt, BodyStream, StreamBody};
@@ -99,55 +99,57 @@ impl TunnelWrite for Http2TunnelWrite {
 
 pub async fn connect(
     request_id: Uuid,
-    client_cfg: &WsClientConfig,
+    client: &WsClient,
     dest_addr: &RemoteAddr,
 ) -> anyhow::Result<(Http2TunnelRead, Http2TunnelWrite, Parts)> {
-    let mut pooled_cnx = match client_cfg.cnx_pool().get().await {
+    let mut pooled_cnx = match client.cnx_pool.get().await {
         Ok(cnx) => Ok(cnx),
         Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
     }?;
 
     // In http2 HOST header does not exist, it is explicitly set in the authority from the request uri
-    let (headers_file, authority) = client_cfg
-        .http_headers_file
-        .as_ref()
-        .map_or((None, None), |headers_file_path| {
-            let (host, headers) = headers_from_file(headers_file_path);
-            let host = if let Some((_, v)) = host {
-                match (client_cfg.remote_addr.scheme(), client_cfg.remote_addr.port()) {
-                    (TransportScheme::Http, 80) | (TransportScheme::Https, 443) => {
-                        Some(v.to_str().unwrap_or("").to_string())
+    let (headers_file, authority) =
+        client
+            .config
+            .http_headers_file
+            .as_ref()
+            .map_or((None, None), |headers_file_path| {
+                let (host, headers) = headers_from_file(headers_file_path);
+                let host = if let Some((_, v)) = host {
+                    match (client.config.remote_addr.scheme(), client.config.remote_addr.port()) {
+                        (TransportScheme::Http, 80) | (TransportScheme::Https, 443) => {
+                            Some(v.to_str().unwrap_or("").to_string())
+                        }
+                        (_, port) => Some(format!("{}:{}", v.to_str().unwrap_or(""), port)),
                     }
-                    (_, port) => Some(format!("{}:{}", v.to_str().unwrap_or(""), port)),
-                }
-            } else {
-                None
-            };
+                } else {
+                    None
+                };
 
-            (Some(headers), host)
-        });
+                (Some(headers), host)
+            });
 
     let mut req = Request::builder()
         .method("POST")
         .uri(format!(
             "{}://{}/{}/events",
-            client_cfg.remote_addr.scheme(),
+            client.config.remote_addr.scheme(),
             authority
                 .as_deref()
-                .unwrap_or_else(|| client_cfg.http_header_host.to_str().unwrap_or("")),
-            &client_cfg.http_upgrade_path_prefix
+                .unwrap_or_else(|| client.config.http_header_host.to_str().unwrap_or("")),
+            &client.config.http_upgrade_path_prefix
         ))
         .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
         .header(CONTENT_TYPE, "application/json")
         .version(hyper::Version::HTTP_2);
 
     let headers = req.headers_mut().unwrap();
-    for (k, v) in &client_cfg.http_headers {
+    for (k, v) in &client.config.http_headers {
         let _ = headers.remove(k);
         headers.append(k, v.clone());
     }
 
-    if let Some(auth) = &client_cfg.http_upgrade_credentials {
+    if let Some(auth) = &client.config.http_upgrade_credentials {
         let _ = headers.remove(AUTHORIZATION);
         headers.append(AUTHORIZATION, auth.clone());
     }
@@ -164,7 +166,7 @@ pub async fn connect(
     let req = req.body(body).with_context(|| {
         format!(
             "failed to build HTTP request to contact the server {:?}",
-            client_cfg.remote_addr
+            client.config.remote_addr
         )
     })?;
     debug!("with HTTP upgrade request {:?}", req);
@@ -172,11 +174,11 @@ pub async fn connect(
     let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
         .timer(TokioTimer::new())
         .adaptive_window(true)
-        .keep_alive_interval(client_cfg.websocket_ping_frequency)
+        .keep_alive_interval(client.config.websocket_ping_frequency)
         .keep_alive_while_idle(false)
         .handshake(TokioIo::new(transport))
         .await
-        .with_context(|| format!("failed to do http2 handshake with the server {:?}", client_cfg.remote_addr))?;
+        .with_context(|| format!("failed to do http2 handshake with the server {:?}", client.config.remote_addr))?;
     tokio::spawn(async move {
         if let Err(err) = cnx.await {
             error!("{:?}", err)
@@ -186,7 +188,7 @@ pub async fn connect(
     let response = request_sender
         .send_request(req)
         .await
-        .with_context(|| format!("failed to send http2 request with the server {:?}", client_cfg.remote_addr))?;
+        .with_context(|| format!("failed to send http2 request with the server {:?}", client.config.remote_addr))?;
 
     if !response.status().is_success() {
         return Err(anyhow!(

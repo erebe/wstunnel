@@ -2,13 +2,10 @@ pub mod client;
 pub mod connectors;
 pub mod listeners;
 pub mod server;
-pub mod tls_reloader;
+mod tls_reloader;
 mod transport;
 
-use crate::protocols::tls;
-use crate::{protocols, LocalProtocol, TlsClientConfig, WsClientConfig};
-use async_trait::async_trait;
-use bb8::ManageConnection;
+use crate::{LocalProtocol, TlsClientConfig};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -23,7 +20,6 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
-use tracing::instrument;
 use url::Host;
 use uuid::Uuid;
 
@@ -301,54 +297,6 @@ impl AsyncWrite for TransportStream {
             Self::Plain(cnx) => cnx.is_write_vectored(),
             Self::Tls(cnx) => cnx.is_write_vectored(),
         }
-    }
-}
-
-#[async_trait]
-impl ManageConnection for WsClientConfig {
-    type Connection = Option<TransportStream>;
-    type Error = anyhow::Error;
-
-    #[instrument(level = "trace", name = "cnx_server", skip_all)]
-    async fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        let so_mark = self.socket_so_mark;
-        let timeout = self.timeout_connect;
-
-        let tcp_stream = if let Some(http_proxy) = &self.http_proxy {
-            protocols::tcp::connect_with_http_proxy(
-                http_proxy,
-                self.remote_addr.host(),
-                self.remote_addr.port(),
-                so_mark,
-                timeout,
-                &self.dns_resolver,
-            )
-            .await?
-        } else {
-            protocols::tcp::connect(
-                self.remote_addr.host(),
-                self.remote_addr.port(),
-                so_mark,
-                timeout,
-                &self.dns_resolver,
-            )
-            .await?
-        };
-
-        if self.remote_addr.tls().is_some() {
-            let tls_stream = tls::connect(self, tcp_stream).await?;
-            Ok(Some(TransportStream::Tls(tls_stream)))
-        } else {
-            Ok(Some(TransportStream::Plain(tcp_stream)))
-        }
-    }
-
-    async fn is_valid(&self, _conn: &mut Self::Connection) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn has_broken(&self, conn: &mut Self::Connection) -> bool {
-        conn.is_none()
     }
 }
 
