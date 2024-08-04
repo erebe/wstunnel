@@ -4,14 +4,13 @@ use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::connectors::TunnelConnector;
 use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::tls_reloader::TlsReloader;
-use crate::tunnel::transport::{TunnelReader, TunnelWriter};
-use crate::tunnel::{JwtTunnelConfig, RemoteAddr, TransportScheme, JWT_DECODE};
+use crate::tunnel::transport::io::{TunnelReader, TunnelWriter};
+use crate::tunnel::transport::jwt_token_to_tunnel;
+use crate::tunnel::{RemoteAddr, TransportScheme};
 use anyhow::Context;
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
-use jsonwebtoken::TokenData;
 use log::debug;
-use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -179,11 +178,7 @@ impl WsClient {
                 .headers
                 .get(COOKIE)
                 .and_then(|h| h.to_str().ok())
-                .and_then(|h| {
-                    let (validation, decode_key) = JWT_DECODE.deref();
-                    let jwt: Option<TokenData<JwtTunnelConfig>> = jsonwebtoken::decode(h, decode_key, validation).ok();
-                    jwt
-                })
+                .and_then(|h| jwt_token_to_tunnel(h).ok())
                 .map(|jwt| RemoteAddr {
                     protocol: jwt.claims.p,
                     host: Host::parse(&jwt.claims.r).unwrap_or_else(|_| Host::Domain(String::new())),

@@ -1,7 +1,8 @@
 use crate::restrictions::types::{
     AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules, ReverseTunnelConfigProtocol, TunnelConfigProtocol,
 };
-use crate::tunnel::{tunnel_to_jwt_token, JwtTunnelConfig, RemoteAddr, JWT_DECODE, JWT_HEADER_PREFIX};
+use crate::tunnel::transport::{jwt_token_to_tunnel, tunnel_to_jwt_token, JwtTunnelConfig, JWT_HEADER_PREFIX};
+use crate::tunnel::RemoteAddr;
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use http_body_util::Either;
@@ -10,8 +11,7 @@ use hyper::header::{HeaderValue, COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{http, Request, Response, StatusCode};
 use jsonwebtoken::TokenData;
 use std::cmp::min;
-use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::ops::Deref;
+use std::net::IpAddr;
 use tracing::{error, info, warn};
 use url::Host;
 use uuid::Uuid;
@@ -92,8 +92,7 @@ pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<J
         .or_else(|| req.headers().get(COOKIE).and_then(|header| header.to_str().ok()))
         .unwrap_or_default();
 
-    let (validation, decode_key) = JWT_DECODE.deref();
-    let jwt = match jsonwebtoken::decode(jwt, decode_key, validation) {
+    let jwt = match jwt_token_to_tunnel(jwt) {
         Ok(jwt) => jwt,
         err => {
             warn!(
@@ -217,12 +216,4 @@ pub(super) fn inject_cookie(response: &mut http::Response<impl Body>, remote_add
     response.headers_mut().insert(COOKIE, header_val);
 
     Ok(())
-}
-
-pub fn try_to_sock_aadr((host, port): (Host, u16)) -> anyhow::Result<SocketAddr> {
-    match host {
-        Host::Domain(_) => Err(anyhow::anyhow!("Cannot convert domain to socket address")),
-        Host::Ipv4(ip) => Ok(SocketAddr::V4(SocketAddrV4::new(ip, port))),
-        Host::Ipv6(ip) => Ok(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0))),
-    }
 }

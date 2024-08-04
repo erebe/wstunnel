@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::protocols;
-use crate::tunnel::{LocalProtocol, RemoteAddr};
+use crate::tunnel::{try_to_sock_addr, LocalProtocol, RemoteAddr};
 use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
@@ -33,8 +33,7 @@ use crate::tunnel::server::handler_http2::http_server_upgrade;
 use crate::tunnel::server::handler_websocket::ws_server_upgrade;
 use crate::tunnel::server::reverse_tunnel::ReverseTunnelServer;
 use crate::tunnel::server::utils::{
-    bad_request, extract_path_prefix, extract_tunnel_info, extract_x_forwarded_for, find_mapped_port, try_to_sock_aadr,
-    validate_tunnel,
+    bad_request, extract_path_prefix, extract_tunnel_info, extract_x_forwarded_for, find_mapped_port, validate_tunnel,
 };
 use crate::tunnel::tls_reloader::TlsReloader;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -143,10 +142,7 @@ impl WsServer {
         };
 
         let req_protocol = remote.protocol.clone();
-        let inject_cookie = matches!(
-            req_protocol,
-            LocalProtocol::ReverseSocks5 { .. } | LocalProtocol::ReverseHttpProxy { .. }
-        );
+        let inject_cookie = req_protocol.is_dynamic_reverse_tunnel();
         let tunnel = match self.exec_tunnel(restriction, remote, client_addr).await {
             Ok(ret) => ret,
             Err(err) => {
@@ -213,7 +209,7 @@ impl WsServer {
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
-                let bind = try_to_sock_aadr(local_srv.clone())?;
+                let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { TcpTunnelListener::new(bind, local_srv.clone(), false).await };
                 let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
 
@@ -224,7 +220,7 @@ impl WsServer {
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
-                let bind = try_to_sock_aadr(local_srv.clone())?;
+                let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { UdpTunnelListener::new(bind, local_srv.clone(), timeout).await };
                 let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
@@ -234,7 +230,7 @@ impl WsServer {
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
-                let bind = try_to_sock_aadr(local_srv.clone())?;
+                let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { Socks5TunnelListener::new(bind, timeout, credentials).await };
                 let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
 
@@ -246,7 +242,7 @@ impl WsServer {
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
-                let bind = try_to_sock_aadr(local_srv.clone())?;
+                let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { HttpProxyTunnelListener::new(bind, timeout, credentials, false).await };
                 let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
 
@@ -259,7 +255,7 @@ impl WsServer {
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
-                let bind = try_to_sock_aadr(local_srv.clone())?;
+                let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { UnixTunnelListener::new(path, local_srv.clone(), false).await };
                 let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
 

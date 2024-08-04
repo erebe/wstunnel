@@ -1,6 +1,8 @@
+use super::io::{TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
 use crate::tunnel::client::WsClient;
-use crate::tunnel::transport::{headers_from_file, TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
-use crate::tunnel::{tunnel_to_jwt_token, RemoteAddr, JWT_HEADER_PREFIX};
+use crate::tunnel::transport::headers_from_file;
+use crate::tunnel::transport::jwt::{tunnel_to_jwt_token, JWT_HEADER_PREFIX};
+use crate::tunnel::RemoteAddr;
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use fastwebsockets::{Frame, OpCode, Payload, WebSocketRead, WebSocketWrite};
