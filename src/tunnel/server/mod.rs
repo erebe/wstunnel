@@ -1,6 +1,7 @@
 #![allow(clippy::module_inception)]
 mod handler_http2;
 mod handler_websocket;
+mod reverse_tunnel;
 mod server;
 mod utils;
 

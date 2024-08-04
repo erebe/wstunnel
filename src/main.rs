@@ -9,7 +9,7 @@ use crate::restrictions::types::RestrictionsRules;
 use crate::tunnel::client::{TlsClientConfig, WsClient, WsClientConfig};
 use crate::tunnel::connectors::{Socks5TunnelConnector, TcpTunnelConnector, UdpTunnelConnector};
 use crate::tunnel::listeners::{
-    new_stdio_listener, new_udp_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener,
+    new_stdio_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener,
 };
 use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
 use crate::tunnel::{to_host_port, LocalProtocol, RemoteAddr, TransportAddr, TransportScheme};
@@ -1004,7 +1004,7 @@ async fn main() -> anyhow::Result<()> {
                         panic!("Transparent proxy is not available for non Linux platform")
                     }
                     LocalProtocol::Udp { timeout } => {
-                        let server = new_udp_listener(tunnel.local, tunnel.remote.clone(), *timeout).await?;
+                        let server = UdpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *timeout).await?;
 
                         tokio::spawn(async move {
                             if let Err(err) = client.run_tunnel(server).await {

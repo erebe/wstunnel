@@ -10,35 +10,31 @@ use std::time::Duration;
 use tokio_stream::Stream;
 use url::Host;
 
-pub struct UdpTunnelListener<S>
-where
-    S: Stream<Item = io::Result<UdpStream>>,
-{
-    listener: S,
+pub struct UdpTunnelListener {
+    listener: Pin<Box<dyn Stream<Item = io::Result<UdpStream>> + Send>>,
     dest: (Host, u16),
     timeout: Option<Duration>,
 }
 
-pub async fn new_udp_listener(
-    bind_addr: SocketAddr,
-    dest: (Host, u16),
-    timeout: Option<Duration>,
-) -> anyhow::Result<UdpTunnelListener<impl Stream<Item = io::Result<UdpStream>>>> {
-    let listener = udp::run_server(bind_addr, timeout, |_| Ok(()), |s| Ok(s.clone()))
-        .await
-        .with_context(|| anyhow!("Cannot start UDP server on {}", bind_addr))?;
+impl UdpTunnelListener {
+    pub async fn new(
+        bind_addr: SocketAddr,
+        dest: (Host, u16),
+        timeout: Option<Duration>,
+    ) -> anyhow::Result<UdpTunnelListener> {
+        let listener = udp::run_server(bind_addr, timeout, |_| Ok(()), |s| Ok(s.clone()))
+            .await
+            .with_context(|| anyhow!("Cannot start UDP server on {}", bind_addr))?;
 
-    Ok(UdpTunnelListener {
-        listener,
-        dest,
-        timeout,
-    })
+        Ok(UdpTunnelListener {
+            listener: Box::pin(listener),
+            dest,
+            timeout,
+        })
+    }
 }
 
-impl<S> Stream for UdpTunnelListener<S>
-where
-    S: Stream<Item = io::Result<UdpStream>>,
-{
+impl Stream for UdpTunnelListener {
     type Item = anyhow::Result<((UdpStream, UdpStreamWriter), RemoteAddr)>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {

@@ -1,15 +1,12 @@
-use ahash::{HashMap, HashMapExt};
 use anyhow::anyhow;
-use futures_util::{pin_mut, FutureExt, StreamExt};
+use futures_util::FutureExt;
 use http_body_util::Either;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::future::Future;
 
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use std::net::SocketAddr;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -28,27 +25,25 @@ use socket2::SockRef;
 
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
-use crate::protocols::udp::{UdpStream, UdpStreamWriter};
 use crate::restrictions::config_reloader::RestrictionsRulesReloader;
 use crate::restrictions::types::{RestrictionConfig, RestrictionsRules};
 use crate::tunnel::connectors::{TcpTunnelConnector, TunnelConnector, UdpTunnelConnector};
-use crate::tunnel::listeners::{
-    new_udp_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, TunnelListener,
-};
+use crate::tunnel::listeners::{HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener};
 use crate::tunnel::server::handler_http2::http_server_upgrade;
 use crate::tunnel::server::handler_websocket::ws_server_upgrade;
+use crate::tunnel::server::reverse_tunnel::ReverseTunnelServer;
 use crate::tunnel::server::utils::{
-    bad_request, extract_path_prefix, extract_tunnel_info, extract_x_forwarded_for, find_mapped_port, validate_tunnel,
+    bad_request, extract_path_prefix, extract_tunnel_info, extract_x_forwarded_for, find_mapped_port, try_to_sock_aadr,
+    validate_tunnel,
 };
 use crate::tunnel::tls_reloader::TlsReloader;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::select;
-use tokio::sync::mpsc;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::TlsAcceptor;
 use tracing::{error, info, span, warn, Instrument, Level, Span};
-use url::{Host, Url};
+use url::Url;
 
 #[derive(Debug)]
 pub struct TlsServerConfig {
@@ -214,85 +209,59 @@ impl WsServer {
                 Ok((remote, Box::pin(rx), Box::pin(tx)))
             }
             LocalProtocol::ReverseTcp => {
-                type Item = <TcpTunnelListener as TunnelListener>::OkReturn;
-                #[allow(clippy::type_complexity)]
-                static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<Item>>>> =
-                    Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
+                static SERVERS: Lazy<ReverseTunnelServer<TcpTunnelListener>> = Lazy::new(ReverseTunnelServer::new);
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
-                let listening_server = async {
-                    let bind = format!("{}:{}", local_srv.0, local_srv.1);
-                    TcpTunnelListener::new(bind.parse()?, local_srv.clone(), false).await
-                };
-                let ((local_rx, local_tx), remote) =
-                    run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
+                let bind = try_to_sock_aadr(local_srv.clone())?;
+                let listening_server = async { TcpTunnelListener::new(bind, local_srv.clone(), false).await };
+                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
             LocalProtocol::ReverseUdp { timeout } => {
-                type Item = ((UdpStream, UdpStreamWriter), RemoteAddr);
-                #[allow(clippy::type_complexity)]
-                static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<Item>>>> =
-                    Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
+                static SERVERS: Lazy<ReverseTunnelServer<UdpTunnelListener>> = Lazy::new(ReverseTunnelServer::new);
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
-                let listening_server = async {
-                    let bind = format!("{}:{}", local_srv.0, local_srv.1);
-                    new_udp_listener(bind.parse()?, local_srv.clone(), timeout).await
-                };
-                let ((local_rx, local_tx), remote) =
-                    run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
+                let bind = try_to_sock_aadr(local_srv.clone())?;
+                let listening_server = async { UdpTunnelListener::new(bind, local_srv.clone(), timeout).await };
+                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
             LocalProtocol::ReverseSocks5 { timeout, credentials } => {
-                type Item = <Socks5TunnelListener as TunnelListener>::OkReturn;
-                #[allow(clippy::type_complexity)]
-                static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<Item>>>> =
-                    Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
+                static SERVERS: Lazy<ReverseTunnelServer<Socks5TunnelListener>> = Lazy::new(ReverseTunnelServer::new);
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
-                let listening_server = async {
-                    let bind = format!("{}:{}", local_srv.0, local_srv.1);
-                    Socks5TunnelListener::new(bind.parse()?, timeout, credentials).await
-                };
-                let ((local_rx, local_tx), remote) =
-                    run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
+                let bind = try_to_sock_aadr(local_srv.clone())?;
+                let listening_server = async { Socks5TunnelListener::new(bind, timeout, credentials).await };
+                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
             LocalProtocol::ReverseHttpProxy { timeout, credentials } => {
-                type Item = <HttpProxyTunnelListener as TunnelListener>::OkReturn;
-                #[allow(clippy::type_complexity)]
-                static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<Item>>>> =
-                    Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
+                static SERVERS: Lazy<ReverseTunnelServer<HttpProxyTunnelListener>> =
+                    Lazy::new(ReverseTunnelServer::new);
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
-                let listening_server = async {
-                    let bind = format!("{}:{}", local_srv.0, local_srv.1);
-                    HttpProxyTunnelListener::new(bind.parse()?, timeout, credentials, false).await
-                };
-                let ((local_rx, local_tx), remote) =
-                    run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
+                let bind = try_to_sock_aadr(local_srv.clone())?;
+                let listening_server = async { HttpProxyTunnelListener::new(bind, timeout, credentials, false).await };
+                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
             #[cfg(unix)]
             LocalProtocol::ReverseUnix { ref path } => {
                 use crate::tunnel::listeners::UnixTunnelListener;
-                type Item = <UnixTunnelListener as TunnelListener>::OkReturn;
-                #[allow(clippy::type_complexity)]
-                static SERVERS: Lazy<Mutex<HashMap<(Host<String>, u16), mpsc::Receiver<Item>>>> =
-                    Lazy::new(|| Mutex::new(HashMap::with_capacity(0)));
+                static SERVERS: Lazy<ReverseTunnelServer<UnixTunnelListener>> = Lazy::new(ReverseTunnelServer::new);
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
+                let bind = try_to_sock_aadr(local_srv.clone())?;
                 let listening_server = async { UnixTunnelListener::new(path, local_srv.clone(), false).await };
-                let ((local_rx, local_tx), remote) =
-                    run_listening_server(&local_srv, SERVERS.deref(), listening_server).await?;
+                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
@@ -550,66 +519,4 @@ impl TlsContext<'_> {
 
         &self.tls_acceptor
     }
-}
-
-#[allow(clippy::type_complexity)]
-async fn run_listening_server<T>(
-    local_srv: &(Host, u16),
-    servers: &Mutex<
-        HashMap<
-            (Host<String>, u16),
-            mpsc::Receiver<((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr)>,
-        >,
-    >,
-    gen_listening_server: impl Future<Output = anyhow::Result<T>>,
-) -> anyhow::Result<((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr)>
-where
-    T: TunnelListener + Send + 'static,
-{
-    let listening_server = servers.lock().remove(local_srv);
-    let mut listening_server = if let Some(listening_server) = listening_server {
-        listening_server
-    } else {
-        let listening_server = gen_listening_server.await?;
-        let send_timeout = Duration::from_secs(60 * 3);
-        let (tx, rx) = mpsc::channel(1);
-        let fut = async move {
-            pin_mut!(listening_server);
-            loop {
-                select! {
-                    biased;
-                    cnx = listening_server.next() => {
-                       match cnx {
-                            None => break,
-                            Some(Err(err)) => {
-                                warn!("Error while listening for incoming connections {err:?}");
-                                continue;
-                            }
-                            Some(Ok(cnx)) => {
-                                if tx.send_timeout(cnx, send_timeout).await.is_err() {
-                                    info!("New reverse connection failed to be picked by client after {}s. Closing reverse tunnel server", send_timeout.as_secs());
-                                    break;
-                                }
-                            }
-                        }
-                    },
-
-                    _ = tx.closed() => {
-                        break;
-                    }
-                }
-            }
-            info!("Stopping listening reverse server");
-        };
-
-        tokio::spawn(fut.instrument(Span::current()));
-        rx
-    };
-
-    let cnx = listening_server
-        .recv()
-        .await
-        .ok_or_else(|| anyhow!("listening reverse server stopped"))?;
-    servers.lock().insert(local_srv.clone(), listening_server);
-    Ok(cnx)
 }

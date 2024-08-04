@@ -18,7 +18,7 @@ pub use http_proxy::HttpProxyTunnelListener;
 pub use socks5::Socks5TunnelListener;
 pub use stdio::new_stdio_listener;
 pub use tcp::TcpTunnelListener;
-pub use udp::new_udp_listener;
+pub use udp::UdpTunnelListener;
 
 #[cfg(unix)]
 pub use unix_sock::UnixTunnelListener;
@@ -30,7 +30,6 @@ use tokio_stream::Stream;
 pub trait TunnelListener: Stream<Item = anyhow::Result<((Self::Reader, Self::Writer), RemoteAddr)>> {
     type Reader: AsyncRead + Send + 'static;
     type Writer: AsyncWrite + Send + 'static;
-    type OkReturn; // = ((Self::Reader, Self::Writer), RemoteAddr);
 }
 
 impl<T, R, W> TunnelListener for T
@@ -41,5 +40,4 @@ where
 {
     type Reader = R;
     type Writer = W;
-    type OkReturn = ((R, W), RemoteAddr);
 }

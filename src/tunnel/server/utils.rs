@@ -10,7 +10,7 @@ use hyper::header::{HeaderValue, COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{http, Request, Response, StatusCode};
 use jsonwebtoken::TokenData;
 use std::cmp::min;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::ops::Deref;
 use tracing::{error, info, warn};
 use url::Host;
@@ -217,4 +217,12 @@ pub(super) fn inject_cookie(response: &mut http::Response<impl Body>, remote_add
     response.headers_mut().insert(COOKIE, header_val);
 
     Ok(())
+}
+
+pub fn try_to_sock_aadr((host, port): (Host, u16)) -> anyhow::Result<SocketAddr> {
+    match host {
+        Host::Domain(_) => Err(anyhow::anyhow!("Cannot convert domain to socket address")),
+        Host::Ipv4(ip) => Ok(SocketAddr::V4(SocketAddrV4::new(ip, port))),
+        Host::Ipv6(ip) => Ok(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0))),
+    }
 }
