@@ -266,7 +266,7 @@ impl WsServer {
                 error!("Received an unsupported target protocol {:?}", remote);
                 Err(anyhow::anyhow!("Invalid upgrade request"))
             }
-            LocalProtocol::Stdio
+            LocalProtocol::Stdio { .. }
             | LocalProtocol::Socks5 { .. }
             | LocalProtocol::TProxyTcp
             | LocalProtocol::TProxyUdp { .. }

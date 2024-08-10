@@ -22,7 +22,9 @@ pub enum LocalProtocol {
     Udp {
         timeout: Option<Duration>,
     },
-    Stdio,
+    Stdio {
+        proxy_protocol: bool,
+    },
     Socks5 {
         timeout: Option<Duration>,
         credentials: Option<(String, String)>,
@@ -53,6 +55,7 @@ pub enum LocalProtocol {
     },
     Unix {
         path: PathBuf,
+        proxy_protocol: bool,
     },
 }
 

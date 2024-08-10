@@ -520,10 +520,11 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
                     format!("cannot parse unix socket path from {}", arg),
                 ));
             };
-            let (dest_host, dest_port, _options) = parse_tunnel_dest(remote)?;
+            let (dest_host, dest_port, options) = parse_tunnel_dest(remote)?;
             Ok(LocalToRemote {
                 local_protocol: LocalProtocol::Unix {
                     path: PathBuf::from(path),
+                    proxy_protocol: get_proxy_protocol(&options),
                 },
                 local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
                 remote: (dest_host, dest_port),
@@ -557,9 +558,11 @@ fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
             })
         }
         "stdio" => {
-            let (dest_host, dest_port, _options) = parse_tunnel_dest(tunnel_info)?;
+            let (dest_host, dest_port, options) = parse_tunnel_dest(tunnel_info)?;
             Ok(LocalToRemote {
-                local_protocol: LocalProtocol::Stdio,
+                local_protocol: LocalProtocol::Stdio {
+                    proxy_protocol: get_proxy_protocol(&options),
+                },
                 local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(0), 0)),
                 remote: (dest_host, dest_port),
             })
@@ -604,7 +607,7 @@ fn parse_reverse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
             credentials,
             proxy_protocol: _proxy_protocol,
         } => LocalProtocol::ReverseHttpProxy { timeout, credentials },
-        LocalProtocol::Unix { path } => LocalProtocol::ReverseUnix { path },
+        LocalProtocol::Unix { path, .. } => LocalProtocol::ReverseUnix { path },
         LocalProtocol::ReverseTcp { .. }
         | LocalProtocol::ReverseUdp { .. }
         | LocalProtocol::ReverseSocks5 { .. }
@@ -612,7 +615,7 @@ fn parse_reverse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
         | LocalProtocol::ReverseUnix { .. }
         | LocalProtocol::TProxyTcp
         | LocalProtocol::TProxyUdp { .. }
-        | LocalProtocol::Stdio => {
+        | LocalProtocol::Stdio { .. } => {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("Cannot use {:?} as reverse tunnels {}", proto.local_protocol, arg),
@@ -710,7 +713,7 @@ async fn main() -> anyhow::Result<()> {
         if args
             .local_to_remote
             .iter()
-            .filter(|x| x.local_protocol == LocalProtocol::Stdio)
+            .filter(|x| matches!(x.local_protocol, LocalProtocol::Stdio { .. }))
             .count()
             > 0
         {
@@ -937,7 +940,7 @@ async fn main() -> anyhow::Result<()> {
                     LocalProtocol::ReverseUnix { .. } => {
                         panic!("Unix socket is not available for non Unix platform")
                     }
-                    LocalProtocol::Stdio
+                    LocalProtocol::Stdio { .. }
                     | LocalProtocol::TProxyTcp
                     | LocalProtocol::TProxyUdp { .. }
                     | LocalProtocol::Tcp { .. }
@@ -975,9 +978,9 @@ async fn main() -> anyhow::Result<()> {
                         });
                     }
                     #[cfg(unix)]
-                    LocalProtocol::Unix { path } => {
+                    LocalProtocol::Unix { path, proxy_protocol } => {
                         use crate::tunnel::listeners::UnixTunnelListener;
-                        let server = UnixTunnelListener::new(path, tunnel.remote.clone(), false).await?; // TODO: support proxy protocol
+                        let server = UnixTunnelListener::new(path, tunnel.remote.clone(), *proxy_protocol).await?;
                         tokio::spawn(async move {
                             if let Err(err) = client.run_tunnel(server).await {
                                 error!("{:?}", err);
@@ -1035,8 +1038,8 @@ async fn main() -> anyhow::Result<()> {
                         });
                     }
 
-                    LocalProtocol::Stdio => {
-                        let (server, mut handle) = new_stdio_listener(tunnel.remote.clone(), false).await?; // TODO: support proxy protocol
+                    LocalProtocol::Stdio { proxy_protocol } => {
+                        let (server, mut handle) = new_stdio_listener(tunnel.remote.clone(), *proxy_protocol).await?;
                         tokio::spawn(async move {
                             if let Err(err) = client.run_tunnel(server).await {
                                 error!("{:?}", err);
