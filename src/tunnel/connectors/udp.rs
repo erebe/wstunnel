@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use anyhow::anyhow;
-use url::{Host, Url};
+use url::Host;
 
 use crate::protocols;
 use crate::protocols::dns::DnsResolver;
@@ -45,13 +44,5 @@ impl TunnelConnector for UdpTunnelConnector<'_> {
                 .await?;
 
         Ok((stream.clone(), stream))
-    }
-
-    async fn connect_with_http_proxy(
-        &self,
-        _proxy: &Url,
-        _remote: &Option<RemoteAddr>,
-    ) -> anyhow::Result<(Self::Reader, Self::Writer)> {
-        Err(anyhow!("UDP tunneling is not supported with HTTP proxy"))
     }
 }

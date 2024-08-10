@@ -1,6 +1,6 @@
 use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::RemoteAddr;
-use ahash::{AHashMap};
+use ahash::AHashMap;
 use anyhow::anyhow;
 use futures_util::{pin_mut, StreamExt};
 use log::warn;

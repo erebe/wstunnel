@@ -65,10 +65,29 @@ impl TunnelConnector for Socks5TunnelConnector<'_> {
 
     async fn connect_with_http_proxy(
         &self,
-        _proxy: &Url,
-        _remote: &Option<RemoteAddr>,
+        proxy: &Url,
+        remote: &Option<RemoteAddr>,
     ) -> anyhow::Result<(Self::Reader, Self::Writer)> {
-        Err(anyhow!("SOCKS5 tunneling is not supported with HTTP proxy"))
+        let Some(remote) = remote else {
+            return Err(anyhow!("Missing remote destination for reverse socks5"));
+        };
+
+        match remote.protocol {
+            LocalProtocol::Tcp { proxy_protocol: _ } => {
+                let stream = protocols::tcp::connect_with_http_proxy(
+                    proxy,
+                    &remote.host,
+                    remote.port,
+                    self.so_mark,
+                    self.connect_timeout,
+                    self.dns_resolver,
+                )
+                .await?;
+                let (reader, writer) = stream.into_split();
+                Ok((Socks5Reader::Tcp(reader), Socks5Writer::Tcp(writer)))
+            }
+            _ => Err(anyhow!("Socks5 UDP cannot use http proxy to connect to destination")),
+        }
     }
 }
 

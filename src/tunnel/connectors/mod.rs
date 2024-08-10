@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use tokio::io::{AsyncRead, AsyncWrite};
 use url::Url;
 
@@ -18,7 +19,11 @@ pub trait TunnelConnector {
     async fn connect(&self, remote: &Option<RemoteAddr>) -> anyhow::Result<(Self::Reader, Self::Writer)>;
     async fn connect_with_http_proxy(
         &self,
-        proxy: &Url,
-        remote: &Option<RemoteAddr>,
-    ) -> anyhow::Result<(Self::Reader, Self::Writer)>;
+        _proxy: &Url,
+        _remote: &Option<RemoteAddr>,
+    ) -> anyhow::Result<(Self::Reader, Self::Writer)> {
+        Err(anyhow!(
+            "Requested to use HTTP Proxy to connect but it is not supported with this connector"
+        ))
+    }
 }
