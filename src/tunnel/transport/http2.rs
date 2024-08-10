@@ -1,8 +1,8 @@
 use super::io::{TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
 use crate::tunnel::client::WsClient;
-use crate::tunnel::transport::headers_from_file;
 use crate::tunnel::transport::jwt::tunnel_to_jwt_token;
-use crate::tunnel::{RemoteAddr, TransportScheme};
+use crate::tunnel::transport::{headers_from_file, TransportScheme};
+use crate::tunnel::RemoteAddr;
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use http_body_util::{BodyExt, BodyStream, StreamBody};

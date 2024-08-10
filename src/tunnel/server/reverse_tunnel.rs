@@ -1,6 +1,6 @@
 use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::RemoteAddr;
-use ahash::{HashMap, HashMapExt};
+use ahash::{AHashMap};
 use anyhow::anyhow;
 use futures_util::{pin_mut, StreamExt};
 use log::warn;
@@ -29,13 +29,13 @@ impl<T: TunnelListener> Clone for ReverseTunnelItem<T> {
 }
 
 pub struct ReverseTunnelServer<T: TunnelListener> {
-    servers: Arc<Mutex<HashMap<SocketAddr, ReverseTunnelItem<T>>>>,
+    servers: Arc<Mutex<AHashMap<SocketAddr, ReverseTunnelItem<T>>>>,
 }
 
 impl<T: TunnelListener> ReverseTunnelServer<T> {
     pub fn new() -> Self {
         Self {
-            servers: Arc::new(Mutex::new(HashMap::with_capacity(1))),
+            servers: Arc::new(Mutex::new(AHashMap::with_capacity(1))),
         }
     }
 

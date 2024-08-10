@@ -10,7 +10,7 @@ use tokio_rustls::client::TlsStream;
 
 use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::server::TlsServerConfig;
-use crate::tunnel::TransportAddr;
+use crate::tunnel::transport::TransportAddr;
 use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use tokio_rustls::rustls::server::WebPkiClientVerifier;

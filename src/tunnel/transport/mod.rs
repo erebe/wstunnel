@@ -9,11 +9,15 @@ use tracing::error;
 pub mod http2;
 pub mod io;
 mod jwt;
+mod types;
 pub mod websocket;
+
 pub use jwt::jwt_token_to_tunnel;
 pub use jwt::tunnel_to_jwt_token;
 pub use jwt::JwtTunnelConfig;
 pub use jwt::JWT_HEADER_PREFIX;
+pub use types::TransportAddr;
+pub use types::TransportScheme;
 
 #[allow(clippy::type_complexity)]
 #[inline]

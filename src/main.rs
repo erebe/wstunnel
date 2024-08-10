@@ -12,7 +12,8 @@ use crate::tunnel::listeners::{
     new_stdio_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener,
 };
 use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
-use crate::tunnel::{to_host_port, LocalProtocol, RemoteAddr, TransportAddr, TransportScheme};
+use crate::tunnel::transport::{TransportAddr, TransportScheme};
+use crate::tunnel::{to_host_port, LocalProtocol, RemoteAddr};
 use anyhow::{anyhow, Context};
 use base64::Engine;
 use clap::Parser;

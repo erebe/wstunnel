@@ -1,5 +1,5 @@
 use crate::protocols::dns::DnsResolver;
-use crate::tunnel::TransportAddr;
+use crate::tunnel::transport::TransportAddr;
 use hyper::header::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
@@ -29,17 +29,6 @@ pub struct WsClientConfig {
 }
 
 impl WsClientConfig {
-    pub const fn websocket_scheme(&self) -> &'static str {
-        match self.remote_addr.tls().is_some() {
-            false => "ws",
-            true => "wss",
-        }
-    }
-
-    pub fn websocket_host_url(&self) -> String {
-        format!("{}:{}", self.remote_addr.host(), self.remote_addr.port())
-    }
-
     pub fn tls_server_name(&self) -> ServerName<'static> {
         static INVALID_DNS_NAME: Lazy<DnsName> = Lazy::new(|| DnsName::try_from("dns-name-invalid.com").unwrap());
 

@@ -14,7 +14,7 @@ scopeguard = "1.2.0"
 
 bb8 = { version = "0.8", features = [] }
 bytes = { version = "1.7.1", features = [] }
-clap = { version = "4.5.13", features = ["derive", "env"] }
+clap = { version = "4.5.15", features = ["derive", "env"] }
 fast-socks5 = { version = "0.9.6", features = [] }
 fastwebsockets = { version = "0.8.0", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.30" }
@@ -23,13 +23,13 @@ ppp = { version = "2.2.0", features = [] }
 async-channel = { version = "2.3.1", features = [] }
 
 # For config file parsing
-regex = { version = "1.10.5", default-features = false, features = ["std", "perf"] }
+regex = { version = "1.10.6", default-features = false, features = ["std", "perf"] }
 serde_regex = "1.1.0"
 serde_yaml = { version = "0.9.34", features = [] }
 ipnet = { version = "2.9.0", features = ["serde"] }
 
 hyper = { version = "1.4.1", features = ["client", "http1", "http2"] }
-hyper-util = { version = "0.1.6", features = ["tokio", "server", "server-auto"] }
+hyper-util = { version = "0.1.7", features = ["tokio", "server", "server-auto"] }
 http-body-util = { version = "0.1.2" }
 jsonwebtoken = { version = "9.3.0", default-features = false }
 log = "0.4.22"
@@ -40,9 +40,9 @@ pin-project = "1"
 notify = { version = "6.1.1", features = [] }
 
 rustls-native-certs = { version = "0.7.1", features = [] }
-rustls-pemfile = { version = "2.1.2", features = [] }
+rustls-pemfile = { version = "2.1.3", features = [] }
 x509-parser = "0.16.0"
-serde = { version = "1.0.204", features = ["derive"] }
+serde = { version = "1.0.205", features = ["derive"] }
 socket2 = { version = "0.5.7", features = [] }
 tokio = { version = "1.39.2", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["net"] }
