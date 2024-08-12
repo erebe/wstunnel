@@ -12,11 +12,14 @@ use hyper::http::response::Parts;
 use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use log::{debug, error, warn};
+use std::future::Future;
 use std::io;
 use std::io::ErrorKind;
 use std::ops::DerefMut;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
@@ -96,6 +99,14 @@ impl TunnelWrite for Http2TunnelWrite {
 
     async fn close(&mut self) -> Result<(), io::Error> {
         Ok(())
+    }
+
+    fn pending_operations_notify(&mut self) -> Arc<Notify> {
+        Arc::new(Notify::new())
+    }
+
+    fn handle_pending_operations(&mut self) -> impl Future<Output = Result<(), io::Error>> + Send {
+        std::future::ready(Ok(()))
     }
 }
 
@@ -177,6 +188,7 @@ pub async fn connect(
         .timer(TokioTimer::new())
         .adaptive_window(true)
         .keep_alive_interval(client.config.websocket_ping_frequency)
+        .keep_alive_timeout(Duration::from_secs(10))
         .keep_alive_while_idle(false)
         .handshake(TokioIo::new(transport))
         .await

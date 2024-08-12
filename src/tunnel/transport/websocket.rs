@@ -5,7 +5,7 @@ use crate::tunnel::transport::jwt::{tunnel_to_jwt_token, JWT_HEADER_PREFIX};
 use crate::tunnel::RemoteAddr;
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
-use fastwebsockets::{Frame, OpCode, Payload, WebSocketRead, WebSocketWrite};
+use fastwebsockets::{CloseCode, Frame, OpCode, Payload, WebSocketRead, WebSocketWrite};
 use http_body_util::Empty;
 use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
@@ -14,24 +14,38 @@ use hyper::upgrade::Upgraded;
 use hyper::Request;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
-use log::debug;
+use log::{debug, info};
 use std::io;
 use std::io::ErrorKind;
 use std::ops::DerefMut;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Arc;
 use tokio::io::{AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::Notify;
 use tracing::trace;
 use uuid::Uuid;
 
 pub struct WebsocketTunnelWrite {
     inner: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
     buf: BytesMut,
+    pending_operations: Receiver<Frame<'static>>,
+    pending_ops_notify: Arc<Notify>,
+    in_flight_ping: AtomicUsize,
 }
 
 impl WebsocketTunnelWrite {
-    pub fn new(ws: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>) -> Self {
+    pub fn new(
+        ws: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
+        (pending_operations, notify): (Receiver<Frame<'static>>, Arc<Notify>),
+    ) -> Self {
         Self {
             inner: ws,
             buf: BytesMut::with_capacity(MAX_PACKET_LENGTH),
+            pending_operations,
+            pending_ops_notify: notify,
+            in_flight_ping: AtomicUsize::new(0),
         }
     }
 }
@@ -76,6 +90,13 @@ impl TunnelWrite for WebsocketTunnelWrite {
     }
 
     async fn ping(&mut self) -> Result<(), io::Error> {
+        if self.in_flight_ping.fetch_add(1, Relaxed) >= 3 {
+            return Err(io::Error::new(
+                ErrorKind::ConnectionAborted,
+                "too many in flight/un-answered pings",
+            ));
+        }
+
         if let Err(err) = self
             .inner
             .write_frame(Frame::new(true, OpCode::Ping, None, Payload::BorrowedMut(&mut [])))
@@ -94,15 +115,54 @@ impl TunnelWrite for WebsocketTunnelWrite {
 
         Ok(())
     }
+
+    fn pending_operations_notify(&mut self) -> Arc<Notify> {
+        self.pending_ops_notify.clone()
+    }
+
+    async fn handle_pending_operations(&mut self) -> Result<(), io::Error> {
+        while let Ok(frame) = self.pending_operations.try_recv() {
+            info!("received frame {:?}", frame.opcode);
+            match frame.opcode {
+                OpCode::Close => {
+                    if self.inner.write_frame(frame).await.is_err() {
+                        return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send close frame"));
+                    }
+                }
+                OpCode::Ping => {
+                    if self.inner.write_frame(Frame::pong(frame.payload)).await.is_err() {
+                        return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send pong frame"));
+                    }
+                }
+                OpCode::Pong => {
+                    self.in_flight_ping.fetch_sub(1, Relaxed);
+                }
+                OpCode::Continuation | OpCode::Text | OpCode::Binary => unreachable!(),
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub struct WebsocketTunnelRead {
     inner: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>,
+    pending_operations: Sender<Frame<'static>>,
+    notify_pending_ops: Arc<Notify>,
 }
 
 impl WebsocketTunnelRead {
-    pub const fn new(ws: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>) -> Self {
-        Self { inner: ws }
+    pub fn new(ws: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>) -> (Self, (Receiver<Frame<'static>>, Arc<Notify>)) {
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let notify = Arc::new(Notify::new());
+        (
+            Self {
+                inner: ws,
+                pending_operations: tx,
+                notify_pending_ops: notify.clone(),
+            },
+            (rx, notify),
+        )
     }
 }
 
@@ -127,9 +187,36 @@ impl TunnelRead for WebsocketTunnelRead {
                         Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
                     }
                 }
-                OpCode::Close => return Err(io::Error::new(ErrorKind::NotConnected, "websocket close")),
-                OpCode::Ping => continue,
-                OpCode::Pong => continue,
+                OpCode::Close => {
+                    let _ = self
+                        .pending_operations
+                        .send(Frame::close(CloseCode::Normal.into(), &[]))
+                        .await;
+                    self.notify_pending_ops.notify_waiters();
+                    return Err(io::Error::new(ErrorKind::NotConnected, "websocket close"));
+                }
+                OpCode::Ping => {
+                    if self
+                        .pending_operations
+                        .send(Frame::new(true, msg.opcode, None, Payload::Owned(msg.payload.to_owned())))
+                        .await
+                        .is_err()
+                    {
+                        return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send ping"));
+                    }
+                    self.notify_pending_ops.notify_waiters();
+                }
+                OpCode::Pong => {
+                    if self
+                        .pending_operations
+                        .send(Frame::pong(Payload::Borrowed(&[])))
+                        .await
+                        .is_err()
+                    {
+                        return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send pong"));
+                    }
+                    self.notify_pending_ops.notify_waiters();
+                }
             };
         }
     }
@@ -196,12 +283,11 @@ pub async fn connect(
         .with_context(|| format!("failed to do websocket handshake with the server {:?}", client_cfg.remote_addr))?;
 
     ws.set_auto_apply_mask(client_cfg.websocket_mask_frame);
+    ws.set_auto_close(false);
+    ws.set_auto_pong(false);
 
     let (ws_rx, ws_tx) = ws.split(tokio::io::split);
 
-    Ok((
-        WebsocketTunnelRead::new(ws_rx),
-        WebsocketTunnelWrite::new(ws_tx),
-        response.into_parts().0,
-    ))
+    let (ws_rx, pending_ops) = WebsocketTunnelRead::new(ws_rx);
+    Ok((ws_rx, WebsocketTunnelWrite::new(ws_tx, pending_ops), response.into_parts().0))
 }

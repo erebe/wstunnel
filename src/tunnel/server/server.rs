@@ -436,6 +436,7 @@ impl WsServer {
                                 let websocket_upgrade_fn =
                                     mk_websocket_upgrade_fn(server, restrictions.clone(), restrict_path, peer_addr);
                                 let conn_fut = http1::Builder::new()
+                                    .header_read_timeout(Duration::from_secs(10))
                                     .serve_connection(tls_stream, service_fn(websocket_upgrade_fn))
                                     .with_upgrades();
 

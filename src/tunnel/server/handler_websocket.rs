@@ -11,6 +11,7 @@ use hyper::header::{HeaderValue, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{Request, Response};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::oneshot;
 use tracing::{error, warn, Instrument, Span};
 
@@ -45,24 +46,32 @@ pub(super) async fn ws_server_upgrade(
 
     tokio::spawn(
         async move {
-            let (ws_rx, mut ws_tx) = match fut.await {
-                Ok(ws) => ws.split(tokio::io::split),
+            let (ws_rx, ws_tx) = match fut.await {
+                Ok(mut ws) => {
+                    ws.set_auto_pong(false);
+                    ws.set_auto_close(false);
+                    ws.set_auto_apply_mask(mask_frame);
+                    ws.split(tokio::io::split)
+                }
                 Err(err) => {
                     error!("Error during http upgrade request: {:?}", err);
                     return;
                 }
             };
             let (close_tx, close_rx) = oneshot::channel::<()>();
-            ws_tx.set_auto_apply_mask(mask_frame);
 
+            let (ws_rx, pending_ops) = WebsocketTunnelRead::new(ws_rx);
             tokio::task::spawn(
-                transport::io::propagate_remote_to_local(local_tx, WebsocketTunnelRead::new(ws_rx), close_rx)
-                    .instrument(Span::current()),
+                transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).instrument(Span::current()),
             );
 
-            let _ =
-                transport::io::propagate_local_to_remote(local_rx, WebsocketTunnelWrite::new(ws_tx), close_tx, None)
-                    .await;
+            let _ = transport::io::propagate_local_to_remote(
+                local_rx,
+                WebsocketTunnelWrite::new(ws_tx, pending_ops),
+                close_tx,
+                Some(Duration::from_secs(30)),
+            )
+            .await;
         }
         .instrument(Span::current()),
     );
