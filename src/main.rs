@@ -913,7 +913,6 @@ async fn main() -> anyhow::Result<()> {
                             }
                         });
                     }
-                    #[cfg(unix)]
                     LocalProtocol::ReverseUnix { path } => {
                         let path = path.clone();
                         tokio::spawn(async move {
@@ -928,7 +927,7 @@ async fn main() -> anyhow::Result<()> {
 
                             let (host, port) = to_host_port(tunnel.local);
                             let remote = RemoteAddr {
-                                protocol: LocalProtocol::ReverseUnix { path: path.clone() },
+                                protocol: LocalProtocol::ReverseUnix { path },
                                 host,
                                 port,
                             };
@@ -936,10 +935,6 @@ async fn main() -> anyhow::Result<()> {
                                 error!("{:?}", err);
                             }
                         });
-                    }
-                    #[cfg(not(unix))]
-                    LocalProtocol::ReverseUnix { .. } => {
-                        panic!("Unix socket is not available for non Unix platform")
                     }
                     LocalProtocol::Stdio { .. }
                     | LocalProtocol::TProxyTcp
