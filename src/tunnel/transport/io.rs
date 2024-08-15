@@ -129,7 +129,7 @@ pub async fn propagate_local_to_remote(
             biased;
 
             read_len = local_rx.read_buf(ws_tx.buf_mut()) => read_len,
-            
+
             _ = &mut should_close => break,
 
             _ = &mut has_pending_operations_pin => {
@@ -143,7 +143,7 @@ pub async fn propagate_local_to_remote(
                     }
                 }
             },
-            
+
             _ = timeout.tick(), if ping_frequency.is_some() => {
                 debug!("sending ping to keep connection alive");
                 ws_tx.ping().await?;

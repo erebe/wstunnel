@@ -101,6 +101,9 @@ Options:
           'socks5://[::1]:1212'            =>       listen locally with socks5 on port 1212 and forward dynamically requested tunnel
           'socks5://[::1]:1212?login=admin&password=admin' => listen locally with socks5 on port 1212 and only accept connection with login=admin and password=admin
           
+          'http://[::1]:1212'              =>       start a http proxy on port 1212 and forward dynamically requested tunnel
+          'http://[::1]:1212?login=admin&password=admin' => start a http proxy on port 1212 and only accept connection with login=admin and password=admin
+
           'tproxy+tcp://[::1]:1212'        =>       listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
           'tproxy+udp://[::1]:1212?timeout_sec=10'  listen locally on udp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
                                                     linux only and requires sudo/CAP_NET_ADMIN
@@ -115,6 +118,7 @@ Options:
           'tcp://1212:google.com:443'      =>     listen on server for incoming tcp cnx on port 1212 and forward to google.com on port 443 from local machine
           'udp://1212:1.1.1.1:53'          =>     listen on server for incoming udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53 from local machine
           'socks5://[::1]:1212'            =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine
+          'http://[::1]:1212'              =>     listen on server for incoming http proxy request on port 1212 and forward dynamically request from local machine (login/password is supported)
           'unix://wstunnel.sock:g.com:443' =>     listen on server for incoming data from unix socket of path wstunnel.sock and forward to g.com:443 from local machine
 
       --no-color <NO_COLOR>
@@ -225,7 +229,9 @@ Options:
           system://0.0.0.0
 
           **WARN** On windows you may want to specify explicitly the DNS resolver to avoid excessive DNS queries
+```
 
+```
 SERVER
 Usage: wstunnel server [OPTIONS] <ws[s]://0.0.0.0[:port]>
 
@@ -307,6 +313,21 @@ Options:
           [Optional] Enables mTLS (client authentication with certificate). Argument must be PEM file
           containing one or more certificates of CA's of which the certificate of clients needs to be signed with.
           The ca will be automatically reloaded if it changes
+          
+    -p, --http-proxy <USER:PASS@HOST:PORT>
+          If set, will use this http proxy to connect to the client
+
+          [env: HTTP_PROXY=]
+
+      --http-proxy-login <LOGIN>
+          If set, will use this login to connect to the http proxy. Override the one from --http-proxy
+
+          [env: WSTUNNEL_HTTP_PROXY_LOGIN=]
+
+      --http-proxy-password <PASSWORD>
+          If set, will use this password to connect to the http proxy. Override the one from --http-proxy
+
+          [env: WSTUNNEL_HTTP_PROXY_PASSWORD=]
 ```
 
 ## Release <a name="release"></a>
