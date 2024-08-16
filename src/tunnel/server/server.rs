@@ -18,7 +18,7 @@ use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper::{http, Request, Response, StatusCode, Version};
-use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::{TokioExecutor, TokioTimer};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use socket2::SockRef;
@@ -436,6 +436,7 @@ impl WsServer {
                                 let websocket_upgrade_fn =
                                     mk_websocket_upgrade_fn(server, restrictions.clone(), restrict_path, peer_addr);
                                 let conn_fut = http1::Builder::new()
+                                    .timer(TokioTimer::new())
                                     .header_read_timeout(Duration::from_secs(10))
                                     .serve_connection(tls_stream, service_fn(websocket_upgrade_fn))
                                     .with_upgrades();
