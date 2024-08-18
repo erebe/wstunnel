@@ -22,7 +22,7 @@ pub struct WsClientConfig {
     pub http_headers_file: Option<PathBuf>,
     pub http_header_host: HeaderValue,
     pub timeout_connect: Duration,
-    pub websocket_ping_frequency: Duration,
+    pub websocket_ping_frequency: Option<Duration>,
     pub websocket_mask_frame: bool,
     pub http_proxy: Option<Url>,
     pub dns_resolver: DnsResolver,

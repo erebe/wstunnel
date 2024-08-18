@@ -85,7 +85,7 @@ impl WsClient {
         // Forward local tx to websocket tx
         let ping_frequency = self.config.websocket_ping_frequency;
         tokio::spawn(
-            super::super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, Some(ping_frequency))
+            super::super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, ping_frequency)
                 .instrument(Span::current()),
         );
 
@@ -197,13 +197,8 @@ impl WsClient {
             let tunnel = async move {
                 let ping_frequency = client.config.websocket_ping_frequency;
                 tokio::spawn(
-                    super::super::transport::io::propagate_local_to_remote(
-                        local_rx,
-                        ws_tx,
-                        close_tx,
-                        Some(ping_frequency),
-                    )
-                    .in_current_span(),
+                    super::super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, ping_frequency)
+                        .in_current_span(),
                 );
 
                 // Forward websocket rx to local rx

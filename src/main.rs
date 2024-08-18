@@ -191,7 +191,8 @@ struct Client {
     #[arg(long, value_name = "USER[:PASS]", value_parser = parse_http_credentials, verbatim_doc_comment)]
     http_upgrade_credentials: Option<HeaderValue>,
 
-    /// Frequency at which the client will send websocket ping to the server.
+    /// Frequency at which the client will send websocket pings to the server.
+    /// Set to zero to disable.
     #[arg(long, value_name = "seconds", default_value = "30", value_parser = parse_duration_sec, verbatim_doc_comment)]
     websocket_ping_frequency_sec: Option<Duration>,
 
@@ -277,7 +278,8 @@ struct Server {
     socket_so_mark: Option<u32>,
 
     /// Frequency at which the server will send websocket ping to client.
-    #[arg(long, value_name = "seconds", value_parser = parse_duration_sec, verbatim_doc_comment)]
+    /// Set to zero to disable.
+    #[arg(long, value_name = "seconds", default_value = "30", value_parser = parse_duration_sec, verbatim_doc_comment)]
     websocket_ping_frequency_sec: Option<Duration>,
 
     /// Enable the masking of websocket frames. Default is false
@@ -806,7 +808,10 @@ async fn main() -> anyhow::Result<()> {
                 http_headers_file: args.http_headers_file,
                 http_header_host: host_header,
                 timeout_connect: Duration::from_secs(10),
-                websocket_ping_frequency: args.websocket_ping_frequency_sec.unwrap_or(Duration::from_secs(30)),
+                websocket_ping_frequency: args
+                    .websocket_ping_frequency_sec
+                    .or(Some(Duration::from_secs(30)))
+                    .filter(|d| d.as_secs() > 0),
                 websocket_mask_frame: args.websocket_mask_frame,
                 dns_resolver: DnsResolver::new_from_urls(
                     &args.dns_resolver,
@@ -1121,7 +1126,10 @@ async fn main() -> anyhow::Result<()> {
             let server_config = WsServerConfig {
                 socket_so_mark: args.socket_so_mark,
                 bind: args.remote_addr.socket_addrs(|| Some(8080)).unwrap()[0],
-                websocket_ping_frequency: args.websocket_ping_frequency_sec,
+                websocket_ping_frequency: args
+                    .websocket_ping_frequency_sec
+                    .or(Some(Duration::from_secs(30)))
+                    .filter(|d| d.as_secs() > 0),
                 timeout_connect: Duration::from_secs(10),
                 websocket_mask_frame: args.websocket_mask_frame,
                 tls: tls_config,

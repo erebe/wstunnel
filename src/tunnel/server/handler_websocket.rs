@@ -11,7 +11,6 @@ use hyper::header::{HeaderValue, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{Request, Response};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::oneshot;
 use tracing::{error, warn, Instrument, Span};
 
@@ -69,7 +68,7 @@ pub(super) async fn ws_server_upgrade(
                 local_rx,
                 WebsocketTunnelWrite::new(ws_tx, pending_ops),
                 close_tx,
-                Some(Duration::from_secs(30)),
+                server.config.websocket_ping_frequency,
             )
             .await;
         }
