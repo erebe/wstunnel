@@ -4,18 +4,25 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::ops::Deref;
 use std::sync::LazyLock;
+use std::time::SystemTime;
 use url::Host;
 use uuid::Uuid;
 
 pub static JWT_HEADER_PREFIX: &str = "authorization.bearer.";
-static JWT_SECRET: &[u8; 15] = b"champignonfrais";
-static JWT_KEY: LazyLock<(Header, EncodingKey)> =
-    LazyLock::new(|| (Header::new(Algorithm::HS256), EncodingKey::from_secret(JWT_SECRET)));
+static JWT_KEY: LazyLock<(Header, EncodingKey)> = LazyLock::new(|| {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+        .to_ne_bytes();
+    (Header::new(Algorithm::HS256), EncodingKey::from_secret(&now))
+});
 
 static JWT_DECODE: LazyLock<(Validation, DecodingKey)> = LazyLock::new(|| {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.required_spec_claims = HashSet::with_capacity(0);
-    (validation, DecodingKey::from_secret(JWT_SECRET))
+    validation.insecure_disable_signature_validation();
+    (validation, DecodingKey::from_secret(b"champignonfrais"))
 });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
