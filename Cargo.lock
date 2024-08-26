@@ -3143,7 +3143,6 @@ dependencies = [
  "log",
  "nix",
  "notify",
- "once_cell",
  "parking_lot",
  "pin-project",
  "ppp",

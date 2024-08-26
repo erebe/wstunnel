@@ -1,8 +1,8 @@
 use log::info;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-pub static TLS_PRIVATE_KEY: Lazy<PrivateKeyDer<'static>> = Lazy::new(|| {
+pub static TLS_PRIVATE_KEY: LazyLock<PrivateKeyDer<'static>> = LazyLock::new(|| {
     info!("Loading embedded tls private key");
 
     let key = include_bytes!("../certs/key.pem");
@@ -11,7 +11,7 @@ pub static TLS_PRIVATE_KEY: Lazy<PrivateKeyDer<'static>> = Lazy::new(|| {
         .expect("failed to load embedded tls private key");
     key
 });
-pub static TLS_CERTIFICATE: Lazy<Vec<CertificateDer<'static>>> = Lazy::new(|| {
+pub static TLS_CERTIFICATE: LazyLock<Vec<CertificateDer<'static>>> = LazyLock::new(|| {
     info!("Loading embedded tls certificate");
 
     let cert = include_bytes!("../certs/cert.pem");

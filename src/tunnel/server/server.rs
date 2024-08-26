@@ -9,7 +9,7 @@ use http_body_util::combinators::BoxBody;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use crate::protocols;
@@ -18,8 +18,7 @@ use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper::{http, Request, Response, StatusCode, Version};
-use hyper_util::rt::{TokioExecutor, TokioTimer};
-use once_cell::sync::Lazy;
+use hyper_util::rt::TokioExecutor;
 use parking_lot::Mutex;
 use socket2::SockRef;
 
@@ -205,7 +204,8 @@ impl WsServer {
                 Ok((remote, Box::pin(rx), Box::pin(tx)))
             }
             LocalProtocol::ReverseTcp => {
-                static SERVERS: Lazy<ReverseTunnelServer<TcpTunnelListener>> = Lazy::new(ReverseTunnelServer::new);
+                static SERVERS: LazyLock<ReverseTunnelServer<TcpTunnelListener>> =
+                    LazyLock::new(ReverseTunnelServer::new);
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
@@ -216,7 +216,8 @@ impl WsServer {
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
             LocalProtocol::ReverseUdp { timeout } => {
-                static SERVERS: Lazy<ReverseTunnelServer<UdpTunnelListener>> = Lazy::new(ReverseTunnelServer::new);
+                static SERVERS: LazyLock<ReverseTunnelServer<UdpTunnelListener>> =
+                    LazyLock::new(ReverseTunnelServer::new);
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
@@ -226,7 +227,8 @@ impl WsServer {
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
             LocalProtocol::ReverseSocks5 { timeout, credentials } => {
-                static SERVERS: Lazy<ReverseTunnelServer<Socks5TunnelListener>> = Lazy::new(ReverseTunnelServer::new);
+                static SERVERS: LazyLock<ReverseTunnelServer<Socks5TunnelListener>> =
+                    LazyLock::new(ReverseTunnelServer::new);
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
@@ -237,8 +239,8 @@ impl WsServer {
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
             LocalProtocol::ReverseHttpProxy { timeout, credentials } => {
-                static SERVERS: Lazy<ReverseTunnelServer<HttpProxyTunnelListener>> =
-                    Lazy::new(ReverseTunnelServer::new);
+                static SERVERS: LazyLock<ReverseTunnelServer<HttpProxyTunnelListener>> =
+                    LazyLock::new(ReverseTunnelServer::new);
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
@@ -251,7 +253,8 @@ impl WsServer {
             #[cfg(unix)]
             LocalProtocol::ReverseUnix { ref path } => {
                 use crate::tunnel::listeners::UnixTunnelListener;
-                static SERVERS: Lazy<ReverseTunnelServer<UnixTunnelListener>> = Lazy::new(ReverseTunnelServer::new);
+                static SERVERS: LazyLock<ReverseTunnelServer<UnixTunnelListener>> =
+                    LazyLock::new(ReverseTunnelServer::new);
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
@@ -436,7 +439,6 @@ impl WsServer {
                                 let websocket_upgrade_fn =
                                     mk_websocket_upgrade_fn(server, restrictions.clone(), restrict_path, peer_addr);
                                 let conn_fut = http1::Builder::new()
-                                    .timer(TokioTimer::new())
                                     .header_read_timeout(Duration::from_secs(10))
                                     .serve_connection(tls_stream, service_fn(websocket_upgrade_fn))
                                     .with_upgrades();

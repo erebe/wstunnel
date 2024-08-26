@@ -1,12 +1,11 @@
 use crate::protocols::dns::DnsResolver;
 use crate::tunnel::transport::TransportAddr;
 use hyper::header::{HeaderName, HeaderValue};
-use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio_rustls::rustls::pki_types::{DnsName, ServerName};
 use tokio_rustls::TlsConnector;
@@ -30,7 +29,8 @@ pub struct WsClientConfig {
 
 impl WsClientConfig {
     pub fn tls_server_name(&self) -> ServerName<'static> {
-        static INVALID_DNS_NAME: Lazy<DnsName> = Lazy::new(|| DnsName::try_from("dns-name-invalid.com").unwrap());
+        static INVALID_DNS_NAME: LazyLock<DnsName> =
+            LazyLock::new(|| DnsName::try_from("dns-name-invalid.com").unwrap());
 
         self.remote_addr
             .tls()
