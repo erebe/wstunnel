@@ -46,11 +46,6 @@ socket2 = { version = "0.5.7", features = [] }
 tokio = { version = "1.39.3", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["net"] }
 
-[target.'cfg(any(os = "linux", os = "macos"))'.dependencies]
-tokio-rustls = { version = "0.26.0", features = [] }
-[target.'cfg(not(any(os = "linux", os = "macos")))'.dependencies]
-tokio-rustls = { version = "0.26.0", default-features = false, features = ["logging", "tls12", "ring"] }
-
 tracing = { version = "0.1.40", features = ["log"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt", "local-time"] }
 url = "2.5.2"
@@ -63,6 +58,13 @@ tokio-util = { version = "0.7.11", features = ["io"] }
 
 [target.'cfg(target_family = "unix")'.dependencies]
 tokio-fd = "0.3.0"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+tokio-rustls = { version = "0.26.0", features = [] }
+
+[target.'cfg(not(any(target_os = "linux", target_os = "macos")))'.dependencies]
+tokio-rustls = { version = "0.26.0", default-features = false, features = ["logging", "tls12", "ring"] }
+
 
 [dev-dependencies]
 testcontainers = "0.17.0"
