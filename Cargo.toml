@@ -59,14 +59,13 @@ tokio-util = { version = "0.7.11", features = ["io"] }
 [target.'cfg(target_family = "unix")'.dependencies]
 tokio-fd = "0.3.0"
 
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+[target.'cfg(all(any(target_os = "linux", target_os = "macos"), any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
 tokio-rustls = { version = "0.26.0", features = [] }
 rcgen = { version = "0.13.1", default-features = false, features = ["aws_lc_rs"] }
 
-[target.'cfg(not(any(target_os = "linux", target_os = "macos")))'.dependencies]
+[target.'cfg(not(all(any(target_os = "linux", target_os = "macos"), any(target_arch = "x86_64", target_arch = "aarch64"))))'.dependencies]
 tokio-rustls = { version = "0.26.0", default-features = false, features = ["logging", "tls12", "ring"] }
 rcgen = { version = "0.13.1", default-features = false, features = ["ring"] }
-
 
 [dev-dependencies]
 testcontainers = "0.17.0"
