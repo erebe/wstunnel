@@ -1069,13 +1069,13 @@ async fn main() -> anyhow::Result<()> {
                 let tls_certificate = if let Some(cert_path) = &args.tls_certificate {
                     tls::load_certificates_from_pem(cert_path).expect("Cannot load tls certificate")
                 } else {
-                    embedded_certificate::TLS_CERTIFICATE.clone()
+                    embedded_certificate::TLS_CERTIFICATE.0.clone()
                 };
 
                 let tls_key = if let Some(key_path) = &args.tls_private_key {
                     tls::load_private_key_from_file(key_path).expect("Cannot load tls private key")
                 } else {
-                    embedded_certificate::TLS_PRIVATE_KEY.clone_key()
+                    embedded_certificate::TLS_CERTIFICATE.1.clone_key()
                 };
 
                 let tls_client_ca_certificates = args.tls_client_ca_certs.as_ref().map(|tls_client_ca| {
@@ -1125,7 +1125,7 @@ async fn main() -> anyhow::Result<()> {
             let http_proxy = mk_http_proxy(args.http_proxy, args.http_proxy_login, args.http_proxy_password)?;
             let server_config = WsServerConfig {
                 socket_so_mark: args.socket_so_mark,
-                bind: args.remote_addr.socket_addrs(|| Some(8080)).unwrap()[0],
+                bind: args.remote_addr.socket_addrs(|| Some(8080))?[0],
                 websocket_ping_frequency: args
                     .websocket_ping_frequency_sec
                     .or(Some(Duration::from_secs(30)))
@@ -1157,7 +1157,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    tokio::signal::ctrl_c().await.unwrap();
+    tokio::signal::ctrl_c().await?;
     Ok(())
 }
 

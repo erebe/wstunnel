@@ -61,9 +61,11 @@ tokio-fd = "0.3.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 tokio-rustls = { version = "0.26.0", features = [] }
+rcgen = { version = "0.13.1", default-features = false, features = ["aws_lc_rs"] }
 
 [target.'cfg(not(any(target_os = "linux", target_os = "macos")))'.dependencies]
 tokio-rustls = { version = "0.26.0", default-features = false, features = ["logging", "tls12", "ring"] }
+rcgen = { version = "0.13.1", default-features = false, features = ["ring"] }
 
 
 [dev-dependencies]
