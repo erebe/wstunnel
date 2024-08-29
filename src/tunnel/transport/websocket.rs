@@ -14,7 +14,7 @@ use hyper::upgrade::Upgraded;
 use hyper::Request;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
-use log::{debug, info};
+use log::debug;
 use std::io;
 use std::io::ErrorKind;
 use std::ops::DerefMut;
@@ -122,7 +122,7 @@ impl TunnelWrite for WebsocketTunnelWrite {
 
     async fn handle_pending_operations(&mut self) -> Result<(), io::Error> {
         while let Ok(frame) = self.pending_operations.try_recv() {
-            info!("received frame {:?}", frame.opcode);
+            debug!("received frame {:?}", frame.opcode);
             match frame.opcode {
                 OpCode::Close => {
                     if self.inner.write_frame(frame).await.is_err() {
