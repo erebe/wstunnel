@@ -423,6 +423,7 @@ impl WsServer {
                             // http2
                             Some(b"h2") => {
                                 let mut conn_builder = http2::Builder::new(TokioExecutor::new());
+                                conn_builder.timer(TokioTimer::new());
                                 if let Some(ping) = server.config.websocket_ping_frequency {
                                     conn_builder.keep_alive_interval(ping);
                                 }
