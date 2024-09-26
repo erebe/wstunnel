@@ -291,6 +291,7 @@ impl WsServer {
             move |req: Request<Incoming>| {
                 ws_server_upgrade(server.clone(), restrictions.clone(), restrict_path.clone(), client_addr, req)
                     .map::<anyhow::Result<_>, _>(Ok)
+                    .instrument(mk_span())
             }
         };
 
@@ -301,6 +302,7 @@ impl WsServer {
             move |req: Request<Incoming>| {
                 http_server_upgrade(server.clone(), restrictions.clone(), restrict_path.clone(), client_addr, req)
                     .map::<anyhow::Result<_>, _>(Ok)
+                    .instrument(mk_span())
             }
         };
 
@@ -335,6 +337,7 @@ impl WsServer {
                             .unwrap())
                     }
                 }
+                    .instrument(mk_span())
             }
         };
 
@@ -380,20 +383,12 @@ impl WsServer {
                 }
             };
 
+            let span = span!(Level::INFO, "cnx", peer = peer_addr.to_string(),);
+            info!(parent: &span, "Accepting connection");
             if let Err(err) = protocols::tcp::configure_socket(SockRef::from(&stream), &None) {
                 warn!("Error while configuring server socket {:?}", err);
             }
 
-            let span = span!(
-                Level::INFO,
-                "tunnel",
-                id = tracing::field::Empty,
-                remote = tracing::field::Empty,
-                peer = peer_addr.to_string(),
-                forwarded_for = tracing::field::Empty
-            );
-
-            info!("Accepting connection");
             let server = self.clone();
             let restrictions = restrictions.restrictions_rules().clone();
 
@@ -440,7 +435,9 @@ impl WsServer {
                                     mk_websocket_upgrade_fn(server, restrictions.clone(), restrict_path, peer_addr);
                                 let conn_fut = http1::Builder::new()
                                     .timer(TokioTimer::new())
-                                    .header_read_timeout(Duration::from_secs(10))
+                                    // https://github.com/erebe/wstunnel/issues/358
+                                    // disabled, to avoid conflict with --connection-min-idle flag, that open idle connections
+                                    .header_read_timeout(None)
                                     .serve_connection(tls_stream, service_fn(websocket_upgrade_fn))
                                     .with_upgrades();
 
@@ -453,7 +450,6 @@ impl WsServer {
                     .instrument(span);
 
                     tokio::spawn(fut);
-                    // Normal
                 }
                 // HTTP without TLS
                 None => {
@@ -479,6 +475,16 @@ impl WsServer {
             }
         }
     }
+}
+
+fn mk_span() -> Span {
+    span!(
+        Level::INFO,
+        "tunnel",
+        id = tracing::field::Empty,
+        remote = tracing::field::Empty,
+        forwarded_for = tracing::field::Empty
+    )
 }
 
 impl Debug for WsServerConfig {
