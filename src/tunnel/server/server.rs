@@ -194,10 +194,9 @@ impl WsServer {
                     let header = ppp::v2::Builder::with_addresses(
                         ppp::v2::Version::Two | ppp::v2::Command::Proxy,
                         ppp::v2::Protocol::Stream,
-                        (client_address, tx.local_addr().unwrap()),
+                        (client_address, tx.local_addr()?),
                     )
-                    .build()
-                    .unwrap();
+                    .build()?;
                     let _ = tx.write_all(&header).await;
                 }
 

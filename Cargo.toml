@@ -7,14 +7,14 @@ repository = "https://github.com/erebe/wstunnel.git"
 
 [dependencies]
 ahash = { version = "0.8.11", features = [] }
-anyhow = "1.0.86"
-async-trait = "0.1.81"
+anyhow = "1.0.89"
+async-trait = "0.1.83"
 base64 = "0.22.1"
 scopeguard = "1.2.0"
 
 bb8 = { version = "0.8", features = [] }
-bytes = { version = "1.7.1", features = [] }
-clap = { version = "4.5.16", features = ["derive", "env"] }
+bytes = { version = "1.7.2", features = [] }
+clap = { version = "4.5.18", features = ["derive", "env"] }
 fast-socks5 = { version = "0.9.6", features = [] }
 fastwebsockets = { version = "0.8.0", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.30" }
@@ -26,10 +26,10 @@ async-channel = { version = "2.3.1", features = [] }
 regex = { version = "1.10.6", default-features = false, features = ["std", "perf"] }
 serde_regex = "1.1.0"
 serde_yaml = { version = "0.9.34", features = [] }
-ipnet = { version = "2.9.0", features = ["serde"] }
+ipnet = { version = "2.10.0", features = ["serde"] }
 
 hyper = { version = "1.4.1", features = ["client", "http1", "http2"] }
-hyper-util = { version = "0.1.7", features = ["tokio", "server", "server-auto"] }
+hyper-util = { version = "0.1.9", features = ["tokio", "server", "server-auto"] }
 http-body-util = { version = "0.1.2" }
 jsonwebtoken = { version = "9.3.0", default-features = false }
 log = "0.4.22"
@@ -38,13 +38,13 @@ parking_lot = "0.12.3"
 pin-project = "1"
 notify = { version = "6.1.1", features = [] }
 
-rustls-native-certs = { version = "0.7.2", features = [] }
+rustls-native-certs = { version = "0.8.0", features = [] }
 rustls-pemfile = { version = "2.1.3", features = [] }
 x509-parser = "0.16.0"
-serde = { version = "1.0.209", features = ["derive"] }
+serde = { version = "1.0.210", features = ["derive"] }
 socket2 = { version = "0.5.7", features = [] }
-tokio = { version = "1.39.3", features = ["full"] }
-tokio-stream = { version = "0.1.15", features = ["net"] }
+tokio = { version = "1.40.0", features = ["full"] }
+tokio-stream = { version = "0.1.16", features = ["net"] }
 
 tracing = { version = "0.1.40", features = ["log"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt", "local-time"] }
@@ -54,7 +54,7 @@ uuid = { version = "1.10.0", features = ["v7", "serde"] }
 
 [target.'cfg(not(target_family = "unix"))'.dependencies]
 crossterm = { version = "0.28.1" }
-tokio-util = { version = "0.7.11", features = ["io"] }
+tokio-util = { version = "0.7.12", features = ["io"] }
 
 [target.'cfg(target_family = "unix")'.dependencies]
 tokio-fd = "0.3.0"
