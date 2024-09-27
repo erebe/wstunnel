@@ -1,11 +1,12 @@
 use super::io::{TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
+use crate::tunnel::client::l4_transport_stream::{TransportReadHalf, TransportStream, TransportWriteHalf};
 use crate::tunnel::client::WsClient;
 use crate::tunnel::transport::headers_from_file;
 use crate::tunnel::transport::jwt::{tunnel_to_jwt_token, JWT_HEADER_PREFIX};
 use crate::tunnel::RemoteAddr;
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
-use fastwebsockets::{CloseCode, Frame, OpCode, Payload, WebSocketRead, WebSocketWrite};
+use fastwebsockets::{CloseCode, Frame, OpCode, Payload, Role, WebSocket, WebSocketRead, WebSocketWrite};
 use http_body_util::Empty;
 use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
@@ -21,14 +22,16 @@ use std::ops::DerefMut;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
-use tokio::io::{AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Notify;
+use tokio_rustls::server::TlsStream;
 use tracing::trace;
 use uuid::Uuid;
 
 pub struct WebsocketTunnelWrite {
-    inner: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
+    inner: WebSocketWrite<TransportWriteHalf>,
     buf: BytesMut,
     pending_operations: Receiver<Frame<'static>>,
     pending_ops_notify: Arc<Notify>,
@@ -37,7 +40,7 @@ pub struct WebsocketTunnelWrite {
 
 impl WebsocketTunnelWrite {
     pub fn new(
-        ws: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
+        ws: WebSocketWrite<TransportWriteHalf>,
         (pending_operations, notify): (Receiver<Frame<'static>>, Arc<Notify>),
     ) -> Self {
         Self {
@@ -146,13 +149,13 @@ impl TunnelWrite for WebsocketTunnelWrite {
 }
 
 pub struct WebsocketTunnelRead {
-    inner: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>,
+    inner: WebSocketRead<TransportReadHalf>,
     pending_operations: Sender<Frame<'static>>,
     notify_pending_ops: Arc<Notify>,
 }
 
 impl WebsocketTunnelRead {
-    pub fn new(ws: WebSocketRead<ReadHalf<TokioIo<Upgraded>>>) -> (Self, (Receiver<Frame<'static>>, Arc<Notify>)) {
+    pub fn new(ws: WebSocketRead<TransportReadHalf>) -> (Self, (Receiver<Frame<'static>>, Arc<Notify>)) {
         let (tx, rx) = tokio::sync::mpsc::channel(10);
         let notify = Arc::new(Notify::new());
         (
@@ -278,16 +281,52 @@ pub async fn connect(
     })?;
     debug!("with HTTP upgrade request {:?}", req);
     let transport = pooled_cnx.deref_mut().take().unwrap();
-    let (mut ws, response) = fastwebsockets::handshake::client(&TokioExecutor::new(), req, transport)
+    let (ws, response) = fastwebsockets::handshake::client(&TokioExecutor::new(), req, transport)
         .await
         .with_context(|| format!("failed to do websocket handshake with the server {:?}", client_cfg.remote_addr))?;
 
-    ws.set_auto_apply_mask(client_cfg.websocket_mask_frame);
-    ws.set_auto_close(false);
-    ws.set_auto_pong(false);
+    let (ws_rx, ws_tx) = mk_websocket_tunnel(ws, Role::Client, client_cfg.websocket_mask_frame)?;
+    Ok((ws_rx, ws_tx, response.into_parts().0))
+}
 
-    let (ws_rx, ws_tx) = ws.split(tokio::io::split);
+pub fn mk_websocket_tunnel(
+    ws: WebSocket<TokioIo<Upgraded>>,
+    role: Role,
+    mask_frame: bool,
+) -> anyhow::Result<(WebsocketTunnelRead, WebsocketTunnelWrite)> {
+    let mut ws = match role {
+        Role::Client => {
+            let stream = ws
+                .into_inner()
+                .into_inner()
+                .downcast::<TokioIo<TransportStream>>()
+                .map_err(|_| anyhow!("cannot downcast websocket client stream"))?;
+            let transport = TransportStream::from(stream.io.into_inner(), stream.read_buf);
+            WebSocket::after_handshake(transport, role)
+        }
+        Role::Server => {
+            let upgraded = ws.into_inner().into_inner();
+            match upgraded.downcast::<TokioIo<TlsStream<TcpStream>>>() {
+                Ok(stream) => {
+                    let transport = TransportStream::from_server_tls(stream.io.into_inner(), stream.read_buf);
+                    WebSocket::after_handshake(transport, role)
+                }
+                Err(upgraded) => {
+                    let stream = upgraded
+                        .downcast::<TokioIo<TcpStream>>()
+                        .map_err(|_| anyhow!("cannot downcast websocket server stream"))?;
+                    let transport = TransportStream::from_tcp(stream.io.into_inner(), stream.read_buf);
+                    WebSocket::after_handshake(transport, role)
+                }
+            }
+        }
+    };
+
+    ws.set_auto_pong(false);
+    ws.set_auto_close(false);
+    ws.set_auto_apply_mask(mask_frame);
+    let (ws_rx, ws_tx) = ws.split(|x| x.into_split());
 
     let (ws_rx, pending_ops) = WebsocketTunnelRead::new(ws_rx);
-    Ok((ws_rx, WebsocketTunnelWrite::new(ws_tx, pending_ops), response.into_parts().0))
+    Ok((ws_rx, WebsocketTunnelWrite::new(ws_tx, pending_ops)))
 }
