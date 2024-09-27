@@ -4,6 +4,7 @@ use crate::tunnel::client::l4_transport_stream::TransportStream;
 use crate::tunnel::client::WsClientConfig;
 use async_trait::async_trait;
 use bb8::ManageConnection;
+use bytes::Bytes;
 use std::ops::Deref;
 use std::sync::Arc;
 use tracing::instrument;
@@ -58,9 +59,9 @@ impl ManageConnection for WsConnection {
 
         if self.remote_addr.tls().is_some() {
             let tls_stream = tls::connect(self, tcp_stream).await?;
-            Ok(Some(TransportStream::Tls(tls_stream)))
+            Ok(Some(TransportStream::Tls(tls_stream, Bytes::default())))
         } else {
-            Ok(Some(TransportStream::Plain(tcp_stream)))
+            Ok(Some(TransportStream::Plain(tcp_stream, Bytes::default())))
         }
     }
 

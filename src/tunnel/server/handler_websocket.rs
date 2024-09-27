@@ -2,8 +2,9 @@ use crate::restrictions::types::RestrictionsRules;
 use crate::tunnel::server::utils::{bad_request, inject_cookie};
 use crate::tunnel::server::WsServer;
 use crate::tunnel::transport;
-use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
+use crate::tunnel::transport::websocket::mk_websocket_tunnel;
 use bytes::Bytes;
+use fastwebsockets::Role;
 use http_body_util::combinators::BoxBody;
 use http_body_util::Either;
 use hyper::body::Incoming;
@@ -46,31 +47,26 @@ pub(super) async fn ws_server_upgrade(
     tokio::spawn(
         async move {
             let (ws_rx, ws_tx) = match fut.await {
-                Ok(mut ws) => {
-                    ws.set_auto_pong(false);
-                    ws.set_auto_close(false);
-                    ws.set_auto_apply_mask(mask_frame);
-                    ws.split(tokio::io::split)
-                }
+                Ok(ws) => mk_websocket_tunnel(ws, Role::Server, mask_frame)?,
                 Err(err) => {
                     error!("Error during http upgrade request: {:?}", err);
-                    return;
+                    return Err(anyhow::Error::from(err));
                 }
             };
             let (close_tx, close_rx) = oneshot::channel::<()>();
 
-            let (ws_rx, pending_ops) = WebsocketTunnelRead::new(ws_rx);
             tokio::task::spawn(
                 transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).instrument(Span::current()),
             );
 
             let _ = transport::io::propagate_local_to_remote(
                 local_rx,
-                WebsocketTunnelWrite::new(ws_tx, pending_ops),
+                ws_tx,
                 close_tx,
                 server.config.websocket_ping_frequency,
             )
             .await;
+            Ok(())
         }
         .instrument(Span::current()),
     );
