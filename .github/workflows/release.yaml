@@ -140,7 +140,7 @@ jobs:
           args: ${{ matrix.platform.build-args }} --target ${{ matrix.platform.target }}
 
       - name: Store artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           # Finally, we store the binary as GitHub artifact for later usage
           name: ${{ env.BIN_NAME }}-${{ matrix.platform.target }}
