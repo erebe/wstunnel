@@ -232,35 +232,32 @@ pub async fn run_server(bind: SocketAddr, ip_transparent: bool) -> Result<TcpLis
 mod tests {
     use super::*;
     use futures_util::pin_mut;
+    use std::borrow::Cow;
     use std::net::SocketAddr;
     use testcontainers::core::WaitFor;
     use testcontainers::runners::AsyncRunner;
-    use testcontainers::{ContainerAsync, Image, ImageArgs, RunnableImage};
+    use testcontainers::{ContainerAsync, Image, ImageExt};
 
     #[derive(Debug, Clone, Default)]
-    pub struct MitmProxy {}
-
-    impl ImageArgs for MitmProxy {
-        fn into_iterator(self) -> Box<dyn Iterator<Item = String>> {
-            Box::new(vec!["mitmdump".to_string()].into_iter())
-        }
-    }
+    pub struct MitmProxy;
 
     impl Image for MitmProxy {
-        type Args = Self;
-
-        fn name(&self) -> String {
-            "mitmproxy/mitmproxy".to_string()
+        fn name(&self) -> &str {
+            "mitmproxy/mitmproxy"
         }
 
-        fn tag(&self) -> String {
-            "10.1.1".to_string()
+        fn tag(&self) -> &str {
+            "10.1.1"
         }
 
         fn ready_conditions(&self) -> Vec<WaitFor> {
             vec![WaitFor::Duration {
                 length: Duration::from_secs(5),
             }]
+        }
+
+        fn cmd(&self) -> impl IntoIterator<Item = impl Into<Cow<'_, str>>> {
+            ["mitmdump"]
         }
     }
 
@@ -269,11 +266,7 @@ mod tests {
         let server_addr: SocketAddr = "[::1]:1236".parse().unwrap();
         let server = TcpListener::bind(server_addr).await.unwrap();
 
-        let _mitm_proxy: ContainerAsync<MitmProxy> = RunnableImage::from(MitmProxy {})
-            .with_network("host".to_string())
-            .start()
-            .await
-            .unwrap();
+        let _mitm_proxy: ContainerAsync<MitmProxy> = MitmProxy.with_network("host".to_string()).start().await.unwrap();
 
         let mut client = connect_with_http_proxy(
             &"http://localhost:8080".parse().unwrap(),

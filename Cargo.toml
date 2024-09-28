@@ -68,7 +68,7 @@ tokio-rustls = { version = "0.26.0", default-features = false, features = ["logg
 rcgen = { version = "0.13.1", default-features = false, features = ["ring"] }
 
 [dev-dependencies]
-testcontainers = "0.17.0"
+testcontainers = "0.23.1"
 
 [profile.release]
 lto = "fat"
