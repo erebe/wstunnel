@@ -57,6 +57,12 @@ pub enum LocalProtocol {
     },
 }
 
+#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+pub enum BindAddr {
+    Socket(SocketAddr),
+    Unix(String), // Unix socket path
+}
+
 impl LocalProtocol {
     pub const fn is_reverse_tunnel(&self) -> bool {
         matches!(

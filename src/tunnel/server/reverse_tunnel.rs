@@ -1,4 +1,5 @@
 use crate::tunnel::listeners::TunnelListener;
+use crate::tunnel::BindAddr;
 use crate::tunnel::RemoteAddr;
 use ahash::AHashMap;
 use anyhow::anyhow;
@@ -6,7 +7,6 @@ use futures_util::{pin_mut, StreamExt};
 use log::warn;
 use parking_lot::Mutex;
 use std::future::Future;
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,7 +29,7 @@ impl<T: TunnelListener> Clone for ReverseTunnelItem<T> {
 }
 
 pub struct ReverseTunnelServer<T: TunnelListener> {
-    servers: Arc<Mutex<AHashMap<SocketAddr, ReverseTunnelItem<T>>>>,
+    servers: Arc<Mutex<AHashMap<BindAddr, ReverseTunnelItem<T>>>>,
 }
 
 impl<T: TunnelListener> ReverseTunnelServer<T> {
@@ -41,7 +41,7 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
 
     pub async fn run_listening_server(
         &self,
-        bind_addr: SocketAddr,
+        bind_addr: BindAddr,
         gen_listening_server: impl Future<Output = anyhow::Result<T>>,
     ) -> anyhow::Result<((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr)>
     where
@@ -57,7 +57,7 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
             let nb_seen_clients = Arc::new(AtomicUsize::new(0));
             let seen_clients = nb_seen_clients.clone();
             let server = self.servers.clone();
-            let local_srv2 = bind_addr;
+            let local_srv2 = bind_addr.clone();
 
             let fut = async move {
                 scopeguard::defer!({
