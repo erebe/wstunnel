@@ -10,6 +10,7 @@
 ## Summary
 
 * [Description](#description)
+* [Demo server](#demo)
 * [Command line](#cmd)
 * [Examples](#examples)
 * [Release](#release)
@@ -67,6 +68,23 @@ What to expect from previous version:
 * Mainly for me to ease the maintenance of the project. I don't do a lot of haskell nowadays and it was harder for me to
   keep maintening the project over time, as I get lost in touch of the Haskell ecosystem and new release.
 * Armv7 build (aka raspberry pi), as new version of GHC (Haskell compiler) dropped its support
+
+
+## Demo server <a name="demo"></a>
+
+If you just want to try out that it can bypass you proxy.
+You can give it a try with wstunnel demo server.
+
+```bash
+# In a terminal start wstunnel client
+# You can set as tls-sni-override whatever domain you want. The tunnel is the only one that is going to be allowed. 
+wstunnel client -L 'tcp://4443:localhost:444?proxy_protocol' -P demo --tls-sni-override=google.fr wss://49.13.58.9
+
+# on another terminal, run curl and it should return you this greetings
+curl -k https://localhost:4443
+> Memento mori !
+```
+
 
 ## Command line <a name="cmd"></a>
 
