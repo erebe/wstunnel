@@ -72,7 +72,7 @@ What to expect from previous version:
 
 ## Demo server <a name="demo"></a>
 
-If you just want to try out that it can bypass you proxy.
+If you just want to try out that you can bypass your proxy/firewall.
 You can give it a try with wstunnel demo server.
 
 ```bash
