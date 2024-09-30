@@ -115,6 +115,9 @@ impl AsyncRead for TransportReadHalf {
             let copy_len = cmp::min(read_buf.len(), buf.remaining());
             buf.put_slice(&read_buf[..copy_len]);
             read_buf.advance(copy_len);
+            if read_buf.is_empty() {
+                read_buf.clear();
+            }
             return Poll::Ready(Ok(()));
         }
 
