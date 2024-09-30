@@ -825,6 +825,7 @@ async fn main() -> anyhow::Result<()> {
 
             let client =
                 WsClient::new(client_config, args.connection_min_idle, args.connection_retry_max_backoff_sec).await?;
+            info!("Starting wstunnel client v{}", env!("CARGO_PKG_VERSION"),);
 
             // Start tunnels
             for tunnel in args.remote_to_local.into_iter() {
