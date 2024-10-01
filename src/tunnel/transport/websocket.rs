@@ -71,6 +71,13 @@ impl TunnelWrite for WebsocketTunnelWrite {
             return Err(io::Error::new(ErrorKind::ConnectionAborted, err));
         }
 
+        // It is needed to call poll_flush to ensure that the data is written to the underlying stream.
+        // In case of a TLS stream, it may still be buffered in the TLS layer if not flushed.
+        // https://docs.rs/tokio-rustls/latest/tokio_rustls/#why-do-i-need-to-call-poll_flush
+        if let Err(err) = self.inner.flush().await {
+            return Err(io::Error::new(ErrorKind::ConnectionAborted, err));
+        }
+
         // If the buffer has been completely filled with previous read, Grows it !
         // For the buffer to not be a bottleneck when the TCP window scale.
         // We clamp it to 32Mb to avoid unbounded growth and as websocket max frame size is 64Mb by default
