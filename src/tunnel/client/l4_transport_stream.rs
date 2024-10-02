@@ -74,24 +74,29 @@ pub enum TransportWriteHalf {
 }
 
 impl AsyncRead for TransportStream {
+    #[inline]
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.read).poll_read(cx, buf) }
     }
 }
 
 impl AsyncWrite for TransportStream {
+    #[inline]
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.write).poll_write(cx, buf) }
     }
 
+    #[inline]
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.write).poll_flush(cx) }
     }
 
+    #[inline]
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.write).poll_shutdown(cx) }
     }
 
+    #[inline]
     fn poll_write_vectored(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -100,6 +105,7 @@ impl AsyncWrite for TransportStream {
         unsafe { self.map_unchecked_mut(|s| &mut s.write).poll_write_vectored(cx, bufs) }
     }
 
+    #[inline]
     fn is_write_vectored(&self) -> bool {
         self.write.is_write_vectored()
     }
