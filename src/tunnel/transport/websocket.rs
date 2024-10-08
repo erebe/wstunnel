@@ -319,8 +319,7 @@ pub fn mk_websocket_tunnel(
                     WebSocket::after_handshake(transport, role)
                 }
                 Err(upgraded) => {
-                    let stream = upgraded
-                        .downcast::<TokioIo<TcpStream>>()
+                    let stream = hyper_util::server::conn::auto::upgrade::downcast::<TokioIo<TcpStream>>(upgraded)
                         .map_err(|_| anyhow!("cannot downcast websocket server stream"))?;
                     let transport = TransportStream::from_tcp(stream.io.into_inner(), stream.read_buf);
                     WebSocket::after_handshake(transport, role)

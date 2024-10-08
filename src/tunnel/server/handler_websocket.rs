@@ -47,7 +47,13 @@ pub(super) async fn ws_server_upgrade(
     tokio::spawn(
         async move {
             let (ws_rx, ws_tx) = match fut.await {
-                Ok(ws) => mk_websocket_tunnel(ws, Role::Server, mask_frame)?,
+                Ok(ws) => match mk_websocket_tunnel(ws, Role::Server, mask_frame) {
+                    Ok(ws) => ws,
+                    Err(err) => {
+                        error!("Error during http upgrade request: {:?}", err);
+                        return Err(err);
+                    }
+                },
                 Err(err) => {
                     error!("Error during http upgrade request: {:?}", err);
                     return Err(anyhow::Error::from(err));
