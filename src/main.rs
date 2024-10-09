@@ -82,11 +82,10 @@ struct Wstunnel {
     #[arg(
         long,
         global = true,
-        value_name = "HARD_FILENO",
         verbatim_doc_comment,
-        default_value = None
+        default_value = "false"
     )]
-    hard_fileno: Option<String>,
+    hard_fileno: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -741,7 +740,7 @@ async fn main() -> anyhow::Result<()> {
         logger.init();
     };
 
-    if args.hard_fileno.is_some() {
+    if args.hard_fileno {
         fdlimit::raise_fd_limit()?;
     }
 
