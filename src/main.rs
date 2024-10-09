@@ -74,6 +74,19 @@ struct Wstunnel {
         default_value = "INFO"
     )]
     log_lvl: String,
+
+    /// Increae the fileno soft limit to the fileno hard limit
+    /// The soft limit defaults to 1024 on linux for legacy reasons and is not enough for heavy use
+    /// of wstunnel proxy features.
+    /// The hard limit is significantly higher and will usually suffice.
+    #[arg(
+        long,
+        global = true,
+        value_name = "HARD_FILENO",
+        verbatim_doc_comment,
+        default_value = None
+    )]
+    hard_fileno: Option<String>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -727,6 +740,10 @@ async fn main() -> anyhow::Result<()> {
     } else {
         logger.init();
     };
+
+    if args.hard_fileno.is_some() {
+        fdlimit::raise_fd_limit()?;
+    }
 
     match args.commands {
         Commands::Client(args) => {
