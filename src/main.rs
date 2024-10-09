@@ -79,12 +79,7 @@ struct Wstunnel {
     /// The soft limit defaults to 1024 on linux for legacy reasons and is not enough for heavy use
     /// of wstunnel proxy features.
     /// The hard limit is significantly higher and will usually suffice.
-    #[arg(
-        long,
-        global = true,
-        verbatim_doc_comment,
-        default_value = "false"
-    )]
+    #[arg(long, global = true, verbatim_doc_comment, default_value = "false")]
     hard_fileno: bool,
 }
 
