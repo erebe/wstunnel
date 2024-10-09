@@ -13,7 +13,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use crate::protocols;
-use crate::tunnel::{try_to_sock_addr, LocalProtocol, RemoteAddr};
+use crate::tunnel::{try_to_sock_addr, BindAddr, LocalProtocol, RemoteAddr};
 use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
@@ -194,9 +194,10 @@ impl WsServer {
                     let header = ppp::v2::Builder::with_addresses(
                         ppp::v2::Version::Two | ppp::v2::Command::Proxy,
                         ppp::v2::Protocol::Stream,
-                        (client_address, tx.local_addr()?),
+                        (client_address, tx.local_addr().unwrap()),
                     )
-                    .build()?;
+                    .build()
+                    .unwrap();
                     let _ = tx.write_all(&header).await;
                 }
 
@@ -210,8 +211,9 @@ impl WsServer {
                 let local_srv = (remote.host, remote_port);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { TcpTunnelListener::new(bind, local_srv.clone(), false).await };
-                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
-
+                let ((local_rx, local_tx), remote) = SERVERS
+                    .run_listening_server(BindAddr::Socket(bind), listening_server)
+                    .await?;
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
             LocalProtocol::ReverseUdp { timeout } => {
@@ -222,7 +224,9 @@ impl WsServer {
                 let local_srv = (remote.host, remote_port);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { UdpTunnelListener::new(bind, local_srv.clone(), timeout).await };
-                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
+                let ((local_rx, local_tx), remote) = SERVERS
+                    .run_listening_server(BindAddr::Socket(bind), listening_server)
+                    .await?;
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
             LocalProtocol::ReverseSocks5 { timeout, credentials } => {
@@ -233,7 +237,9 @@ impl WsServer {
                 let local_srv = (remote.host, remote_port);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { Socks5TunnelListener::new(bind, timeout, credentials).await };
-                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
+                let ((local_rx, local_tx), remote) = SERVERS
+                    .run_listening_server(BindAddr::Socket(bind), listening_server)
+                    .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
@@ -245,7 +251,9 @@ impl WsServer {
                 let local_srv = (remote.host, remote_port);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { HttpProxyTunnelListener::new(bind, timeout, credentials, false).await };
-                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
+                let ((local_rx, local_tx), remote) = SERVERS
+                    .run_listening_server(BindAddr::Socket(bind), listening_server)
+                    .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
@@ -255,11 +263,10 @@ impl WsServer {
                 static SERVERS: LazyLock<ReverseTunnelServer<UnixTunnelListener>> =
                     LazyLock::new(ReverseTunnelServer::new);
 
-                let remote_port = find_mapped_port(remote.port, restriction);
-                let local_srv = (remote.host, remote_port);
-                let bind = try_to_sock_addr(local_srv.clone())?;
-                let listening_server = async { UnixTunnelListener::new(path, local_srv, false).await };
-                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
+                let listening_server = async { UnixTunnelListener::new(path, (remote.host, remote.port), false).await };
+                let ((local_rx, local_tx), remote) = SERVERS
+                    .run_listening_server(BindAddr::Unix(path.to_str().unwrap().to_string()), listening_server)
+                    .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
@@ -291,7 +298,6 @@ impl WsServer {
             move |req: Request<Incoming>| {
                 ws_server_upgrade(server.clone(), restrictions.clone(), restrict_path.clone(), client_addr, req)
                     .map::<anyhow::Result<_>, _>(Ok)
-                    .instrument(mk_span())
             }
         };
 
@@ -302,7 +308,6 @@ impl WsServer {
             move |req: Request<Incoming>| {
                 http_server_upgrade(server.clone(), restrictions.clone(), restrict_path.clone(), client_addr, req)
                     .map::<anyhow::Result<_>, _>(Ok)
-                    .instrument(mk_span())
             }
         };
 
@@ -337,7 +342,6 @@ impl WsServer {
                             .unwrap())
                     }
                 }
-                    .instrument(mk_span())
             }
         };
 
@@ -383,12 +387,20 @@ impl WsServer {
                 }
             };
 
-            let span = span!(Level::INFO, "cnx", peer = peer_addr.to_string(),);
-            info!(parent: &span, "Accepting connection");
             if let Err(err) = protocols::tcp::configure_socket(SockRef::from(&stream), &None) {
                 warn!("Error while configuring server socket {:?}", err);
             }
 
+            let span = span!(
+                Level::INFO,
+                "tunnel",
+                id = tracing::field::Empty,
+                remote = tracing::field::Empty,
+                peer = peer_addr.to_string(),
+                forwarded_for = tracing::field::Empty
+            );
+
+            info!("Accepting connection");
             let server = self.clone();
             let restrictions = restrictions.restrictions_rules().clone();
 
@@ -435,9 +447,7 @@ impl WsServer {
                                     mk_websocket_upgrade_fn(server, restrictions.clone(), restrict_path, peer_addr);
                                 let conn_fut = http1::Builder::new()
                                     .timer(TokioTimer::new())
-                                    // https://github.com/erebe/wstunnel/issues/358
-                                    // disabled, to avoid conflict with --connection-min-idle flag, that open idle connections
-                                    .header_read_timeout(None)
+                                    .header_read_timeout(Duration::from_secs(10))
                                     .serve_connection(tls_stream, service_fn(websocket_upgrade_fn))
                                     .with_upgrades();
 
@@ -450,6 +460,7 @@ impl WsServer {
                     .instrument(span);
 
                     tokio::spawn(fut);
+                    // Normal
                 }
                 // HTTP without TLS
                 None => {
@@ -475,16 +486,6 @@ impl WsServer {
             }
         }
     }
-}
-
-fn mk_span() -> Span {
-    span!(
-        Level::INFO,
-        "tunnel",
-        id = tracing::field::Empty,
-        remote = tracing::field::Empty,
-        forwarded_for = tracing::field::Empty
-    )
 }
 
 impl Debug for WsServerConfig {

@@ -50,9 +50,14 @@ impl Stream for UnixListenerStream {
 pub async fn run_server(socket_path: &Path) -> Result<UnixListenerStream, anyhow::Error> {
     info!("Starting Unix socket server listening cnx on {:?}", socket_path);
 
-    let path_to_delete = !socket_path.exists();
+    if socket_path.exists() {
+        std::fs::remove_file(socket_path)
+            .with_context(|| format!("Failed to delete existing Unix socket at {:?}", socket_path))?;
+    }
+
     let listener = UnixListener::bind(socket_path)
         .with_context(|| format!("Cannot create Unix socket server {:?}", socket_path))?;
+    let path_to_delete = true;
 
     Ok(UnixListenerStream::new(listener, path_to_delete))
 }

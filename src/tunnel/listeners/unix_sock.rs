@@ -2,7 +2,7 @@ use crate::protocols::unix_sock;
 use crate::protocols::unix_sock::UnixListenerStream;
 use crate::tunnel::{LocalProtocol, RemoteAddr};
 use anyhow::{anyhow, Context};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{ready, Poll};
 use tokio::net::unix;
@@ -13,6 +13,7 @@ pub struct UnixTunnelListener {
     listener: UnixListenerStream,
     dest: (Host, u16),
     proxy_protocol: bool,
+    path: PathBuf,
 }
 
 impl UnixTunnelListener {
@@ -25,6 +26,7 @@ impl UnixTunnelListener {
             listener,
             dest,
             proxy_protocol,
+            path: path.to_path_buf(),
         })
     }
 }
@@ -53,5 +55,12 @@ impl Stream for UnixTunnelListener {
             None => None,
         };
         Poll::Ready(ret)
+    }
+}
+impl Drop for UnixTunnelListener {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_file(&self.path) {
+            log::error!("Cannot remove Unix domain socket file {}: {}", self.path.display(), err);
+        }
     }
 }
