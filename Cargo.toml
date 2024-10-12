@@ -14,10 +14,10 @@ scopeguard = "1.2.0"
 
 bb8 = { version = "0.8", features = [] }
 bytes = { version = "1.7.2", features = [] }
-clap = { version = "4.5.19", features = ["derive", "env"] }
+clap = { version = "4.5.20", features = ["derive", "env"] }
 fast-socks5 = { version = "0.9.6", features = [] }
 fastwebsockets = { git = "https://github.com/erebe/fastwebsockets.git", features = ["upgrade", "simd", "unstable-split"] }
-futures-util = { version = "0.3.30" }
+futures-util = { version = "0.3.31" }
 hickory-resolver = { version = "0.24.1", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls", "native-certs"] }
 ppp = { version = "2.2.0", features = [] }
 async-channel = { version = "2.3.1", features = [] }
@@ -27,7 +27,7 @@ arc-swap = { version = "1.7.1", features = [] }
 regex = { version = "1.11.0", default-features = false, features = ["std", "perf"] }
 serde_regex = "1.1.0"
 serde_yaml = { version = "0.9.34", features = [] }
-ipnet = { version = "2.10.0", features = ["serde"] }
+ipnet = { version = "2.10.1", features = ["serde"] }
 
 hyper = { version = "1.4.1", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1.9", features = ["tokio", "server", "server-auto"] }
