@@ -4,16 +4,11 @@ use http_body_util::Either;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 
-use bytes::Bytes;
-use http_body_util::combinators::BoxBody;
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::pin::Pin;
-use std::sync::{Arc, LazyLock};
-use std::time::Duration;
-
 use crate::protocols;
 use crate::tunnel::{try_to_sock_addr, LocalProtocol, RemoteAddr};
+use arc_swap::ArcSwap;
+use bytes::Bytes;
+use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
@@ -21,6 +16,11 @@ use hyper::{http, Request, Response, StatusCode, Version};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use parking_lot::Mutex;
 use socket2::SockRef;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
@@ -37,7 +37,6 @@ use crate::tunnel::server::utils::{
 use crate::tunnel::tls_reloader::TlsReloader;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::select;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::TlsAcceptor;
 use tracing::{error, info, span, warn, Instrument, Level, Span};
@@ -285,29 +284,41 @@ impl WsServer {
 
         // setup upgrade request handler
         let mk_websocket_upgrade_fn = |server: WsServer,
-                                       restrictions: Arc<RestrictionsRules>,
+                                       restrictions: Arc<ArcSwap<RestrictionsRules>>,
                                        restrict_path: Option<String>,
                                        client_addr: SocketAddr| {
             move |req: Request<Incoming>| {
-                ws_server_upgrade(server.clone(), restrictions.clone(), restrict_path.clone(), client_addr, req)
-                    .map::<anyhow::Result<_>, _>(Ok)
-                    .instrument(mk_span())
+                ws_server_upgrade(
+                    server.clone(),
+                    restrictions.load().clone(),
+                    restrict_path.clone(),
+                    client_addr,
+                    req,
+                )
+                .map::<anyhow::Result<_>, _>(Ok)
+                .instrument(mk_span())
             }
         };
 
         let mk_http_upgrade_fn = |server: WsServer,
-                                  restrictions: Arc<RestrictionsRules>,
+                                  restrictions: Arc<ArcSwap<RestrictionsRules>>,
                                   restrict_path: Option<String>,
                                   client_addr: SocketAddr| {
             move |req: Request<Incoming>| {
-                http_server_upgrade(server.clone(), restrictions.clone(), restrict_path.clone(), client_addr, req)
-                    .map::<anyhow::Result<_>, _>(Ok)
-                    .instrument(mk_span())
+                http_server_upgrade(
+                    server.clone(),
+                    restrictions.load().clone(),
+                    restrict_path.clone(),
+                    client_addr,
+                    req,
+                )
+                .map::<anyhow::Result<_>, _>(Ok)
+                .instrument(mk_span())
             }
         };
 
         let mk_auto_upgrade_fn = |server: WsServer,
-                                  restrictions: Arc<RestrictionsRules>,
+                                  restrictions: Arc<ArcSwap<RestrictionsRules>>,
                                   restrict_path: Option<String>,
                                   client_addr: SocketAddr| {
             move |req: Request<Incoming>| {
@@ -316,13 +327,13 @@ impl WsServer {
                 let restrict_path = restrict_path.clone();
                 async move {
                     if fastwebsockets::upgrade::is_upgrade_request(&req) {
-                        ws_server_upgrade(server.clone(), restrictions.clone(), restrict_path, client_addr, req)
+                        ws_server_upgrade(server.clone(), restrictions.load().clone(), restrict_path, client_addr, req)
                             .map::<anyhow::Result<_>, _>(Ok)
                             .await
                     } else if req.version() == Version::HTTP_2 {
                         http_server_upgrade(
                             server.clone(),
-                            restrictions.clone(),
+                            restrictions.load().clone(),
                             restrict_path.clone(),
                             client_addr,
                             req,
@@ -357,25 +368,11 @@ impl WsServer {
         };
 
         // Bind server and run forever to serve incoming connections.
-        let mut restrictions = RestrictionsRulesReloader::new(restrictions, self.config.restriction_config.clone())?;
-        let mut await_config_reload = Box::pin(restrictions.reload_notifier());
+        let restrictions = RestrictionsRulesReloader::new(restrictions, self.config.restriction_config.clone())?;
         let listener = TcpListener::bind(&self.config.bind).await?;
 
         loop {
-            let cnx = select! {
-                biased;
-
-                _ = &mut await_config_reload => {
-                    drop(await_config_reload);
-                    restrictions.reload_restrictions_config();
-                    await_config_reload = Box::pin(restrictions.reload_notifier());
-                    continue;
-                },
-
-                cnx = listener.accept() => { cnx }
-            };
-
-            let (stream, peer_addr) = match cnx {
+            let (stream, peer_addr) = match listener.accept().await {
                 Ok(ret) => ret,
                 Err(err) => {
                     warn!("Error while accepting connection {:?}", err);
@@ -423,7 +420,7 @@ impl WsServer {
                                 }
 
                                 let http_upgrade_fn =
-                                    mk_http_upgrade_fn(server, restrictions.clone(), restrict_path, peer_addr);
+                                    mk_http_upgrade_fn(server, restrictions, restrict_path, peer_addr);
                                 let con_fut = conn_builder.serve_connection(tls_stream, service_fn(http_upgrade_fn));
                                 if let Err(e) = con_fut.await {
                                     error!("Error while upgrading cnx to http: {:?}", e);
@@ -432,7 +429,7 @@ impl WsServer {
                             // websocket
                             _ => {
                                 let websocket_upgrade_fn =
-                                    mk_websocket_upgrade_fn(server, restrictions.clone(), restrict_path, peer_addr);
+                                    mk_websocket_upgrade_fn(server, restrictions, restrict_path, peer_addr);
                                 let conn_fut = http1::Builder::new()
                                     .timer(TokioTimer::new())
                                     // https://github.com/erebe/wstunnel/issues/358
@@ -460,7 +457,7 @@ impl WsServer {
                             conn_fut.http2().keep_alive_interval(ping);
                         }
 
-                        let websocket_upgrade_fn = mk_auto_upgrade_fn(server, restrictions.clone(), None, peer_addr);
+                        let websocket_upgrade_fn = mk_auto_upgrade_fn(server, restrictions, None, peer_addr);
                         let upgradable =
                             conn_fut.serve_connection_with_upgrades(stream, service_fn(websocket_upgrade_fn));
 

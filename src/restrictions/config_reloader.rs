@@ -1,6 +1,7 @@
 use super::types::RestrictionsRules;
 use crate::restrictions::config_reloader::RestrictionsRulesReloaderState::{Config, Static};
 use anyhow::Context;
+use arc_swap::ArcSwap;
 use log::trace;
 use notify::{EventKind, RecommendedWatcher, Watcher};
 use parking_lot::Mutex;
@@ -8,33 +9,32 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use tokio::sync::futures::Notified;
-use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
 struct ConfigReloaderState {
     fs_watcher: Mutex<RecommendedWatcher>,
     config_path: PathBuf,
-    should_reload_config: Notify,
 }
 
+#[derive(Clone)]
 enum RestrictionsRulesReloaderState {
-    Static(Notify),
+    Static,
     Config(Arc<ConfigReloaderState>),
 }
 
 impl RestrictionsRulesReloaderState {
     fn fs_watcher(&self) -> &Mutex<RecommendedWatcher> {
         match self {
-            Static(_) => unreachable!(),
+            Static => unreachable!(),
             Config(this) => &this.fs_watcher,
         }
     }
 }
 
+#[derive(Clone)]
 pub struct RestrictionsRulesReloader {
     state: RestrictionsRulesReloaderState,
-    restrictions: Arc<RestrictionsRules>,
+    restrictions: Arc<ArcSwap<RestrictionsRules>>,
 }
 
 impl RestrictionsRulesReloader {
@@ -44,37 +44,40 @@ impl RestrictionsRulesReloader {
             config_path
         } else {
             return Ok(Self {
-                state: Static(Notify::new()),
-                restrictions: Arc::new(restrictions_rules),
+                state: Static,
+                restrictions: Arc::new(ArcSwap::from_pointee(restrictions_rules)),
             });
         };
-
-        let this = Arc::new(ConfigReloaderState {
-            fs_watcher: Mutex::new(notify::recommended_watcher(|_| {})?),
-            should_reload_config: Notify::new(),
-            config_path,
-        });
+        let reloader = Self {
+            state: Config(Arc::new(ConfigReloaderState {
+                fs_watcher: Mutex::new(notify::recommended_watcher(|_| {})?),
+                config_path,
+            })),
+            restrictions: Arc::new(ArcSwap::from_pointee(restrictions_rules)),
+        };
 
         info!("Starting to watch restriction config file for changes to reload them");
         let mut watcher = notify::recommended_watcher({
-            let this = Config(this.clone());
+            let reloader = reloader.clone();
 
-            move |event: notify::Result<notify::Event>| Self::handle_config_fs_event(&this, event)
+            move |event: notify::Result<notify::Event>| Self::handle_config_fs_event(&reloader, event)
         })
         .with_context(|| "Cannot create restriction config watcher")?;
 
-        watcher.watch(&this.config_path, notify::RecursiveMode::NonRecursive)?;
-        *this.fs_watcher.lock() = watcher;
+        match &reloader.state {
+            Static => {}
+            Config(cfg) => {
+                watcher.watch(&cfg.config_path, notify::RecursiveMode::NonRecursive)?;
+                *cfg.fs_watcher.lock() = watcher
+            }
+        }
 
-        Ok(Self {
-            state: Config(this),
-            restrictions: Arc::new(restrictions_rules),
-        })
+        Ok(reloader)
     }
 
-    pub fn reload_restrictions_config(&mut self) {
+    pub fn reload_restrictions_config(&self) {
         let restrictions = match &self.state {
-            Static(_) => return,
+            Static => return,
             Config(st) => match RestrictionsRules::from_config_file(&st.config_path) {
                 Ok(restrictions) => {
                     info!("Restrictions config file has been reloaded");
@@ -87,21 +90,14 @@ impl RestrictionsRulesReloader {
             },
         };
 
-        self.restrictions = Arc::new(restrictions);
+        self.restrictions.store(Arc::new(restrictions));
     }
 
-    pub const fn restrictions_rules(&self) -> &Arc<RestrictionsRules> {
+    pub const fn restrictions_rules(&self) -> &Arc<ArcSwap<RestrictionsRules>> {
         &self.restrictions
     }
 
-    pub fn reload_notifier(&self) -> Notified {
-        match &self.state {
-            Static(st) => st.notified(),
-            Config(st) => st.should_reload_config.notified(),
-        }
-    }
-
-    fn try_rewatch_config(this: RestrictionsRulesReloaderState, path: PathBuf) {
+    fn try_rewatch_config(this: RestrictionsRulesReloader, path: PathBuf) {
         thread::spawn(move || {
             while !path.exists() {
                 warn!(
@@ -110,7 +106,7 @@ impl RestrictionsRulesReloader {
                 );
                 thread::sleep(Duration::from_secs(10));
             }
-            let mut watcher = this.fs_watcher().lock();
+            let mut watcher = this.state.fs_watcher().lock();
             let _ = watcher.unwatch(&path);
             let Ok(_) = watcher
                 .watch(&path, notify::RecursiveMode::NonRecursive)
@@ -123,23 +119,20 @@ impl RestrictionsRulesReloader {
             };
             drop(watcher);
 
-            // Generate a fake event to force-reload the certificate
+            // Generate a fake event to force-reload the config
             let event = notify::Event {
                 kind: EventKind::Create(notify::event::CreateKind::Any),
                 paths: vec![path],
                 attrs: Default::default(),
             };
 
-            match &this {
-                Static(_) => Self::handle_config_fs_event(&this, Ok(event)),
-                Config(_) => Self::handle_config_fs_event(&this, Ok(event)),
-            }
+            Self::handle_config_fs_event(&this, Ok(event))
         });
     }
 
-    fn handle_config_fs_event(this: &RestrictionsRulesReloaderState, event: notify::Result<notify::Event>) {
-        let this = match this {
-            Static(_) => return,
+    fn handle_config_fs_event(reloader: &RestrictionsRulesReloader, event: notify::Result<notify::Event>) {
+        let this = match &reloader.state {
+            Static => return,
             Config(st) => st,
         };
 
@@ -159,11 +152,11 @@ impl RestrictionsRulesReloader {
         if let Some(path) = event.paths.iter().find(|p| p.ends_with(&this.config_path)) {
             match event.kind {
                 EventKind::Create(_) | EventKind::Modify(_) => {
-                    this.should_reload_config.notify_one();
+                    reloader.reload_restrictions_config();
                 }
                 EventKind::Remove(_) => {
                     warn!("Restriction config file has been removed, trying to re-set a watch for it");
-                    Self::try_rewatch_config(Config(this.clone()), path.to_path_buf());
+                    Self::try_rewatch_config(reloader.clone(), path.to_path_buf());
                 }
                 EventKind::Access(_) | EventKind::Other | EventKind::Any => {
                     trace!("Ignoring event {:?}", event);

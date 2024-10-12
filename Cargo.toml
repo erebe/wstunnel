@@ -21,6 +21,7 @@ futures-util = { version = "0.3.30" }
 hickory-resolver = { version = "0.24.1", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls", "native-certs"] }
 ppp = { version = "2.2.0", features = [] }
 async-channel = { version = "2.3.1", features = [] }
+arc-swap = { version = "1.7.1", features = [] }
 
 # For config file parsing
 regex = { version = "1.11.0", default-features = false, features = ["std", "perf"] }
