@@ -3,7 +3,7 @@ use std::future::Future;
 
 use bytes::Bytes;
 use log::{debug, error};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -38,11 +38,11 @@ impl Stream for HttpProxyListener {
 
 fn handle_request(
     credentials: &Option<String>,
-    dest: &Mutex<(Host, u16)>,
+    dest: &Mutex<Option<(Host, u16)>>,
     req: Request<Incoming>,
 ) -> impl Future<Output = Result<Response<Empty<Bytes>>, &'static str>> {
     const PROXY_AUTHORIZATION_PREFIX: &str = "Basic ";
-    let ok_response = |forward_to: (Host, u16)| -> Result<Response<Empty<Bytes>>, _> {
+    let ok_response = |forward_to: Option<(Host, u16)>| -> Result<Response<Empty<Bytes>>, _> {
         *dest.lock() = forward_to;
         Ok(Response::builder().status(200).body(Empty::new()).unwrap())
     };
@@ -56,10 +56,9 @@ fn handle_request(
     }
 
     debug!("HTTP Proxy CONNECT request to {}", req.uri());
-    let forward_to = (
-        Host::parse(req.uri().host().unwrap_or_default()).unwrap_or(Host::Ipv4(Ipv4Addr::new(0, 0, 0, 0))),
-        req.uri().port_u16().unwrap_or(443),
-    );
+    let forward_to = Host::parse(req.uri().host().unwrap_or_default())
+        .ok()
+        .map(|h| (h, req.uri().port_u16().unwrap_or(443)));
 
     let Some(token) = credentials else {
         return future::ready(ok_response(forward_to));
@@ -101,7 +100,7 @@ pub async fn run_server(
     };
     let auth_header =
         credentials.map(|(user, pass)| base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", user, pass)));
-    let tasks = JoinSet::<Option<(TcpStream, (Host, u16))>>::new();
+    let tasks = JoinSet::<Option<(TcpStream, Option<(Host, u16)>)>>::new();
 
     let proxy_cfg = Arc::new((auth_header, http1));
     let listener = stream::unfold((listener, tasks, proxy_cfg), |(listener, mut tasks, proxy_cfg)| async {
@@ -111,7 +110,11 @@ pub async fn run_server(
 
                 cnx = tasks.join_next(), if !tasks.is_empty() => {
                     match cnx {
-                        Some(Ok(Some((stream, f)))) => (stream, Some(f)),
+                        Some(Ok(Some((stream, Some(f))))) => (stream, Some(f)),
+                        Some(Ok(Some((_, None)))) =>{
+                            error!("Error while trying to parse connect request");
+                            continue
+                        },
                         None | Some(Ok(None)) => continue,
                         Some(Err(err)) => {
                             error!("Error while joinning tasks {:?}", err);
@@ -140,7 +143,7 @@ pub async fn run_server(
                 async move {
                     let http1 = &proxy_cfg.1;
                     let auth_header = &proxy_cfg.0;
-                    let forward_to = Mutex::new((Host::Ipv4(Ipv4Addr::new(0, 0, 0, 0)), 0));
+                    let forward_to = Mutex::new(None);
                     let conn_fut = http1.serve_connection(
                         hyper_util::rt::TokioIo::new(&mut stream),
                         service_fn(|req| handle_request(auth_header, &forward_to, req)),
