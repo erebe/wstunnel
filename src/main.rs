@@ -19,7 +19,7 @@ use base64::Engine;
 use clap::Parser;
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
-use log::debug;
+use log::{debug, warn};
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
@@ -727,7 +727,9 @@ async fn main() -> anyhow::Result<()> {
     } else {
         logger.init();
     };
-    fdlimit::raise_fd_limit()?;
+    if let Err(err) = fdlimit::raise_fd_limit() {
+        warn!("Failed to set soft filelimit to hard file limit: {}", err)
+    }
 
     match args.commands {
         Commands::Client(args) => {
