@@ -1112,7 +1112,7 @@ async fn main() -> anyhow::Result<()> {
                     .map(|x| {
                         let (host, port) = x.rsplit_once(':').expect("Invalid restrict-to format");
                         (
-                            host.trim_matches(&['[', ']']).to_string(),
+                            host.trim_matches(['[', ']']).to_string(),
                             port.parse::<u16>().expect("Invalid restrict-to port format"),
                         )
                     })
