@@ -462,6 +462,10 @@ ssh -p 9999 login@127.0.0.1
 
 ### Wireguard and wstunnel <a name="wireguard"></a>
 
+You can find a full [tutorial](https://community.hetzner.com/tutorials/obfuscating-wireguard-using-wstunnel) that explain how to setup wstunnel and wireguard at [here](https://community.hetzner.com/tutorials/obfuscating-wireguard-using-wstunnel)
+
+For a quick explanation see below.
+
 You have a working wireguard client configuration called `wg0.conf`. Let's say
 
 ```
