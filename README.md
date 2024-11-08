@@ -365,6 +365,7 @@ docker pull ghcr.io/erebe/wstunnel:latest
 * [Proxy SSH](#ssh)
 * [Bypass a corporate proxy](#corporate)
 * [Proxy Wireguard traffic](#wireguard)
+* [Android](#android)
 * [Proxy easily any traffic with transparent proxy (linux only)](#tproxy)
 * [Reverse tunneling](#reverse)
 * [How to secure access of your wstunnel server](#secure)
@@ -539,6 +540,13 @@ FAQ
   https://github.com/erebe/wstunnel/issues/252
 
 ---
+### Android <a name="Android"></a>
+
+You can use the android binary and use termux to run it on your phone.
+
+If you want a guide regarding how to use wstunnel on Android, you can follow this [guide](https://community.hetzner.com/tutorials/obfuscating-wireguard-using-wstunnel)
+
+
 
 ### Transparent proxy (linux only) <a name="tproxy"></a>
 
