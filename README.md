@@ -540,12 +540,14 @@ FAQ
   https://github.com/erebe/wstunnel/issues/252
 
 ---
+
 ### Android <a name="android"></a>
 
 You can use the android binary and use termux to run it on your phone.
 
 If you want a guide regarding how to use wstunnel on Android, you can follow this [guide](https://community.hetzner.com/tutorials/obfuscating-wireguard-using-wstunnel)
 
+---
 
 
 ### Transparent proxy (linux only) <a name="tproxy"></a>
