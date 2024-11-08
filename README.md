@@ -540,7 +540,7 @@ FAQ
   https://github.com/erebe/wstunnel/issues/252
 
 ---
-### Android <a name="Android"></a>
+### Android <a name="android"></a>
 
 You can use the android binary and use termux to run it on your phone.
 
