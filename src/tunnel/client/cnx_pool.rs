@@ -2,7 +2,6 @@ use crate::protocols;
 use crate::protocols::tls;
 use crate::tunnel::client::l4_transport_stream::TransportStream;
 use crate::tunnel::client::WsClientConfig;
-use async_trait::async_trait;
 use bb8::ManageConnection;
 use bytes::Bytes;
 use std::ops::Deref;
@@ -26,7 +25,6 @@ impl Deref for WsConnection {
     }
 }
 
-#[async_trait]
 impl ManageConnection for WsConnection {
     type Connection = Option<TransportStream>;
     type Error = anyhow::Error;
