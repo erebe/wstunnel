@@ -444,7 +444,8 @@ fn parse_local_bind(arg: &str) -> Result<(SocketAddr, &str), io::Error> {
 fn parse_tunnel_dest(remaining: &str) -> Result<(Host<String>, u16, BTreeMap<String, String>), io::Error> {
     use std::io::Error;
 
-    let Ok(remote) = Url::parse(&format!("fake://{}", remaining)) else {
+    // Using http or else the URL lib don't try to fully parse the host into an IPv4/IPv6
+    let Ok(remote) = Url::parse(&format!("https://{}", remaining)) else {
         return Err(Error::new(
             ErrorKind::InvalidInput,
             format!("cannot parse remote from {}", remaining),
@@ -867,8 +868,8 @@ async fn main() -> anyhow::Result<()> {
                                 port,
                             };
                             let udp_connector = UdpTunnelConnector::new(
-                                &remote.host,
-                                remote.port,
+                                &tunnel.remote.0,
+                                tunnel.remote.1,
                                 cfg.socket_so_mark,
                                 cfg.timeout_connect,
                                 &cfg.dns_resolver,
@@ -910,14 +911,14 @@ async fn main() -> anyhow::Result<()> {
                                 port,
                             };
                             let tcp_connector = TcpTunnelConnector::new(
-                                &remote.host,
-                                remote.port,
+                                &tunnel.remote.0,
+                                tunnel.remote.1,
                                 cfg.socket_so_mark,
                                 cfg.timeout_connect,
                                 &cfg.dns_resolver,
                             );
 
-                            if let Err(err) = client.run_reverse_tunnel(remote.clone(), tcp_connector).await {
+                            if let Err(err) = client.run_reverse_tunnel(remote, tcp_connector).await {
                                 error!("{:?}", err);
                             }
                         });
