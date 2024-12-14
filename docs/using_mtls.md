@@ -191,7 +191,7 @@ State or Province Name [England]:
 Locality Name []:
 Organization Name [Alice Ltd]:
 Organizational Unit Name []:
-Common Name []:wstunnel Development Client 1
+Common Name []:wstunnel_client_1   # must contains only url valid characters
 Email Address []:
 
 $ openssl ca -config openssl.cnf \
