@@ -156,7 +156,15 @@ pub async fn connect(
         .header(CONTENT_TYPE, "application/json")
         .version(hyper::Version::HTTP_2);
 
-    let headers = req.headers_mut().unwrap();
+    let headers = match req.headers_mut() {
+        Some(h) => h,
+        None => {
+            return Err(anyhow!(
+                "failed to build HTTP request to contact the server {:?}. Most likely path_prefix `{}` or http headers is not valid",
+                req, client.config.http_upgrade_path_prefix
+            ))
+        }
+    };
     for (k, v) in &client.config.http_headers {
         let _ = headers.remove(k);
         headers.append(k, v.clone());

@@ -257,7 +257,15 @@ pub async fn connect(
         )
         .version(hyper::Version::HTTP_11);
 
-    let headers = req.headers_mut().unwrap();
+    let headers = match req.headers_mut() {
+        Some(h) => h,
+        None => {
+            return Err(anyhow!(
+                "failed to build HTTP request to contact the server {:?}. Most likely path_prefix `{}` or http headers is not valid",
+                req.body(Empty::<Bytes>::new()), client_cfg.http_upgrade_path_prefix
+            ))
+        }
+    };
     for (k, v) in &client_cfg.http_headers {
         let _ = headers.remove(k);
         headers.append(k, v.clone());
