@@ -459,11 +459,16 @@ fn parse_tunnel_dest(remaining: &str) -> Result<(Host<String>, u16, BTreeMap<Str
         ));
     };
 
-    let Some(remote_port) = remote.port_or_known_default() else {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            format!("cannot parse remote port from {}", remaining),
-        ));
+    let remote_port = match remote.port() {
+        Some(remote_port) => remote_port,
+        // the url lib does not parse the port if it is the default one
+        None if remaining.ends_with(":443") => 443,
+        _ => {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("cannot parse remote port from {}", remaining),
+            ))
+        }
     };
 
     let options: BTreeMap<String, String> = remote.query_pairs().into_owned().collect();
