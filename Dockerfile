@@ -2,7 +2,7 @@ ARG BUILDER_IMAGE=builder_cache
 
 ############################################################
 # Cache image with all the deps
-FROM rust:1.80-bookworm AS builder_cache
+FROM rust:1.83-bookworm AS builder_cache
 
 RUN rustup component add rustfmt clippy
 
