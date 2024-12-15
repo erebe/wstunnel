@@ -459,7 +459,7 @@ fn parse_tunnel_dest(remaining: &str) -> Result<(Host<String>, u16, BTreeMap<Str
         ));
     };
 
-    let Some(remote_port) = remote.port() else {
+    let Some(remote_port) = remote.port_or_known_default() else {
         return Err(Error::new(
             ErrorKind::InvalidInput,
             format!("cannot parse remote port from {}", remaining),
