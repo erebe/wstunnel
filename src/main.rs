@@ -1,6 +1,8 @@
 mod embedded_certificate;
 mod protocols;
 mod restrictions;
+#[cfg(test)]
+mod test_integrations;
 mod tunnel;
 
 use crate::protocols::dns::DnsResolver;
@@ -379,7 +381,7 @@ struct Server {
     http_proxy_password: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LocalToRemote {
     local_protocol: LocalProtocol,
     local: SocketAddr,
@@ -1199,4 +1201,63 @@ fn mk_http_proxy(
     }
 
     Ok(Some(proxy))
+}
+
+#[cfg(test)]
+mod test {
+    use crate::tunnel::LocalProtocol;
+    use crate::{parse_local_bind, parse_tunnel_arg, parse_tunnel_dest, LocalToRemote};
+    use collection_macros::btreemap;
+    use std::collections::BTreeMap;
+    use std::io;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+    use test_case::test_case;
+    use url::Host;
+
+    #[test_case("localhost:443" => (Host::Domain("localhost".to_string()), 443, BTreeMap::new()) ; "with domain")]
+    #[test_case("127.0.0.1:443" => (Host::Ipv4(Ipv4Addr::new(127, 0, 0, 1)), 443, BTreeMap::new()) ; "with IPv4")]
+    #[test_case("[::1]:8080" => (Host::Ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 8080, BTreeMap::new()) ; "with IpV6")]
+    #[test_case("a:1?timeout_sec=30&b=5" => (Host::Domain("a".to_string()), 1, btreemap! { "b".to_string() => "5".to_string(), "timeout_sec".to_string() => "30".to_string() }) ; "with options")]
+    fn test_parse_tunnel_dest(input: &str) -> (Host<String>, u16, BTreeMap<String, String>) {
+        parse_tunnel_dest(input).unwrap()
+    }
+
+    const LOCALHOST_IP4: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 443);
+    const LOCALHOST_IP6: SocketAddrV6 = SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0);
+
+    #[test_case("domain.com:443" => matches Err(_) ; "with domain")]
+    #[test_case("127.0.0.1" => matches Err(_) ; "with no port")]
+    #[test_case("127.0.0.1:444444443" => matches Err(_) ; "with too long port")]
+    #[test_case("127.0.0.1:443" => matches Ok((SocketAddr::V4(LOCALHOST_IP4), _)) ; "with ipv4")]
+    #[test_case("[::1]:443" => matches Ok((SocketAddr::V6(LOCALHOST_IP6), _)) ; "with ipv6")]
+    fn test_parse_local_bind(input: &str) -> Result<(SocketAddr, &str), io::Error> {
+        parse_local_bind(input)
+    }
+
+    #[test_case("domain.com:443" => panics ""; "with no protocol")]
+    #[test_case("sdsf://443:domain.com:443" => panics ""; "with invalid protocol")]
+    #[test_case("tcp://443:domain.com:4443" =>
+        LocalToRemote {
+            local_protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 443)),
+            remote: (Host::Domain("domain.com".to_string()), 4443),
+        }
+    ; "with no local bind")]
+    #[test_case("udp://[::1]:443:toto.com:4443?timeout_sec=30" =>
+        LocalToRemote {
+            local_protocol: LocalProtocol::Udp { timeout: Some(std::time::Duration::from_secs(30)) },
+            local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0)),
+            remote: (Host::Domain("toto.com".to_string()), 4443),
+        }
+    ; "with fully defined tunnel")]
+    #[test_case("udp://[::1]:443:[::1]:4443?timeout_sec=30" =>
+        LocalToRemote {
+            local_protocol: LocalProtocol::Udp { timeout: Some(std::time::Duration::from_secs(30)) },
+            local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0)),
+            remote: (Host::Ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 4443),
+        }
+    ; "with full ipv6 tunnel")]
+    fn test_parse_tunnel_arg(input: &str) -> LocalToRemote {
+        parse_tunnel_arg(input).unwrap()
+    }
 }
