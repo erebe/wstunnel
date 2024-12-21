@@ -75,6 +75,7 @@ test-case = "3.3.1"
 collection_macros = "0.2.0"
 rstest = "0.23.0"
 serial_test = "3.2.0"
+derive_more = { version = "1.0.0", features = ["from"] }
 
 [profile.release]
 lto = "fat"

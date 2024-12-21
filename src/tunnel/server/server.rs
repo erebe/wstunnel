@@ -132,11 +132,14 @@ impl WsServer {
         };
 
         let restriction = match validate_tunnel(&remote, path_prefix, &restrictions) {
-            Ok(matched_restriction) => {
+            Some(matched_restriction) => {
                 info!("Tunnel accepted due to matched restriction: {}", matched_restriction.name);
                 matched_restriction
             }
-            Err(_err) => return Err(bad_request()),
+            None => {
+                warn!("Rejecting connection with not allowed destination: {:?}", remote);
+                return Err(bad_request());
+            }
         };
 
         let req_protocol = remote.protocol.clone();
