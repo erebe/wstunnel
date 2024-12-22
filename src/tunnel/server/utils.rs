@@ -139,7 +139,7 @@ impl AllowReverseTunnelConfig {
         }
 
         match &remote.host {
-            Host::Domain(_) => return false,
+            Host::Domain(_) => false,
             Host::Ipv4(ip) => self.cidr.iter().any(|cidr| cidr.contains(&IpAddr::from(*ip))),
             Host::Ipv6(ip) => self.cidr.iter().any(|cidr| cidr.contains(&IpAddr::from(*ip))),
         }
@@ -162,7 +162,7 @@ impl AllowTunnelConfig {
         }
 
         match &remote.host {
-            Host::Domain(host) => return self.host.is_match(host),
+            Host::Domain(host) => self.host.is_match(host),
             Host::Ipv4(ip) => self.cidr.iter().any(|cidr| cidr.contains(&IpAddr::from(*ip))),
             Host::Ipv6(ip) => self.cidr.iter().any(|cidr| cidr.contains(&IpAddr::from(*ip))),
         }
@@ -385,6 +385,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 80,
         };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
 
         // host is domain
         let remote = RemoteAddr {
