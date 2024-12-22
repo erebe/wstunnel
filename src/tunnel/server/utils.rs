@@ -217,3 +217,101 @@ pub(super) fn inject_cookie(response: &mut http::Response<impl Body>, remote_add
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::restrictions::types::{AllowReverseTunnelConfig, AllowTunnelConfig};
+    use crate::tunnel::LocalProtocol;
+    use ipnet::{IpNet, Ipv4Net};
+    use regex::Regex;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn test_validate_tunnel() {
+        let restrictions = RestrictionsRules {
+            restrictions: vec![
+                // tunnel
+                RestrictionConfig {
+                    name: "restrict1".into(),
+                    r#match: vec![MatchConfig::Any],
+                    allow: vec![AllowConfig::Tunnel(AllowTunnelConfig {
+                        protocol: vec![TunnelConfigProtocol::Tcp],
+                        port: vec![80..=80],
+                        cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
+                        host: Regex::new("example.com").unwrap(),
+                    })],
+                },
+                // reverse tunnel
+                RestrictionConfig {
+                    name: "restrict2".into(),
+                    r#match: vec![MatchConfig::Any],
+                    allow: vec![AllowConfig::ReverseTunnel(AllowReverseTunnelConfig {
+                        protocol: vec![ReverseTunnelConfigProtocol::Tcp],
+                        port: vec![80..=80],
+                        cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
+                        port_mapping: Default::default(),
+                    })],
+                },
+            ],
+        };
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+        assert_eq!(
+            validate_tunnel(&remote, "/doesnt/matter", &restrictions).unwrap().name,
+            restrictions.restrictions[0].name
+        );
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+        assert_eq!(
+            validate_tunnel(&remote, "/doesnt/matter", &restrictions).unwrap().name,
+            restrictions.restrictions[1].name
+        );
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 81,
+        };
+        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_err());
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 1, 1].into()),
+            port: 80,
+        };
+        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_err());
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Domain("example.com".into()),
+            port: 80,
+        };
+        assert_eq!(
+            validate_tunnel(&remote, "/doesnt/matter", &restrictions).unwrap().name,
+            restrictions.restrictions[0].name
+        );
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Domain("not.com".into()),
+            port: 80,
+        };
+        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_err());
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv6(Ipv6Addr::LOCALHOST),
+            port: 80,
+        };
+        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_err());
+    }
+}
