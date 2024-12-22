@@ -7,14 +7,14 @@ repository = "https://github.com/erebe/wstunnel.git"
 
 [dependencies]
 ahash = { version = "0.8.11", features = [] }
-anyhow = "1.0.94"
+anyhow = "1.0.95"
 base64 = "0.22.1"
 scopeguard = "1.2.0"
 
 bb8 = { version = "0.9.0", features = [] }
 bytes = { version = "1.9.0", features = [] }
 clap = { version = "4.5.23", features = ["derive", "env"] }
-fast-socks5 = { version = "0.9.6", features = [] }
+fast-socks5 = { version = "0.10.0", features = [] }
 fastwebsockets = { git = "https://github.com/erebe/fastwebsockets.git", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.31" }
 hickory-resolver = { version = "0.24.2", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls", "native-certs"] }
@@ -30,7 +30,7 @@ serde_regex = "1.1.0"
 serde_yaml = { version = "0.9.34", features = [] }
 ipnet = { version = "2.10.1", features = ["serde"] }
 
-hyper = { version = "1.5.1", features = ["client", "http1", "http2"] }
+hyper = { version = "1.5.2", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1.10", features = ["tokio", "server", "server-auto"] }
 http-body-util = { version = "0.1.2" }
 jsonwebtoken = { version = "9.3.0", default-features = false }
@@ -63,11 +63,11 @@ tokio-fd = "0.3.0"
 
 [target.'cfg(all(any(target_os = "linux", target_os = "macos"), any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
 tokio-rustls = { version = "0.26.1", features = [] }
-rcgen = { version = "0.13.1", default-features = false, features = ["aws_lc_rs"] }
+rcgen = { version = "0.13.2", default-features = false, features = ["aws_lc_rs"] }
 
 [target.'cfg(not(all(any(target_os = "linux", target_os = "macos"), any(target_arch = "x86_64", target_arch = "aarch64"))))'.dependencies]
 tokio-rustls = { version = "0.26.1", default-features = false, features = ["logging", "tls12", "ring"] }
-rcgen = { version = "0.13.1", default-features = false, features = ["ring"] }
+rcgen = { version = "0.13.2", default-features = false, features = ["ring"] }
 
 [dev-dependencies]
 testcontainers = "0.23.1"
