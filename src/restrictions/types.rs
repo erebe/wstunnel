@@ -26,6 +26,7 @@ pub enum MatchConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(derive_more::From))]
 pub enum AllowConfig {
     ReverseTunnel(AllowReverseTunnelConfig),
     Tunnel(AllowTunnelConfig),

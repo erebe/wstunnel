@@ -1,5 +1,6 @@
 use crate::restrictions::types::{
-    AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules, ReverseTunnelConfigProtocol, TunnelConfigProtocol,
+    AllowConfig, AllowReverseTunnelConfig, AllowTunnelConfig, MatchConfig, RestrictionConfig, RestrictionsRules,
+    ReverseTunnelConfigProtocol, TunnelConfigProtocol,
 };
 use crate::tunnel::transport::{jwt_token_to_tunnel, tunnel_to_jwt_token, JwtTunnelConfig, JWT_HEADER_PREFIX};
 use crate::tunnel::RemoteAddr;
@@ -107,105 +108,96 @@ pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<J
     Ok(jwt)
 }
 
+impl RestrictionConfig {
+    /// Returns true if the path prefix matches the restriction or if the restriction is set to allow any path.
+    #[inline]
+    fn for_path(self: &RestrictionConfig, path_prefix: &str) -> bool {
+        self.r#match.iter().all(|m| match m {
+            MatchConfig::Any => true,
+            MatchConfig::PathPrefix(path) => path.is_match(path_prefix),
+        })
+    }
+}
+
+impl AllowReverseTunnelConfig {
+    #[inline]
+    fn is_allowed(&self, remote: &RemoteAddr) -> bool {
+        if !remote.protocol.is_reverse_tunnel() {
+            return false;
+        }
+
+        if !self.port.is_empty() && !self.port.iter().any(|range| range.contains(&remote.port)) {
+            return false;
+        }
+
+        if !self.protocol.is_empty()
+            && !self
+                .protocol
+                .contains(&ReverseTunnelConfigProtocol::from(&remote.protocol))
+        {
+            return false;
+        }
+
+        match &remote.host {
+            Host::Domain(_) => return false,
+            Host::Ipv4(ip) => self.cidr.iter().any(|cidr| cidr.contains(&IpAddr::from(*ip))),
+            Host::Ipv6(ip) => self.cidr.iter().any(|cidr| cidr.contains(&IpAddr::from(*ip))),
+        }
+    }
+}
+
+impl AllowTunnelConfig {
+    #[inline]
+    fn is_allowed(&self, remote: &RemoteAddr) -> bool {
+        if remote.protocol.is_reverse_tunnel() {
+            return false;
+        }
+
+        if !self.port.is_empty() && !self.port.iter().any(|range| range.contains(&remote.port)) {
+            return false;
+        }
+
+        if !self.protocol.is_empty() && !self.protocol.contains(&TunnelConfigProtocol::from(&remote.protocol)) {
+            return false;
+        }
+
+        match &remote.host {
+            Host::Domain(host) => return self.host.is_match(host),
+            Host::Ipv4(ip) => self.cidr.iter().any(|cidr| cidr.contains(&IpAddr::from(*ip))),
+            Host::Ipv6(ip) => self.cidr.iter().any(|cidr| cidr.contains(&IpAddr::from(*ip))),
+        }
+    }
+}
+
+impl AllowConfig {
+    #[inline]
+    fn is_allowed(&self, remote: &RemoteAddr) -> bool {
+        match self {
+            AllowConfig::ReverseTunnel(config) => config.is_allowed(remote),
+            AllowConfig::Tunnel(config) => config.is_allowed(remote),
+        }
+    }
+}
+
+/// Validate if the requested tunnel is allowed by the restrictions.
+///
+/// Restrictions are checked one by one. If one matches the tunnel, the tunnel will be allowed.
+/// If no restriction matches, the tunnel will be rejected.
+///
+/// # Return value:
+/// * `Some(restriction)` - Tunnel is allowed. Encapsulates the restriction that allowed the tunnel.
+/// * `None` - Tunnel is not allowed.
 #[inline]
 pub(super) fn validate_tunnel<'a>(
     remote: &RemoteAddr,
     path_prefix: &str,
     restrictions: &'a RestrictionsRules,
-) -> Result<&'a RestrictionConfig, ()> {
-    for restriction in &restrictions.restrictions {
-        if !restriction.r#match.iter().all(|m| match m {
-            MatchConfig::Any => true,
-            MatchConfig::PathPrefix(path) => path.is_match(path_prefix),
-        }) {
-            continue;
-        }
-
-        for allow in &restriction.allow {
-            match allow {
-                AllowConfig::ReverseTunnel(allow) => {
-                    if !remote.protocol.is_reverse_tunnel() {
-                        continue;
-                    }
-
-                    if !allow.port.is_empty() && !allow.port.iter().any(|range| range.contains(&remote.port)) {
-                        continue;
-                    }
-
-                    if !allow.protocol.is_empty()
-                        && !allow
-                            .protocol
-                            .contains(&ReverseTunnelConfigProtocol::from(&remote.protocol))
-                    {
-                        continue;
-                    }
-
-                    match &remote.host {
-                        Host::Domain(_) => {}
-                        Host::Ipv4(ip) => {
-                            let ip = IpAddr::V4(*ip);
-                            for cidr in &allow.cidr {
-                                if cidr.contains(&ip) {
-                                    return Ok(restriction);
-                                }
-                            }
-                        }
-                        Host::Ipv6(ip) => {
-                            let ip = IpAddr::V6(*ip);
-                            for cidr in &allow.cidr {
-                                if cidr.contains(&ip) {
-                                    return Ok(restriction);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                AllowConfig::Tunnel(allow) => {
-                    if remote.protocol.is_reverse_tunnel() {
-                        continue;
-                    }
-
-                    if !allow.port.is_empty() && !allow.port.iter().any(|range| range.contains(&remote.port)) {
-                        continue;
-                    }
-
-                    if !allow.protocol.is_empty()
-                        && !allow.protocol.contains(&TunnelConfigProtocol::from(&remote.protocol))
-                    {
-                        continue;
-                    }
-
-                    match &remote.host {
-                        Host::Domain(host) => {
-                            if allow.host.is_match(host) {
-                                return Ok(restriction);
-                            }
-                        }
-                        Host::Ipv4(ip) => {
-                            let ip = IpAddr::V4(*ip);
-                            for cidr in &allow.cidr {
-                                if cidr.contains(&ip) {
-                                    return Ok(restriction);
-                                }
-                            }
-                        }
-                        Host::Ipv6(ip) => {
-                            let ip = IpAddr::V6(*ip);
-                            for cidr in &allow.cidr {
-                                if cidr.contains(&ip) {
-                                    return Ok(restriction);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    warn!("Rejecting connection with not allowed destination: {:?}", remote);
-    Err(())
+) -> Option<&'a RestrictionConfig> {
+    restrictions
+        .restrictions
+        .iter()
+        .filter(|restriction| restriction.for_path(path_prefix))
+        .find(|restriction| restriction.allow.iter().any(|allow| allow.is_allowed(remote)))
 }
 
 pub(super) fn inject_cookie(response: &mut http::Response<impl Body>, remote_addr: &RemoteAddr) -> Result<(), ()> {
@@ -216,4 +208,291 @@ pub(super) fn inject_cookie(response: &mut http::Response<impl Body>, remote_add
     response.headers_mut().insert(COOKIE, header_val);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::restrictions::types::{AllowReverseTunnelConfig, AllowTunnelConfig};
+    use crate::tunnel::LocalProtocol;
+    use ipnet::{IpNet, Ipv4Net};
+    use regex::Regex;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn test_validate_tunnel() {
+        let restrictions = RestrictionsRules {
+            restrictions: vec![
+                // tunnel
+                RestrictionConfig {
+                    name: "restrict1".into(),
+                    r#match: vec![MatchConfig::Any],
+                    allow: vec![AllowConfig::Tunnel(AllowTunnelConfig {
+                        protocol: vec![TunnelConfigProtocol::Tcp],
+                        port: vec![80..=80],
+                        cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
+                        host: Regex::new("example.com").unwrap(),
+                    })],
+                },
+                // reverse tunnel
+                RestrictionConfig {
+                    name: "restrict2".into(),
+                    r#match: vec![MatchConfig::Any],
+                    allow: vec![AllowConfig::ReverseTunnel(AllowReverseTunnelConfig {
+                        protocol: vec![ReverseTunnelConfigProtocol::Tcp],
+                        port: vec![80..=80],
+                        cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
+                        port_mapping: Default::default(),
+                    })],
+                },
+            ],
+        };
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+        assert_eq!(
+            validate_tunnel(&remote, "/doesnt/matter", &restrictions).unwrap().name,
+            restrictions.restrictions[0].name
+        );
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+        assert_eq!(
+            validate_tunnel(&remote, "/doesnt/matter", &restrictions).unwrap().name,
+            restrictions.restrictions[1].name
+        );
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 81,
+        };
+        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_none());
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 1, 1].into()),
+            port: 80,
+        };
+        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_none());
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Domain("example.com".into()),
+            port: 80,
+        };
+        assert_eq!(
+            validate_tunnel(&remote, "/doesnt/matter", &restrictions).unwrap().name,
+            restrictions.restrictions[0].name
+        );
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Domain("not.com".into()),
+            port: 80,
+        };
+        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_none());
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv6(Ipv6Addr::LOCALHOST),
+            port: 80,
+        };
+        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_none());
+    }
+
+    #[test]
+    fn test_reverse_tunnel_is_allowed() {
+        let config = AllowReverseTunnelConfig {
+            protocol: vec![ReverseTunnelConfigProtocol::Tcp],
+            port: vec![80..=80],
+            cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 8).unwrap())],
+            port_mapping: Default::default(),
+        };
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+        assert!(config.is_allowed(&remote));
+        assert!(AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // another ip on the same subnet
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: Host::Ipv4([127, 0, 1, 1].into()),
+            port: 80,
+        };
+        assert!(config.is_allowed(&remote));
+        assert!(AllowConfig::from(config.clone()).is_allowed(&remote));
+    }
+
+    #[test]
+    fn test_reverse_tunnel_is_not_allowed() {
+        let config = AllowReverseTunnelConfig {
+            protocol: vec![ReverseTunnelConfigProtocol::Tcp],
+            port: vec![80..=80],
+            cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
+            port_mapping: Default::default(),
+        };
+
+        // wrong IP
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: Host::Ipv4([127, 0, 1, 1].into()),
+            port: 80,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // ipv6
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: Host::Ipv6(Ipv6Addr::LOCALHOST),
+            port: 80,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // wrong port
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 81,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // wrong protocol - remote
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseUdp { timeout: None },
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // wrong protocol - local
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+
+        // host is domain
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: Host::Domain("example.com".into()),
+            port: 80,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+    }
+
+    #[test]
+    fn test_tunnel_is_allowed() {
+        let config = AllowTunnelConfig {
+            protocol: vec![TunnelConfigProtocol::Tcp],
+            port: vec![80..=80],
+            cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 8).unwrap())],
+            host: Regex::new(".*").unwrap(),
+        };
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+        assert!(config.is_allowed(&remote));
+        assert!(AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // another ip on the same subnet
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 1, 1].into()),
+            port: 80,
+        };
+        assert!(config.is_allowed(&remote));
+        assert!(AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // host is domain
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Domain("example.com".into()),
+            port: 80,
+        };
+        assert!(config.is_allowed(&remote));
+        assert!(AllowConfig::from(config.clone()).is_allowed(&remote));
+    }
+
+    #[test]
+    fn test_tunnel_is_not_allowed() {
+        let config = AllowTunnelConfig {
+            protocol: vec![TunnelConfigProtocol::Tcp],
+            port: vec![80..=80],
+            cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
+            host: Regex::new("example.com").unwrap(),
+        };
+
+        // wrong IP
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 1, 1].into()),
+            port: 80,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // ipv6
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv6(Ipv6Addr::LOCALHOST),
+            port: 80,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // wrong port
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 81,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // wrong protocol - remote
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // wrong protocol - local
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Udp { timeout: None },
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+
+        // wrong host
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Domain("not.com".into()),
+            port: 80,
+        };
+        assert!(!config.is_allowed(&remote));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+    }
 }
