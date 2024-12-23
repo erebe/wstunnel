@@ -233,7 +233,7 @@ mod tests {
     use super::*;
     use futures_util::pin_mut;
     use std::borrow::Cow;
-    use std::net::SocketAddr;
+    use std::net::IpAddr;
     use testcontainers::core::WaitFor;
     use testcontainers::runners::AsyncRunner;
     use testcontainers::{ContainerAsync, Image, ImageExt};
@@ -263,15 +263,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_proxy_connection() {
-        let server_addr: SocketAddr = "[::1]:1236".parse().unwrap();
-        let server = TcpListener::bind(server_addr).await.unwrap();
+        let (network_name, host) = if cfg!(not(target_os = "macos")) {
+            ("host", "127.0.0.1".parse::<IpAddr>().unwrap())
+        } else {
+            let host = get_if_addrs::get_if_addrs()
+                .unwrap()
+                .into_iter()
+                .map(|iface| iface.addr.ip())
+                .find(|ip| ip.is_ipv4() && !ip.is_loopback())
+                .unwrap();
+            ("wstunnel_test_proxy_connection", host)
+        };
 
-        let _mitm_proxy: ContainerAsync<MitmProxy> = MitmProxy.with_network("host".to_string()).start().await.unwrap();
+        let mitm_proxy: ContainerAsync<MitmProxy> = MitmProxy.with_network(network_name).start().await.unwrap();
+
+        let proxy_port = mitm_proxy.get_host_port_ipv4(8080).await.unwrap();
+
+        // bind to a dynamic port - avoid conflicts
+        let server = TcpListener::bind((host, 0)).await.unwrap();
+        let server_port = server.local_addr().unwrap().port();
 
         let mut client = connect_with_http_proxy(
-            &"http://localhost:8080".parse().unwrap(),
-            &Host::Domain("[::1]".to_string()),
-            1236,
+            &Url::parse(&format!("http://127.0.0.1:{proxy_port}")).unwrap(),
+            &Host::Domain(host.to_string()),
+            server_port,
             None,
             Duration::from_secs(1),
             &DnsResolver::System,
