@@ -17,7 +17,9 @@ use tracing::{error, info, warn};
 use url::Host;
 use uuid::Uuid;
 
-pub(super) fn bad_request() -> Response<Either<String, BoxBody<Bytes, anyhow::Error>>> {
+pub type HttpResponse = Response<Either<String, BoxBody<Bytes, anyhow::Error>>>;
+
+pub(super) fn bad_request() -> HttpResponse {
     http::Response::builder()
         .status(StatusCode::BAD_REQUEST)
         .body(Either::Left("Invalid request".to_string()))
@@ -48,42 +50,40 @@ pub(super) fn find_mapped_port(req_port: u16, restriction: &RestrictionConfig) -
 }
 
 #[inline]
-pub(super) fn extract_x_forwarded_for(req: &Request<Incoming>) -> Result<Option<(IpAddr, &str)>, ()> {
-    let Some(x_forward_for) = req.headers().get("X-Forwarded-For") else {
-        return Ok(None);
-    };
+pub(super) fn extract_x_forwarded_for(req: &Request<Incoming>) -> Option<(IpAddr, &str)> {
+    let x_forward_for = req.headers().get("X-Forwarded-For")?;
 
     // X-Forwarded-For: <client>, <proxy1>, <proxy2>
     let x_forward_for = x_forward_for.to_str().unwrap_or_default();
     let x_forward_for = x_forward_for.split_once(',').map(|x| x.0).unwrap_or(x_forward_for);
     let ip: Option<IpAddr> = x_forward_for.parse().ok();
-    Ok(ip.map(|ip| (ip, x_forward_for)))
+    ip.map(|ip| (ip, x_forward_for))
 }
 
 #[inline]
-pub(super) fn extract_path_prefix(req: &Request<Incoming>) -> Result<&str, ()> {
+pub(super) fn extract_path_prefix(req: &Request<Incoming>) -> Result<&str, HttpResponse> {
     let path = req.uri().path();
     let min_len = min(path.len(), 1);
     if &path[0..min_len] != "/" {
         warn!("Rejecting connection with bad path prefix in upgrade request: {}", req.uri());
-        return Err(());
+        return Err(bad_request());
     }
 
     let Some((l, r)) = path[min_len..].split_once('/') else {
         warn!("Rejecting connection with bad upgrade request: {}", req.uri());
-        return Err(());
+        return Err(bad_request());
     };
 
     if !r.ends_with("events") {
         warn!("Rejecting connection with bad upgrade request: {}", req.uri());
-        return Err(());
+        return Err(bad_request());
     }
 
     Ok(l)
 }
 
 #[inline]
-pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<JwtTunnelConfig>, ()> {
+pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> anyhow::Result<TokenData<JwtTunnelConfig>, HttpResponse> {
     let jwt = req
         .headers()
         .get(SEC_WEBSOCKET_PROTOCOL)
@@ -93,19 +93,13 @@ pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<J
         .or_else(|| req.headers().get(COOKIE).and_then(|header| header.to_str().ok()))
         .unwrap_or_default();
 
-    let jwt = match jwt_token_to_tunnel(jwt) {
-        Ok(jwt) => jwt,
-        err => {
-            warn!(
-                "error while decoding jwt for tunnel info {:?} header {:?}",
-                err,
-                req.headers().get(SEC_WEBSOCKET_PROTOCOL)
-            );
-            return Err(());
-        }
-    };
-
-    Ok(jwt)
+    jwt_token_to_tunnel(jwt).map_err(|err| {
+        warn!(
+            "error while decoding jwt for tunnel info {err:?} header {:?}",
+            req.headers().get(SEC_WEBSOCKET_PROTOCOL)
+        );
+        bad_request()
+    })
 }
 
 impl RestrictionConfig {
