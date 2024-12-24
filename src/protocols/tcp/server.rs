@@ -233,7 +233,6 @@ mod tests {
     use super::*;
     use futures_util::pin_mut;
     use std::borrow::Cow;
-    use std::net::SocketAddr;
     use testcontainers::core::WaitFor;
     use testcontainers::runners::AsyncRunner;
     use testcontainers::{ContainerAsync, Image, ImageExt};
