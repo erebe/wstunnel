@@ -3,6 +3,7 @@ use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWr
 use bytes::{BufMut, BytesMut};
 use futures_util::{pin_mut, FutureExt};
 use std::future::Future;
+use std::io::ErrorKind;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -191,7 +192,11 @@ pub async fn propagate_remote_to_local(
         };
 
         if let Err(err) = msg {
-            error!("error while reading from tunnel rx {}", err);
+            match err.kind() {
+                ErrorKind::NotConnected => debug!("Connection closed frame received"),
+                ErrorKind::BrokenPipe => debug!("Remote side closed connection"),
+                _ => error!("error while reading from tunnel rx {err}"),
+            }
             break;
         }
     }
