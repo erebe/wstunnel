@@ -6,7 +6,7 @@ mod restrictions;
 mod test_integrations;
 mod tunnel;
 
-use crate::config::{DEFAULT_CLIENT_UPGRADE_PATH_PREFIX, Wstunnel, Commands};
+use crate::config::{Commands, Wstunnel, DEFAULT_CLIENT_UPGRADE_PATH_PREFIX};
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;

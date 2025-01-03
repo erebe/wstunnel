@@ -682,8 +682,8 @@ fn parse_server_url(arg: &str) -> Result<Url, io::Error> {
 
 #[cfg(test)]
 mod test {
-    use crate::tunnel::LocalProtocol;
     use crate::config::{parse_local_bind, parse_tunnel_arg, parse_tunnel_dest, LocalToRemote};
+    use crate::tunnel::LocalProtocol;
     use collection_macros::btreemap;
     use std::collections::BTreeMap;
     use std::io;
