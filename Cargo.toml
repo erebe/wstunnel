@@ -77,6 +77,10 @@ rstest = "0.23.0"
 serial_test = "3.2.0"
 derive_more = { version = "1.0.0", features = ["from"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+get_if_addrs = "0.5.3"
+
+
 [profile.release]
 lto = "fat"
 panic = "abort"
