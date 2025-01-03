@@ -1,4 +1,5 @@
 mod embedded_certificate;
+mod metrics;
 mod protocols;
 mod restrictions;
 #[cfg(test)]
@@ -22,6 +23,7 @@ use clap::Parser;
 use hyper::header::HOST;
 use hyper::http::{HeaderName, HeaderValue};
 use log::{debug, warn};
+use opentelemetry::global;
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
@@ -76,6 +78,15 @@ struct Wstunnel {
         default_value = "INFO"
     )]
     log_lvl: String,
+
+    /// Set the listen address for the prometheus metrics exporter.
+    #[arg(
+        long,
+        global = true,
+        verbatim_doc_comment,
+        default_value = None,
+    )]
+    metrics_provider_address: Option<String>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -737,6 +748,17 @@ async fn main() -> anyhow::Result<()> {
     };
     if let Err(err) = fdlimit::raise_fd_limit() {
         warn!("Failed to set soft filelimit to hard file limit: {}", err)
+    }
+
+    if let Some(addr) = args.metrics_provider_address {
+        match metrics::setup_metrics_provider(addr.as_str()).await {
+            Ok(provider) => {
+                let _ = global::set_meter_provider(provider);
+            }
+            Err(err) => {
+                panic!("Failed to setup metrics server: {err:?}")
+            }
+        }
     }
 
     match args.commands {
