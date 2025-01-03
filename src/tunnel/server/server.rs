@@ -1,6 +1,8 @@
 use anyhow::anyhow;
 use futures_util::FutureExt;
 use http_body_util::Either;
+use opentelemetry::metrics::Counter;
+use opentelemetry::{global, KeyValue};
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 
@@ -65,15 +67,27 @@ pub struct WsServerConfig {
     pub http_proxy: Option<Url>,
 }
 
+pub struct WsServerMetrics {
+    pub connections: Counter<u64>,
+}
+
 #[derive(Clone)]
 pub struct WsServer {
     pub config: Arc<WsServerConfig>,
+    pub metrics: Arc<WsServerMetrics>,
 }
 
 impl WsServer {
     pub fn new(config: WsServerConfig) -> Self {
+        let meter = global::meter_provider().meter("wstunnel");
         Self {
             config: Arc::new(config),
+            metrics: Arc::new(WsServerMetrics {
+                connections: meter
+                    .u64_counter("connections_created")
+                    .with_description("Counts the connections created. Attributes allow to split by remote host")
+                    .build(),
+            }),
         }
     }
 
@@ -127,6 +141,13 @@ impl WsServer {
         })?;
         info!("Tunnel accepted due to matched restriction: {}", restriction.name);
 
+        self.metrics.connections.add(
+            1,
+            &[
+                KeyValue::new("remote_host", format!("{}", remote.host)),
+                KeyValue::new("remote_port", i64::from(remote.port)),
+            ],
+        );
         let req_protocol = remote.protocol.clone();
         let inject_cookie = req_protocol.is_dynamic_reverse_tunnel();
         let tunnel = self

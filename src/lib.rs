@@ -1,5 +1,6 @@
 pub mod config;
 mod embedded_certificate;
+pub mod metrics;
 mod protocols;
 mod restrictions;
 #[cfg(test)]

@@ -1874,6 +1874,53 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
 
 [[package]]
+name = "opentelemetry"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab70038c28ed37b97d8ed414b6429d343a8bbf44c9f79ec854f3a643029ba6d7"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "opentelemetry-prometheus"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b834e966ea5e2d03dfe5f2253f03d22cce21403ee940265070eeee96cee0bcc"
+dependencies = [
+ "once_cell",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "prometheus",
+ "protobuf",
+ "tracing",
+]
+
+[[package]]
+name = "opentelemetry_sdk"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "231e9d6ceef9b0b2546ddf52335785ce41252bc7474ee8ba05bfad277be13ab8"
+dependencies = [
+ "async-trait",
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
+ "glob",
+ "opentelemetry",
+ "percent-encoding",
+ "rand",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2028,6 +2075,27 @@ checksum = "37d3544b3f2748c54e147655edb5025752e2303145b5aefb3c3ea2c78b973bb0"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "prometheus"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d33c28a30771f7f96db69893f78b857f7450d7e0237e9c8fc6427a81bae7ed1"
+dependencies = [
+ "cfg-if",
+ "fnv",
+ "lazy_static",
+ "memchr",
+ "parking_lot",
+ "protobuf",
+ "thiserror",
+]
+
+[[package]]
+name = "protobuf"
+version = "2.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "106dd99e98437432fed6519dedecfade6a06a73bb7b2a1e019fdd2bee5778d94"
 
 [[package]]
 name = "quick-error"
@@ -3534,9 +3602,13 @@ dependencies = [
  "log",
  "nix",
  "notify",
+ "opentelemetry",
+ "opentelemetry-prometheus",
+ "opentelemetry_sdk",
  "parking_lot",
  "pin-project",
  "ppp",
+ "prometheus",
  "rcgen",
  "regex",
  "rstest",
@@ -3569,6 +3641,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fdlimit",
+ "opentelemetry",
  "tokio",
  "tracing",
  "tracing-subscriber",
