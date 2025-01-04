@@ -15,7 +15,8 @@ use url::{Host, Url};
 
 pub const DEFAULT_CLIENT_UPGRADE_PATH_PREFIX: &str = "v1";
 
-#[derive(clap::Args, Debug)]
+#[derive(Debug)]
+#[cfg_attr(feature = "clap", derive(clap::Args))]
 pub struct Client {
     /// Listen on local and forwards traffic from remote. Can be specified multiple times
     /// examples:
@@ -39,7 +40,7 @@ pub struct Client {
     /// 'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
     ///
     /// 'unix:///tmp/wstunnel.sock:g.com:443' =>  listen for data from unix socket of path /tmp/wstunnel.sock and forward to g.com:443
-    #[arg(short='L', long, value_name = "{tcp,udp,socks5,stdio,unix}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(short='L', long, value_name = "{tcp,udp,socks5,stdio,unix}://[BIND:]PORT:HOST:PORT", value_parser = parse_tunnel_arg, verbatim_doc_comment))]
     pub local_to_remote: Vec<LocalToRemote>,
 
     /// Listen on remote and forwards traffic from local. Can be specified multiple times. Only tcp is supported
@@ -49,101 +50,101 @@ pub struct Client {
     /// 'socks5://[::1]:1212'            =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine (login/password is supported)
     /// 'http://[::1]:1212'         =>     listen on server for incoming http proxy request on port 1212 and forward dynamically request from local machine (login/password is supported)
     /// 'unix://wstunnel.sock:g.com:443' =>     listen on server for incoming data from unix socket of path wstunnel.sock and forward to g.com:443 from local machine
-    #[arg(short='R', long, value_name = "{tcp,udp,socks5,unix}://[BIND:]PORT:HOST:PORT", value_parser = parse_reverse_tunnel_arg, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(short='R', long, value_name = "{tcp,udp,socks5,unix}://[BIND:]PORT:HOST:PORT", value_parser = parse_reverse_tunnel_arg, verbatim_doc_comment))]
     pub remote_to_local: Vec<LocalToRemote>,
 
     /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
     /// You need to use {root, sudo, capabilities} to run wstunnel when using this option
-    #[arg(long, value_name = "INT", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "INT", verbatim_doc_comment))]
     pub socket_so_mark: Option<u32>,
 
     /// Client will maintain a pool of open connection to the server, in order to speed up the connection process.
     /// This option set the maximum number of connection that will be kept open.
     /// This is useful if you plan to create/destroy a lot of tunnel (i.e: with socks5 to navigate with a browser)
     /// It will avoid the latency of doing tcp + tls handshake with the server
-    #[arg(short = 'c', long, value_name = "INT", default_value = "0", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(short = 'c', long, value_name = "INT", default_value = "0", verbatim_doc_comment))]
     pub connection_min_idle: u32,
 
     /// The maximum of time in seconds while we are going to try to connect to the server before failing the connection/tunnel request
-    #[arg(long, value_name = "DURATION_IN_SECONDS", default_value = "300", value_parser = parse_duration_sec, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "DURATION_IN_SECONDS", default_value = "300", value_parser = parse_duration_sec, verbatim_doc_comment))]
     pub connection_retry_max_backoff_sec: Duration,
 
     /// Domain name that will be used as SNI during TLS handshake
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
     ///          or it will be flagged as fishy and your request rejected
-    #[arg(long, value_name = "DOMAIN_NAME", value_parser = parse_sni_override, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "DOMAIN_NAME", value_parser = parse_sni_override, verbatim_doc_comment))]
     pub tls_sni_override: Option<DnsName<'static>>,
 
     /// Disable sending SNI during TLS handshake
     /// Warning: Most reverse proxies rely on it
-    #[arg(long, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]
     pub tls_sni_disable: bool,
 
     /// Enable TLS certificate verification.
     /// Disabled by default. The client will happily connect to any server with self-signed certificate.
-    #[arg(long, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]
     pub tls_verify_certificate: bool,
 
     /// If set, will use this http proxy to connect to the server
-    #[arg(
+    #[cfg_attr(feature = "clap", arg(
         short = 'p',
         long,
         value_name = "USER:PASS@HOST:PORT",
         verbatim_doc_comment,
         env = "HTTP_PROXY"
-    )]
+    ))]
     pub http_proxy: Option<String>,
 
     /// If set, will use this login to connect to the http proxy. Override the one from --http-proxy
-    #[arg(long, value_name = "LOGIN", verbatim_doc_comment, env = "WSTUNNEL_HTTP_PROXY_LOGIN")]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "LOGIN", verbatim_doc_comment, env = "WSTUNNEL_HTTP_PROXY_LOGIN"))]
     pub http_proxy_login: Option<String>,
 
     /// If set, will use this password to connect to the http proxy. Override the one from --http-proxy
-    #[arg(
+    #[cfg_attr(feature = "clap", arg(
         long,
         value_name = "PASSWORD",
         verbatim_doc_comment,
         env = "WSTUNNEL_HTTP_PROXY_PASSWORD"
-    )]
+    ))]
     pub http_proxy_password: Option<String>,
 
     /// Use a specific prefix that will show up in the http path during the upgrade request.
     /// Useful if you need to route requests server side but don't have vhosts
     /// When using mTLS this option overrides the default behavior of using the common name of the
     /// client's certificate. This will likely result in the wstunnel server rejecting the connection.
-    #[arg(
+    #[cfg_attr(feature = "clap", arg(
         short = 'P',
         long,
         default_value = DEFAULT_CLIENT_UPGRADE_PATH_PREFIX,
         verbatim_doc_comment,
         env = "WSTUNNEL_HTTP_UPGRADE_PATH_PREFIX"
-    )]
+    ))]
     pub http_upgrade_path_prefix: String,
 
     /// Pass authorization header with basic auth credentials during the upgrade request.
     /// If you need more customization, you can use the http_headers option.
-    #[arg(long, value_name = "USER[:PASS]", value_parser = parse_http_credentials, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "USER[:PASS]", value_parser = parse_http_credentials, verbatim_doc_comment))]
     pub http_upgrade_credentials: Option<HeaderValue>,
 
     /// Frequency at which the client will send websocket pings to the server.
     /// Set to zero to disable.
-    #[arg(long, value_name = "seconds", default_value = "30", value_parser = parse_duration_sec, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "seconds", default_value = "30", value_parser = parse_duration_sec, verbatim_doc_comment))]
     pub websocket_ping_frequency_sec: Option<Duration>,
 
     /// Enable the masking of websocket frames. Default is false
     /// Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
-    #[arg(long, default_value = "false", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, default_value = "false", verbatim_doc_comment))]
     pub websocket_mask_frame: bool,
 
     /// Send custom headers in the upgrade request
     /// Can be specified multiple time
-    #[arg(short='H', long, value_name = "HEADER_NAME: HEADER_VALUE", value_parser = parse_http_headers, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(short='H', long, value_name = "HEADER_NAME: HEADER_VALUE", value_parser = parse_http_headers, verbatim_doc_comment))]
     pub http_headers: Vec<(HeaderName, HeaderValue)>,
 
     /// Send custom headers in the upgrade request reading them from a file.
     /// It overrides http_headers specified from command line.
     /// File is read everytime and file format must contain lines with `HEADER_NAME: HEADER_VALUE`
-    #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "FILE_PATH", verbatim_doc_comment))]
     pub http_headers_file: Option<PathBuf>,
 
     /// Address of the wstunnel server
@@ -157,19 +158,19 @@ pub struct Client {
     ///   - if you have wstunnel behind a reverse proxy, most of them (i.e: nginx) are going to turn http2 request into http1
     ///     This is not going to work, because http1 does not support streaming naturally
     ///   - The only way to make it works with http2 is to have wstunnel directly exposed to the internet without any reverse proxy in front of it
-    #[arg(value_name = "ws[s]|http[s]://wstunnel.server.com[:port]", value_parser = parse_server_url, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(value_name = "ws[s]|http[s]://wstunnel.server.com[:port]", value_parser = parse_server_url, verbatim_doc_comment))]
     pub remote_addr: Url,
 
     /// [Optional] Certificate (pem) to present to the server when connecting over TLS (HTTPS).
     /// Used when the server requires clients to authenticate themselves with a certificate (i.e. mTLS).
     /// Unless overridden, the HTTP upgrade path will be configured to be the common name (CN) of the certificate.
     /// The certificate will be automatically reloaded if it changes
-    #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "FILE_PATH", verbatim_doc_comment))]
     pub tls_certificate: Option<PathBuf>,
 
     /// [Optional] The private key for the corresponding certificate used with mTLS.
     /// The certificate will be automatically reloaded if it changes
-    #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "FILE_PATH", verbatim_doc_comment))]
     pub tls_private_key: Option<PathBuf>,
 
     /// Dns resolver to use to lookup ips of domain name. Can be specified multiple time
@@ -182,43 +183,44 @@ pub struct Client {
     /// system://0.0.0.0
     ///
     /// **WARN** On windows you may want to specify explicitly the DNS resolver to avoid excessive DNS queries
-    #[arg(long, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]
     pub dns_resolver: Vec<Url>,
 
     /// Enable if you prefer the dns resolver to prioritize IPv4 over IPv6
     /// This is useful if you have a broken IPv6 connection, and want to avoid the delay of trying to connect to IPv6
     /// If you don't have any IPv6 this does not change anything.
-    #[arg(
+    #[cfg_attr(feature = "clap", arg(
         long,
         default_value = "false",
         env = "WSTUNNEL_DNS_PREFER_IPV4",
         verbatim_doc_comment
-    )]
+    ))]
     pub dns_resolver_prefer_ipv4: bool,
 }
 
-#[derive(clap::Args, Debug)]
+#[derive(Debug)]
+#[cfg_attr(feature = "clap", derive(clap::Args))]
 pub struct Server {
     /// Address of the wstunnel server to bind to
     /// Example: With TLS wss://0.0.0.0:8080 or without ws://[::]:8080
     ///
     /// The server is capable of detecting by itself if the request is websocket or http2. So you don't need to specify it.
-    #[arg(value_name = "ws[s]://0.0.0.0[:port]", value_parser = parse_server_url, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(value_name = "ws[s]://0.0.0.0[:port]", value_parser = parse_server_url, verbatim_doc_comment))]
     pub remote_addr: Url,
 
     /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
     /// You need to use {root, sudo, capabilities} to run wstunnel when using this option
-    #[arg(long, value_name = "INT", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "INT", verbatim_doc_comment))]
     pub socket_so_mark: Option<u32>,
 
     /// Frequency at which the server will send websocket ping to client.
     /// Set to zero to disable.
-    #[arg(long, value_name = "seconds", default_value = "30", value_parser = parse_duration_sec, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "seconds", default_value = "30", value_parser = parse_duration_sec, verbatim_doc_comment))]
     pub websocket_ping_frequency_sec: Option<Duration>,
 
     /// Enable the masking of websocket frames. Default is false
     /// Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
-    #[arg(long, default_value = "false", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, default_value = "false", verbatim_doc_comment))]
     pub websocket_mask_frame: bool,
 
     /// Dns resolver to use to lookup ips of domain name
@@ -230,86 +232,86 @@ pub struct Server {
     ///  dns+tls://8.8.8.8?sni=dns.google for using dns over TLS
     /// To use libc resolver, use
     /// system://0.0.0.0
-    #[arg(long, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]
     pub dns_resolver: Vec<Url>,
 
     /// Enable if you prefer the dns resolver to prioritize IPv4 over IPv6
     /// This is useful if you have a broken IPv6 connection, and want to avoid the delay of trying to connect to IPv6
     /// If you don't have any IPv6 this does not change anything.
-    #[arg(
+    #[cfg_attr(feature = "clap", arg(
         long,
         default_value = "false",
         env = "WSTUNNEL_DNS_PREFER_IPV4",
         verbatim_doc_comment
-    )]
+    ))]
     pub dns_resolver_prefer_ipv4: bool,
 
     /// Server will only accept connection from the specified tunnel information.
     /// Can be specified multiple time
     /// Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
-    #[arg(
+    #[cfg_attr(feature = "clap", arg(
         long,
         value_name = "DEST:PORT",
         verbatim_doc_comment,
         conflicts_with = "restrict_config"
-    )]
+    ))]
     pub restrict_to: Option<Vec<String>>,
 
     /// Server will only accept connection from if this specific path prefix is used during websocket upgrade.
     /// Useful if you specify in the client a custom path prefix, and you want the server to only allow this one.
     /// The path prefix act as a secret to authenticate clients
     /// Disabled by default. Accept all path prefix. Can be specified multiple time
-    #[arg(
+    #[cfg_attr(feature = "clap", arg(
         short = 'r',
         long,
         verbatim_doc_comment,
         conflicts_with = "restrict_config",
         env = "WSTUNNEL_RESTRICT_HTTP_UPGRADE_PATH_PREFIX"
-    )]
+    ))]
     pub restrict_http_upgrade_path_prefix: Option<Vec<String>>,
 
     /// Path to the location of the restriction yaml config file.
     /// Restriction file is automatically reloaded if it changes
-    #[arg(long, verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]
     pub restrict_config: Option<PathBuf>,
 
     /// [Optional] Use custom certificate (pem) instead of the default embedded self-signed certificate.
     /// The certificate will be automatically reloaded if it changes
-    #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "FILE_PATH", verbatim_doc_comment))]
     pub tls_certificate: Option<PathBuf>,
 
     /// [Optional] Use a custom tls key (pem, ec, rsa) that the server will use instead of the default embedded one
     /// The private key will be automatically reloaded if it changes
-    #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "FILE_PATH", verbatim_doc_comment))]
     pub tls_private_key: Option<PathBuf>,
 
     /// [Optional] Enables mTLS (client authentication with certificate). Argument must be PEM file
     /// containing one or more certificates of CA's of which the certificate of clients needs to be signed with.
     /// The ca will be automatically reloaded if it changes
-    #[arg(long, value_name = "FILE_PATH", verbatim_doc_comment)]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "FILE_PATH", verbatim_doc_comment))]
     pub tls_client_ca_certs: Option<PathBuf>,
 
     /// If set, will use this http proxy to connect to the client
-    #[arg(
+    #[cfg_attr(feature = "clap", arg(
         short = 'p',
         long,
         value_name = "USER:PASS@HOST:PORT",
         verbatim_doc_comment,
         env = "HTTP_PROXY"
-    )]
+    ))]
     pub http_proxy: Option<String>,
 
     /// If set, will use this login to connect to the http proxy. Override the one from --http-proxy
-    #[arg(long, value_name = "LOGIN", verbatim_doc_comment, env = "WSTUNNEL_HTTP_PROXY_LOGIN")]
+    #[cfg_attr(feature = "clap", arg(long, value_name = "LOGIN", verbatim_doc_comment, env = "WSTUNNEL_HTTP_PROXY_LOGIN"))]
     pub http_proxy_login: Option<String>,
 
     /// If set, will use this password to connect to the http proxy. Override the one from --http-proxy
-    #[arg(
+    #[cfg_attr(feature = "clap", arg(
         long,
         value_name = "PASSWORD",
         verbatim_doc_comment,
         env = "WSTUNNEL_HTTP_PROXY_PASSWORD"
-    )]
+    ))]
     pub http_proxy_password: Option<String>,
 }
 

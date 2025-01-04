@@ -16,7 +16,7 @@ scopeguard = "1.2.0"
 
 bb8 = { version = "0.9.0", features = [] }
 bytes = { version = "1.9.0", features = [] }
-clap = { version = "4.5.23", features = ["derive", "env"] }
+clap = { version = "4.5.23", features = ["derive"], optional = true }
 fast-socks5 = { version = "0.10.0", features = [] }
 fastwebsockets = { git = "https://github.com/erebe/fastwebsockets.git", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.31" }
@@ -80,6 +80,9 @@ derive_more = { version = "1.0.0", features = ["from"] }
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 get_if_addrs = "0.5.3"
 
+[features]
+# Implements clap::Subcommand on config::Client and config::Server
+clap = ["dep:clap"]
 
 [profile.release]
 lto = "fat"
