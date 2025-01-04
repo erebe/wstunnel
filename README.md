@@ -675,6 +675,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 and run those commands at the root of the project
 
 ```
-cargo build
+cargo build --package wstunnel-cli
 target/debug/wstunnel ...
 ```
