@@ -3516,7 +3516,6 @@ dependencies = [
  "derive_more",
  "fast-socks5",
  "fastwebsockets",
- "fdlimit",
  "futures-util",
  "get_if_addrs",
  "hickory-resolver",
@@ -3555,6 +3554,19 @@ dependencies = [
  "urlencoding",
  "uuid",
  "x509-parser",
+]
+
+[[package]]
+name = "wstunnel-cli"
+version = "10.1.8"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fdlimit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wstunnel",
 ]
 
 [[package]]

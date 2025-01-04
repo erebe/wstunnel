@@ -15,48 +15,6 @@ use url::{Host, Url};
 
 pub const DEFAULT_CLIENT_UPGRADE_PATH_PREFIX: &str = "v1";
 
-/// Use Websocket or HTTP2 protocol to tunnel {TCP,UDP} traffic
-/// wsTunnelClient <---> wsTunnelServer <---> RemoteHost
-#[derive(clap::Parser, Debug)]
-#[command(author, version, about, verbatim_doc_comment, long_about = None)]
-pub struct Wstunnel {
-    #[command(subcommand)]
-    pub commands: Commands,
-
-    /// Disable color output in logs
-    #[arg(long, global = true, verbatim_doc_comment, env = "NO_COLOR")]
-    pub no_color: Option<String>,
-
-    /// *WARNING* The flag does nothing, you need to set the env variable *WARNING*
-    /// Control the number of threads that will be used.
-    /// By default, it is equal the number of cpus
-    #[arg(
-        long,
-        global = true,
-        value_name = "INT",
-        verbatim_doc_comment,
-        env = "TOKIO_WORKER_THREADS"
-    )]
-    pub nb_worker_threads: Option<u32>,
-
-    /// Control the log verbosity. i.e: TRACE, DEBUG, INFO, WARN, ERROR, OFF
-    /// for more details: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#example-syntax
-    #[arg(
-        long,
-        global = true,
-        value_name = "LOG_LEVEL",
-        verbatim_doc_comment,
-        env = "RUST_LOG",
-        default_value = "INFO"
-    )]
-    pub log_lvl: String,
-}
-
-#[derive(clap::Subcommand, Debug)]
-pub enum Commands {
-    Client(Box<Client>),
-    Server(Box<Server>),
-}
 #[derive(clap::Args, Debug)]
 pub struct Client {
     /// Listen on local and forwards traffic from remote. Can be specified multiple times

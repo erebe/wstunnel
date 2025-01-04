@@ -1,3 +1,6 @@
+[workspace]
+members = ["wstunnel-cli"]
+
 [package]
 name = "wstunnel"
 version = "10.1.8"
@@ -21,8 +24,6 @@ hickory-resolver = { version = "0.24.2", features = ["tokio", "dns-over-https-ru
 ppp = { version = "2.2.0", features = [] }
 async-channel = { version = "2.3.1", features = [] }
 arc-swap = { version = "1.7.1", features = [] }
-
-fdlimit = "0.3.0"
 
 # For config file parsing
 regex = { version = "1.11.1", default-features = false, features = ["std", "perf"] }
