@@ -36,8 +36,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
     let (tls_certificate, tls_key) = if let (Some(cert), Some(key)) =
         (args.tls_certificate.as_ref(), args.tls_private_key.as_ref())
     {
-        let tls_certificate =
-            tls::load_certificates_from_pem(cert).expect("Cannot load client TLS certificate (mTLS)");
+        let tls_certificate = tls::load_certificates_from_pem(cert).expect("Cannot load client TLS certificate (mTLS)");
         let tls_key = tls::load_private_key_from_file(key).expect("Cannot load client TLS private key (mTLS)");
         (Some(tls_certificate), Some(tls_key))
     } else {
@@ -56,8 +55,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
         args.http_upgrade_path_prefix
     };
 
-    let transport_scheme =
-        TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
+    let transport_scheme = TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
     let tls = match transport_scheme {
         TransportScheme::Ws | TransportScheme::Http => None,
         TransportScheme::Wss | TransportScheme::Https => Some(TlsClientConfig {
@@ -126,8 +124,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
         http_proxy,
     };
 
-    let client =
-        WsClient::new(client_config, args.connection_min_idle, args.connection_retry_max_backoff_sec).await?;
+    let client = WsClient::new(client_config, args.connection_min_idle, args.connection_retry_max_backoff_sec).await?;
     info!("Starting wstunnel client v{}", env!("CARGO_PKG_VERSION"),);
 
     // Keep track of all spawned tunnels
@@ -266,8 +263,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
 
         match &tunnel.local_protocol {
             LocalProtocol::Tcp { proxy_protocol } => {
-                let server =
-                    TcpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *proxy_protocol).await?;
+                let server = TcpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *proxy_protocol).await?;
                 spawned_tunnels.push(tokio::spawn(async move {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
@@ -337,8 +333,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
                 proxy_protocol,
             } => {
                 let server =
-                    HttpProxyTunnelListener::new(tunnel.local, *timeout, credentials.clone(), *proxy_protocol)
-                        .await?;
+                    HttpProxyTunnelListener::new(tunnel.local, *timeout, credentials.clone(), *proxy_protocol).await?;
                 spawned_tunnels.push(tokio::spawn(async move {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
@@ -392,8 +387,7 @@ pub async fn run_server(args: Server) -> anyhow::Result<()> {
 
         let tls_client_ca_certificates = args.tls_client_ca_certs.as_ref().map(|tls_client_ca| {
             Mutex::new(
-                tls::load_certificates_from_pem(tls_client_ca)
-                    .expect("Cannot load client CA certificate (mTLS)"),
+                tls::load_certificates_from_pem(tls_client_ca).expect("Cannot load client CA certificate (mTLS)"),
             )
         });
 

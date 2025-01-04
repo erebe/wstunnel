@@ -1,12 +1,12 @@
-use std::str::FromStr;
-use std::io;
 use clap::Parser;
+use std::io;
+use std::str::FromStr;
 use tracing::warn;
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
-use wstunnel::{run_client, run_server};
 use wstunnel::config::{Client, Server};
 use wstunnel::LocalProtocol;
+use wstunnel::{run_client, run_server};
 
 /// Use Websocket or HTTP2 protocol to tunnel {TCP,UDP} traffic
 /// wsTunnelClient <---> wsTunnelServer <---> RemoteHost
@@ -87,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     match args.commands {
         Commands::Client(args) => {
             run_client(*args).await?;
-        },
+        }
         Commands::Server(args) => {
             run_server(*args).await?;
         }
