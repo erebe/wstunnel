@@ -12,6 +12,7 @@ pub enum TransportScheme {
 }
 
 impl TransportScheme {
+    #[cfg(feature = "clap")] // this is only used inside a clap value parser
     pub const fn values() -> &'static [Self] {
         &[Self::Ws, Self::Wss, Self::Http, Self::Https]
     }
