@@ -55,7 +55,10 @@ pub struct Client {
     /// This option set the maximum number of connection that will be kept open.
     /// This is useful if you plan to create/destroy a lot of tunnel (i.e: with socks5 to navigate with a browser)
     /// It will avoid the latency of doing tcp + tls handshake with the server
-    #[cfg_attr(feature = "clap", arg(short = 'c', long, value_name = "INT", default_value = "0", verbatim_doc_comment))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(short = 'c', long, value_name = "INT", default_value = "0", verbatim_doc_comment)
+    )]
     pub connection_min_idle: u32,
 
     /// The maximum of time in seconds while we are going to try to connect to the server before failing the connection/tunnel request
@@ -79,26 +82,35 @@ pub struct Client {
     pub tls_verify_certificate: bool,
 
     /// If set, will use this http proxy to connect to the server
-    #[cfg_attr(feature = "clap", arg(
-        short = 'p',
-        long,
-        value_name = "USER:PASS@HOST:PORT",
-        verbatim_doc_comment,
-        env = "HTTP_PROXY"
-    ))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            short = 'p',
+            long,
+            value_name = "USER:PASS@HOST:PORT",
+            verbatim_doc_comment,
+            env = "HTTP_PROXY"
+        )
+    )]
     pub http_proxy: Option<String>,
 
     /// If set, will use this login to connect to the http proxy. Override the one from --http-proxy
-    #[cfg_attr(feature = "clap", arg(long, value_name = "LOGIN", verbatim_doc_comment, env = "WSTUNNEL_HTTP_PROXY_LOGIN"))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, value_name = "LOGIN", verbatim_doc_comment, env = "WSTUNNEL_HTTP_PROXY_LOGIN")
+    )]
     pub http_proxy_login: Option<String>,
 
     /// If set, will use this password to connect to the http proxy. Override the one from --http-proxy
-    #[cfg_attr(feature = "clap", arg(
-        long,
-        value_name = "PASSWORD",
-        verbatim_doc_comment,
-        env = "WSTUNNEL_HTTP_PROXY_PASSWORD"
-    ))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long,
+            value_name = "PASSWORD",
+            verbatim_doc_comment,
+            env = "WSTUNNEL_HTTP_PROXY_PASSWORD"
+        )
+    )]
     pub http_proxy_password: Option<String>,
 
     /// Use a specific prefix that will show up in the http path during the upgrade request.
@@ -182,12 +194,15 @@ pub struct Client {
     /// Enable if you prefer the dns resolver to prioritize IPv4 over IPv6
     /// This is useful if you have a broken IPv6 connection, and want to avoid the delay of trying to connect to IPv6
     /// If you don't have any IPv6 this does not change anything.
-    #[cfg_attr(feature = "clap", arg(
-        long,
-        default_value = "false",
-        env = "WSTUNNEL_DNS_PREFER_IPV4",
-        verbatim_doc_comment
-    ))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long,
+            default_value = "false",
+            env = "WSTUNNEL_DNS_PREFER_IPV4",
+            verbatim_doc_comment
+        )
+    )]
     pub dns_resolver_prefer_ipv4: bool,
 }
 
@@ -231,36 +246,45 @@ pub struct Server {
     /// Enable if you prefer the dns resolver to prioritize IPv4 over IPv6
     /// This is useful if you have a broken IPv6 connection, and want to avoid the delay of trying to connect to IPv6
     /// If you don't have any IPv6 this does not change anything.
-    #[cfg_attr(feature = "clap", arg(
-        long,
-        default_value = "false",
-        env = "WSTUNNEL_DNS_PREFER_IPV4",
-        verbatim_doc_comment
-    ))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long,
+            default_value = "false",
+            env = "WSTUNNEL_DNS_PREFER_IPV4",
+            verbatim_doc_comment
+        )
+    )]
     pub dns_resolver_prefer_ipv4: bool,
 
     /// Server will only accept connection from the specified tunnel information.
     /// Can be specified multiple time
     /// Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
-    #[cfg_attr(feature = "clap", arg(
-        long,
-        value_name = "DEST:PORT",
-        verbatim_doc_comment,
-        conflicts_with = "restrict_config"
-    ))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long,
+            value_name = "DEST:PORT",
+            verbatim_doc_comment,
+            conflicts_with = "restrict_config"
+        )
+    )]
     pub restrict_to: Option<Vec<String>>,
 
     /// Server will only accept connection from if this specific path prefix is used during websocket upgrade.
     /// Useful if you specify in the client a custom path prefix, and you want the server to only allow this one.
     /// The path prefix act as a secret to authenticate clients
     /// Disabled by default. Accept all path prefix. Can be specified multiple time
-    #[cfg_attr(feature = "clap", arg(
-        short = 'r',
-        long,
-        verbatim_doc_comment,
-        conflicts_with = "restrict_config",
-        env = "WSTUNNEL_RESTRICT_HTTP_UPGRADE_PATH_PREFIX"
-    ))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            short = 'r',
+            long,
+            verbatim_doc_comment,
+            conflicts_with = "restrict_config",
+            env = "WSTUNNEL_RESTRICT_HTTP_UPGRADE_PATH_PREFIX"
+        )
+    )]
     pub restrict_http_upgrade_path_prefix: Option<Vec<String>>,
 
     /// Path to the location of the restriction yaml config file.
@@ -285,26 +309,35 @@ pub struct Server {
     pub tls_client_ca_certs: Option<PathBuf>,
 
     /// If set, will use this http proxy to connect to the client
-    #[cfg_attr(feature = "clap", arg(
-        short = 'p',
-        long,
-        value_name = "USER:PASS@HOST:PORT",
-        verbatim_doc_comment,
-        env = "HTTP_PROXY"
-    ))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            short = 'p',
+            long,
+            value_name = "USER:PASS@HOST:PORT",
+            verbatim_doc_comment,
+            env = "HTTP_PROXY"
+        )
+    )]
     pub http_proxy: Option<String>,
 
     /// If set, will use this login to connect to the http proxy. Override the one from --http-proxy
-    #[cfg_attr(feature = "clap", arg(long, value_name = "LOGIN", verbatim_doc_comment, env = "WSTUNNEL_HTTP_PROXY_LOGIN"))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, value_name = "LOGIN", verbatim_doc_comment, env = "WSTUNNEL_HTTP_PROXY_LOGIN")
+    )]
     pub http_proxy_login: Option<String>,
 
     /// If set, will use this password to connect to the http proxy. Override the one from --http-proxy
-    #[cfg_attr(feature = "clap", arg(
-        long,
-        value_name = "PASSWORD",
-        verbatim_doc_comment,
-        env = "WSTUNNEL_HTTP_PROXY_PASSWORD"
-    ))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long,
+            value_name = "PASSWORD",
+            verbatim_doc_comment,
+            env = "WSTUNNEL_HTTP_PROXY_PASSWORD"
+        )
+    )]
     pub http_proxy_password: Option<String>,
 }
 
@@ -317,9 +350,9 @@ pub struct LocalToRemote {
 
 #[cfg(feature = "clap")]
 mod parsers {
+    use super::LocalToRemote;
     use crate::tunnel::transport::TransportScheme;
     use crate::tunnel::LocalProtocol;
-    use super::LocalToRemote;
     use base64::Engine;
     use hyper::http::{HeaderName, HeaderValue};
     use std::collections::BTreeMap;
@@ -331,23 +364,23 @@ mod parsers {
     use std::time::Duration;
     use tokio_rustls::rustls::pki_types::DnsName;
     use url::{Host, Url};
-    
+
     pub fn parse_duration_sec(arg: &str) -> Result<Duration, io::Error> {
         use std::io::Error;
-    
+
         let Ok(secs) = arg.parse::<u64>() else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 format!("cannot duration of seconds from {}", arg),
             ));
         };
-    
+
         Ok(Duration::from_secs(secs))
     }
-    
+
     pub fn parse_local_bind(arg: &str) -> Result<(SocketAddr, &str), io::Error> {
         use std::io::Error;
-    
+
         let (bind, remaining) = if arg.starts_with('[') {
             // ipv6 bind
             let Some((ipv6_str, remaining)) = arg.split_once(']') else {
@@ -362,7 +395,7 @@ mod parsers {
                     format!("cannot parse IPv6 bind from {}", ipv6_str),
                 ));
             };
-    
+
             (IpAddr::V6(ipv6_addr), remaining)
         } else {
             // Maybe ipv4 addr
@@ -372,24 +405,24 @@ mod parsers {
                 |ip4_addr| (IpAddr::V4(ip4_addr), remaining),
             )
         };
-    
+
         let remaining = remaining.trim_start_matches(':');
         let (port_str, remaining) = remaining.split_once([':', '?']).unwrap_or((remaining, ""));
-    
+
         let Ok(bind_port): Result<u16, _> = port_str.parse() else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 format!("cannot parse bind port from {}", port_str),
             ));
         };
-    
+
         Ok((SocketAddr::new(bind, bind_port), remaining))
     }
-    
+
     #[allow(clippy::type_complexity)]
     pub fn parse_tunnel_dest(remaining: &str) -> Result<(Host<String>, u16, BTreeMap<String, String>), io::Error> {
         use std::io::Error;
-    
+
         // Using http or else the URL lib don't try to fully parse the host into an IPv4/IPv6
         let Ok(remote) = Url::parse(&format!("https://{}", remaining)) else {
             return Err(Error::new(
@@ -397,14 +430,14 @@ mod parsers {
                 format!("cannot parse remote from {}", remaining),
             ));
         };
-    
+
         let Some(remote_host) = remote.host() else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 format!("cannot parse remote host from {}", remaining),
             ));
         };
-    
+
         let remote_port = match remote.port() {
             Some(remote_port) => remote_port,
             // the url lib does not parse the port if it is the default one
@@ -416,11 +449,11 @@ mod parsers {
                 ))
             }
         };
-    
+
         let options: BTreeMap<String, String> = remote.query_pairs().into_owned().collect();
         Ok((remote_host.to_owned(), remote_port, options))
     }
-    
+
     pub fn parse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
         use std::io::Error;
         let get_timeout = |options: &BTreeMap<String, String>| {
@@ -436,14 +469,14 @@ mod parsers {
                 .and_then(|login| options.get("password").map(|p| (login.to_string(), p.to_string())))
         };
         let get_proxy_protocol = |options: &BTreeMap<String, String>| options.contains_key("proxy_protocol");
-    
+
         let Some((proto, tunnel_info)) = arg.split_once("://") else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 format!("cannot parse protocol from {}", arg),
             ));
         };
-    
+
         match proto {
             "tcp" => {
                 let (local_bind, remaining) = parse_local_bind(tunnel_info)?;
@@ -459,7 +492,7 @@ mod parsers {
             "udp" => {
                 let (local_bind, remaining) = parse_local_bind(tunnel_info)?;
                 let (dest_host, dest_port, options) = parse_tunnel_dest(remaining)?;
-    
+
                 Ok(LocalToRemote {
                     local_protocol: LocalProtocol::Udp {
                         timeout: get_timeout(&options),
@@ -550,7 +583,7 @@ mod parsers {
             )),
         }
     }
-    
+
     pub fn parse_reverse_tunnel_arg(arg: &str) -> Result<LocalToRemote, io::Error> {
         let proto = parse_tunnel_arg(arg)?;
         let local_protocol = match proto.local_protocol {
@@ -577,14 +610,14 @@ mod parsers {
                 ))
             }
         };
-    
+
         Ok(LocalToRemote {
             local_protocol,
             local: proto.local,
             remote: proto.remote,
         })
     }
-    
+
     pub fn parse_sni_override(arg: &str) -> Result<DnsName<'static>, io::Error> {
         match DnsName::try_from(arg.to_string()) {
             Ok(val) => Ok(val),
@@ -594,7 +627,7 @@ mod parsers {
             )),
         }
     }
-    
+
     pub fn parse_http_headers(arg: &str) -> Result<(HeaderName, HeaderValue), io::Error> {
         let Some((key, value)) = arg.split_once(':') else {
             return Err(io::Error::new(
@@ -602,7 +635,7 @@ mod parsers {
                 format!("cannot parse http header from {}", arg),
             ));
         };
-    
+
         let value = match HeaderValue::from_str(value.trim()) {
             Ok(value) => value,
             Err(err) => {
@@ -612,10 +645,10 @@ mod parsers {
                 ))
             }
         };
-    
+
         Ok((HeaderName::from_str(key).unwrap(), value))
     }
-    
+
     pub fn parse_http_credentials(arg: &str) -> Result<HeaderValue, io::Error> {
         let encoded = base64::engine::general_purpose::STANDARD.encode(arg.trim().as_bytes());
         let Ok(header) = HeaderValue::from_str(&format!("Basic {}", encoded)) else {
@@ -624,10 +657,10 @@ mod parsers {
                 format!("cannot parse http credentials {}", arg),
             ));
         };
-    
+
         Ok(header)
     }
-    
+
     pub fn parse_server_url(arg: &str) -> Result<Url, io::Error> {
         let Ok(url) = Url::parse(arg) else {
             return Err(io::Error::new(
@@ -635,77 +668,77 @@ mod parsers {
                 format!("cannot parse server url {}", arg),
             ));
         };
-    
+
         if !TransportScheme::values().iter().any(|x| x.to_str() == url.scheme()) {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("invalid scheme {}", url.scheme()),
             ));
         }
-    
+
         if url.host().is_none() {
             return Err(io::Error::new(ErrorKind::InvalidInput, format!("invalid server host {}", arg)));
         }
-    
+
         Ok(url)
     }
-}
 
-#[cfg(test)]
-mod test {
-    use crate::config::{parse_local_bind, parse_tunnel_arg, parse_tunnel_dest, LocalToRemote};
-    use crate::tunnel::LocalProtocol;
-    use collection_macros::btreemap;
-    use std::collections::BTreeMap;
-    use std::io;
-    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-    use test_case::test_case;
-    use url::Host;
-
-    #[test_case("localhost:443" => (Host::Domain("localhost".to_string()), 443, BTreeMap::new()) ; "with domain")]
-    #[test_case("127.0.0.1:443" => (Host::Ipv4(Ipv4Addr::new(127, 0, 0, 1)), 443, BTreeMap::new()) ; "with IPv4")]
-    #[test_case("[::1]:8080" => (Host::Ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 8080, BTreeMap::new()) ; "with IpV6")]
-    #[test_case("a:1?timeout_sec=30&b=5" => (Host::Domain("a".to_string()), 1, btreemap! { "b".to_string() => "5".to_string(), "timeout_sec".to_string() => "30".to_string() }) ; "with options")]
-    fn test_parse_tunnel_dest(input: &str) -> (Host<String>, u16, BTreeMap<String, String>) {
-        parse_tunnel_dest(input).unwrap()
-    }
-
-    const LOCALHOST_IP4: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 443);
-    const LOCALHOST_IP6: SocketAddrV6 = SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0);
-
-    #[test_case("domain.com:443" => matches Err(_) ; "with domain")]
-    #[test_case("127.0.0.1" => matches Err(_) ; "with no port")]
-    #[test_case("127.0.0.1:444444443" => matches Err(_) ; "with too long port")]
-    #[test_case("127.0.0.1:443" => matches Ok((SocketAddr::V4(LOCALHOST_IP4), _)) ; "with ipv4")]
-    #[test_case("[::1]:443" => matches Ok((SocketAddr::V6(LOCALHOST_IP6), _)) ; "with ipv6")]
-    fn test_parse_local_bind(input: &str) -> Result<(SocketAddr, &str), io::Error> {
-        parse_local_bind(input)
-    }
-
-    #[test_case("domain.com:443" => panics ""; "with no protocol")]
-    #[test_case("sdsf://443:domain.com:443" => panics ""; "with invalid protocol")]
-    #[test_case("tcp://443:domain.com:4443" =>
-        LocalToRemote {
-            local_protocol: LocalProtocol::Tcp { proxy_protocol: false },
-            local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 443)),
-            remote: (Host::Domain("domain.com".to_string()), 4443),
+    #[cfg(test)]
+    mod test {
+        use super::{parse_local_bind, parse_tunnel_arg, parse_tunnel_dest, LocalToRemote};
+        use crate::tunnel::LocalProtocol;
+        use collection_macros::btreemap;
+        use std::collections::BTreeMap;
+        use std::io;
+        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+        use test_case::test_case;
+        use url::Host;
+    
+        #[test_case("localhost:443" => (Host::Domain("localhost".to_string()), 443, BTreeMap::new()) ; "with domain")]
+        #[test_case("127.0.0.1:443" => (Host::Ipv4(Ipv4Addr::new(127, 0, 0, 1)), 443, BTreeMap::new()) ; "with IPv4")]
+        #[test_case("[::1]:8080" => (Host::Ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 8080, BTreeMap::new()) ; "with IpV6")]
+        #[test_case("a:1?timeout_sec=30&b=5" => (Host::Domain("a".to_string()), 1, btreemap! { "b".to_string() => "5".to_string(), "timeout_sec".to_string() => "30".to_string() }) ; "with options")]
+        fn test_parse_tunnel_dest(input: &str) -> (Host<String>, u16, BTreeMap<String, String>) {
+            parse_tunnel_dest(input).unwrap()
         }
-    ; "with no local bind")]
-    #[test_case("udp://[::1]:443:toto.com:4443?timeout_sec=30" =>
-        LocalToRemote {
-            local_protocol: LocalProtocol::Udp { timeout: Some(std::time::Duration::from_secs(30)) },
-            local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0)),
-            remote: (Host::Domain("toto.com".to_string()), 4443),
+    
+        const LOCALHOST_IP4: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 443);
+        const LOCALHOST_IP6: SocketAddrV6 = SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0);
+    
+        #[test_case("domain.com:443" => matches Err(_) ; "with domain")]
+        #[test_case("127.0.0.1" => matches Err(_) ; "with no port")]
+        #[test_case("127.0.0.1:444444443" => matches Err(_) ; "with too long port")]
+        #[test_case("127.0.0.1:443" => matches Ok((SocketAddr::V4(LOCALHOST_IP4), _)) ; "with ipv4")]
+        #[test_case("[::1]:443" => matches Ok((SocketAddr::V6(LOCALHOST_IP6), _)) ; "with ipv6")]
+        fn test_parse_local_bind(input: &str) -> Result<(SocketAddr, &str), io::Error> {
+            parse_local_bind(input)
         }
-    ; "with fully defined tunnel")]
-    #[test_case("udp://[::1]:443:[::1]:4443?timeout_sec=30" =>
-        LocalToRemote {
-            local_protocol: LocalProtocol::Udp { timeout: Some(std::time::Duration::from_secs(30)) },
-            local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0)),
-            remote: (Host::Ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 4443),
+    
+        #[test_case("domain.com:443" => panics ""; "with no protocol")]
+        #[test_case("sdsf://443:domain.com:443" => panics ""; "with invalid protocol")]
+        #[test_case("tcp://443:domain.com:4443" =>
+            LocalToRemote {
+                local_protocol: LocalProtocol::Tcp { proxy_protocol: false },
+                local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 443)),
+                remote: (Host::Domain("domain.com".to_string()), 4443),
+            }
+        ; "with no local bind")]
+        #[test_case("udp://[::1]:443:toto.com:4443?timeout_sec=30" =>
+            LocalToRemote {
+                local_protocol: LocalProtocol::Udp { timeout: Some(std::time::Duration::from_secs(30)) },
+                local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0)),
+                remote: (Host::Domain("toto.com".to_string()), 4443),
+            }
+        ; "with fully defined tunnel")]
+        #[test_case("udp://[::1]:443:[::1]:4443?timeout_sec=30" =>
+            LocalToRemote {
+                local_protocol: LocalProtocol::Udp { timeout: Some(std::time::Duration::from_secs(30)) },
+                local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0)),
+                remote: (Host::Ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 4443),
+            }
+        ; "with full ipv6 tunnel")]
+        fn test_parse_tunnel_arg(input: &str) -> LocalToRemote {
+            parse_tunnel_arg(input).unwrap()
         }
-    ; "with full ipv6 tunnel")]
-    fn test_parse_tunnel_arg(input: &str) -> LocalToRemote {
-        parse_tunnel_arg(input).unwrap()
     }
 }
