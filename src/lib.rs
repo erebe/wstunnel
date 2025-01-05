@@ -2,6 +2,7 @@ pub mod config;
 mod embedded_certificate;
 mod protocols;
 mod restrictions;
+mod somark;
 #[cfg(test)]
 mod test_integrations;
 mod tunnel;
@@ -10,6 +11,7 @@ use crate::config::{Client, Server, DEFAULT_CLIENT_UPGRADE_PATH_PREFIX};
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
+use crate::somark::SoMark;
 use crate::tunnel::client::{TlsClientConfig, WsClient, WsClientConfig};
 use crate::tunnel::connectors::{Socks5TunnelConnector, TcpTunnelConnector, UdpTunnelConnector};
 use crate::tunnel::listeners::{
@@ -102,7 +104,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
             tls,
         )
         .unwrap(),
-        socket_so_mark: args.socket_so_mark,
+        socket_so_mark: SoMark::new(args.socket_so_mark),
         http_upgrade_path_prefix,
         http_upgrade_credentials: args.http_upgrade_credentials,
         http_headers: args.http_headers.into_iter().filter(|(k, _)| k != HOST).collect(),
@@ -117,7 +119,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
         dns_resolver: DnsResolver::new_from_urls(
             &args.dns_resolver,
             http_proxy.clone(),
-            args.socket_so_mark,
+            SoMark::new(args.socket_so_mark),
             !args.dns_resolver_prefer_ipv4,
         )
         .expect("cannot create dns resolver"),
@@ -430,7 +432,7 @@ pub async fn run_server(args: Server) -> anyhow::Result<()> {
 
     let http_proxy = mk_http_proxy(args.http_proxy, args.http_proxy_login, args.http_proxy_password)?;
     let server_config = WsServerConfig {
-        socket_so_mark: args.socket_so_mark,
+        socket_so_mark: SoMark::new(args.socket_so_mark),
         bind: args.remote_addr.socket_addrs(|| Some(8080))?[0],
         websocket_ping_frequency: args
             .websocket_ping_frequency_sec
@@ -442,7 +444,7 @@ pub async fn run_server(args: Server) -> anyhow::Result<()> {
         dns_resolver: DnsResolver::new_from_urls(
             &args.dns_resolver,
             None,
-            args.socket_so_mark,
+            SoMark::new(args.socket_so_mark),
             !args.dns_resolver_prefer_ipv4,
         )
         .expect("Cannot create DNS resolver"),

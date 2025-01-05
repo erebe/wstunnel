@@ -9,6 +9,7 @@ use socket2::{SockRef, TcpKeepalive};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use crate::protocols::dns::DnsResolver;
+use crate::somark::SoMark;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
@@ -18,7 +19,7 @@ use tracing::log::info;
 use tracing::{debug, instrument};
 use url::{Host, Url};
 
-pub fn configure_socket(socket: SockRef, so_mark: &Option<u32>) -> Result<(), anyhow::Error> {
+pub fn configure_socket(socket: SockRef, so_mark: SoMark) -> Result<(), anyhow::Error> {
     socket
         .set_nodelay(true)
         .with_context(|| format!("cannot set no_delay on socket: {:?}", io::Error::last_os_error()))?;
@@ -41,12 +42,7 @@ pub fn configure_socket(socket: SockRef, so_mark: &Option<u32>) -> Result<(), an
         .set_tcp_keepalive(&tcp_keepalive)
         .with_context(|| format!("cannot set tcp_keepalive on socket: {:?}", io::Error::last_os_error()))?;
 
-    #[cfg(target_os = "linux")]
-    if let Some(so_mark) = so_mark {
-        socket
-            .set_mark(*so_mark)
-            .with_context(|| format!("cannot set SO_MARK on socket: {:?}", io::Error::last_os_error()))?;
-    }
+    so_mark.set_mark(socket).context("cannot set SO_MARK on socket")?;
 
     Ok(())
 }
@@ -54,7 +50,7 @@ pub fn configure_socket(socket: SockRef, so_mark: &Option<u32>) -> Result<(), an
 pub async fn connect(
     host: &Host<String>,
     port: u16,
-    so_mark: Option<u32>,
+    so_mark: SoMark,
     connect_timeout: Duration,
     dns_resolver: &DnsResolver,
 ) -> Result<TcpStream, anyhow::Error> {
@@ -85,7 +81,7 @@ pub async fn connect(
                 continue;
             }
         };
-        configure_socket(socket2::SockRef::from(&socket), &so_mark)?;
+        configure_socket(socket2::SockRef::from(&socket), so_mark)?;
 
         // Spawn the connection attempt in the join set.
         // We include a delay of ix * 250 milliseconds, as per RFC8305.
@@ -142,7 +138,7 @@ pub async fn connect_with_http_proxy(
     proxy: &Url,
     host: &Host<String>,
     port: u16,
-    so_mark: Option<u32>,
+    so_mark: SoMark,
     connect_timeout: Duration,
     dns_resolver: &DnsResolver,
 ) -> Result<TcpStream, anyhow::Error> {
@@ -287,7 +283,7 @@ mod tests {
             &Url::parse(&format!("http://127.0.0.1:{proxy_port}")).unwrap(),
             &Host::Domain(host.to_string()),
             server_port,
-            None,
+            SoMark::new(None),
             Duration::from_secs(1),
             &DnsResolver::System,
         )

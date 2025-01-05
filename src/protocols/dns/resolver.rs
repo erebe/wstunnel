@@ -1,4 +1,5 @@
 use crate::protocols;
+use crate::somark::SoMark;
 use anyhow::{anyhow, Context};
 use futures_util::{FutureExt, TryFutureExt};
 use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
@@ -65,14 +66,14 @@ impl DnsResolver {
     pub fn new_from_urls(
         resolvers: &[Url],
         proxy: Option<Url>,
-        so_mark: Option<u32>,
+        so_mark: SoMark,
         prefer_ipv6: bool,
     ) -> anyhow::Result<Self> {
         fn mk_resolver(
             cfg: ResolverConfig,
             mut opts: ResolverOpts,
             proxy: Option<Url>,
-            so_mark: Option<u32>,
+            so_mark: SoMark,
         ) -> AsyncResolver<GenericConnector<TokioRuntimeProviderWithSoMark>> {
             opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
             opts.timeout = Duration::from_secs(1);
@@ -164,16 +165,14 @@ impl DnsResolver {
 pub struct TokioRuntimeProviderWithSoMark {
     runtime: TokioRuntimeProvider,
     proxy: Option<Arc<Url>>,
-    #[cfg(target_os = "linux")]
-    so_mark: Option<u32>,
+    so_mark: SoMark,
 }
 
 impl TokioRuntimeProviderWithSoMark {
-    fn new(proxy: Option<Url>, so_mark: Option<u32>) -> Self {
+    fn new(proxy: Option<Url>, so_mark: SoMark) -> Self {
         Self {
             runtime: TokioRuntimeProvider::default(),
             proxy: proxy.map(Arc::new),
-            #[cfg(target_os = "linux")]
             so_mark,
         }
     }
@@ -192,10 +191,6 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
 
     #[inline]
     fn connect_tcp(&self, server_addr: SocketAddr) -> Pin<Box<dyn Send + Future<Output = std::io::Result<Self::Tcp>>>> {
-        #[cfg(not(target_os = "linux"))]
-        let so_mark = None;
-
-        #[cfg(target_os = "linux")]
         let so_mark = self.so_mark;
         let proxy = self.proxy.clone();
         let socket = async move {
@@ -242,13 +237,11 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
 
         #[cfg(target_os = "linux")]
         let socket = {
-            use socket2::SockRef;
-
             socket.map({
                 let so_mark = self.so_mark;
                 move |sock| {
-                    if let (Ok(sock), Some(so_mark)) = (&sock, so_mark) {
-                        SockRef::from(sock).set_mark(so_mark)?;
+                    if let Ok(ref sock) = sock {
+                        so_mark.set_mark(socket2::SockRef::from(sock))?;
                     }
                     sock
                 }
