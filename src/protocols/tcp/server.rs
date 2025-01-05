@@ -208,6 +208,7 @@ pub async fn connect_with_http_proxy(
     Ok(socket)
 }
 
+#[cfg_attr(not(target_os = "linux"), expect(unused_variables))]
 pub async fn run_server(bind: SocketAddr, ip_transparent: bool) -> Result<TcpListenerStream, anyhow::Error> {
     info!("Starting TCP server listening cnx on {}", bind);
 
