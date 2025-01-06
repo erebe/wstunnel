@@ -33,6 +33,7 @@ use crate::tunnel::server::handler_websocket::ws_server_upgrade;
 use crate::tunnel::server::reverse_tunnel::ReverseTunnelServer;
 use crate::tunnel::server::utils::{
     bad_request, extract_path_prefix, extract_tunnel_info, extract_x_forwarded_for, find_mapped_port, validate_tunnel,
+    HttpResponse,
 };
 use crate::tunnel::tls_reloader::TlsReloader;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -89,68 +90,52 @@ impl WsServer {
             Pin<Box<dyn AsyncWrite + Send>>,
             bool,
         ),
-        Response<Either<String, BoxBody<Bytes, anyhow::Error>>>,
+        HttpResponse,
     > {
-        match extract_x_forwarded_for(req) {
-            Ok(Some((x_forward_for, x_forward_for_str))) => {
-                info!("Request X-Forwarded-For: {:?}", x_forward_for);
-                Span::current().record("forwarded_for", x_forward_for_str);
-                client_addr.set_ip(x_forward_for);
-            }
-            Ok(_) => {}
-            Err(_err) => return Err(bad_request()),
+        if let Some((x_forward_for, x_forward_for_str)) = extract_x_forwarded_for(req) {
+            info!("Request X-Forwarded-For: {x_forward_for:?}");
+            Span::current().record("forwarded_for", x_forward_for_str);
+            client_addr.set_ip(x_forward_for);
         };
 
-        let path_prefix = match extract_path_prefix(req) {
-            Ok(p) => p,
-            Err(_err) => return Err(bad_request()),
-        };
+        let path_prefix = extract_path_prefix(req.uri().path()).map_err(|err| {
+            warn!("Rejecting connection with {err}: {}", req.uri());
+            bad_request()
+        })?;
 
         if let Some(restrict_path) = restrict_path_prefix {
             if path_prefix != restrict_path {
                 warn!(
-                    "Client requested upgrade path '{}' does not match upgrade path restriction '{}' (mTLS, etc.)",
-                    path_prefix, restrict_path
+                    "Client requested upgrade path '{path_prefix}' does not match upgrade path restriction '{restrict_path}' (mTLS, etc.)"
                 );
                 return Err(bad_request());
             }
         }
 
-        let jwt = match extract_tunnel_info(req) {
-            Ok(jwt) => jwt,
-            Err(_err) => return Err(bad_request()),
-        };
+        let jwt = extract_tunnel_info(req)?;
 
         Span::current().record("id", &jwt.claims.id);
         Span::current().record("remote", format!("{}:{}", jwt.claims.r, jwt.claims.rp));
-        let remote = match RemoteAddr::try_from(jwt.claims) {
-            Ok(remote) => remote,
-            Err(err) => {
-                warn!("Rejecting connection with bad tunnel info: {} {}", err, req.uri());
-                return Err(bad_request());
-            }
-        };
+        let remote = RemoteAddr::try_from(jwt.claims).map_err(|err| {
+            warn!("Rejecting connection with bad tunnel info: {err} {}", req.uri());
+            bad_request()
+        })?;
 
-        let restriction = match validate_tunnel(&remote, path_prefix, &restrictions) {
-            Some(matched_restriction) => {
-                info!("Tunnel accepted due to matched restriction: {}", matched_restriction.name);
-                matched_restriction
-            }
-            None => {
-                warn!("Rejecting connection with not allowed destination: {:?}", remote);
-                return Err(bad_request());
-            }
-        };
+        let restriction = validate_tunnel(&remote, path_prefix, &restrictions).ok_or_else(|| {
+            warn!("Rejecting connection with not allowed destination: {remote:?}");
+            bad_request()
+        })?;
+        info!("Tunnel accepted due to matched restriction: {}", restriction.name);
 
         let req_protocol = remote.protocol.clone();
         let inject_cookie = req_protocol.is_dynamic_reverse_tunnel();
-        let tunnel = match self.exec_tunnel(restriction, remote, client_addr).await {
-            Ok(ret) => ret,
-            Err(err) => {
-                warn!("Rejecting connection with bad upgrade request: {} {}", err, req.uri());
-                return Err(bad_request());
-            }
-        };
+        let tunnel = self
+            .exec_tunnel(restriction, remote, client_addr)
+            .await
+            .map_err(|err| {
+                warn!("Rejecting connection with bad upgrade request: {err} {}", req.uri());
+                bad_request()
+            })?;
 
         let (remote_addr, local_rx, local_tx) = tunnel;
         info!("connected to {:?} {}:{}", req_protocol, remote_addr.host, remote_addr.port);

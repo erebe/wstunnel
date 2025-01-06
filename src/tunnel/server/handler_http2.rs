@@ -1,5 +1,5 @@
 use crate::restrictions::types::RestrictionsRules;
-use crate::tunnel::server::utils::{bad_request, inject_cookie};
+use crate::tunnel::server::utils::{bad_request, inject_cookie, HttpResponse};
 use crate::tunnel::server::WsServer;
 use crate::tunnel::transport;
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
@@ -22,7 +22,7 @@ pub(super) async fn http_server_upgrade(
     restrict_path_prefix: Option<String>,
     client_addr: SocketAddr,
     mut req: Request<Incoming>,
-) -> Response<Either<String, BoxBody<Bytes, anyhow::Error>>> {
+) -> HttpResponse {
     let (remote_addr, local_rx, local_tx, need_cookie) = match server
         .handle_tunnel_request(restrictions, restrict_path_prefix, client_addr, &req)
         .await

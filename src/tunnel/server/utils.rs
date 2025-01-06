@@ -5,6 +5,7 @@ use crate::restrictions::types::{
 use crate::tunnel::transport::{jwt_token_to_tunnel, tunnel_to_jwt_token, JwtTunnelConfig, JWT_HEADER_PREFIX};
 use crate::tunnel::RemoteAddr;
 use bytes::Bytes;
+use derive_more::{Display, Error};
 use http_body_util::combinators::BoxBody;
 use http_body_util::Either;
 use hyper::body::{Body, Incoming};
@@ -17,7 +18,9 @@ use tracing::{error, info, warn};
 use url::Host;
 use uuid::Uuid;
 
-pub(super) fn bad_request() -> Response<Either<String, BoxBody<Bytes, anyhow::Error>>> {
+pub type HttpResponse = Response<Either<String, BoxBody<Bytes, anyhow::Error>>>;
+
+pub(super) fn bad_request() -> HttpResponse {
     http::Response::builder()
         .status(StatusCode::BAD_REQUEST)
         .body(Either::Left("Invalid request".to_string()))
@@ -48,42 +51,41 @@ pub(super) fn find_mapped_port(req_port: u16, restriction: &RestrictionConfig) -
 }
 
 #[inline]
-pub(super) fn extract_x_forwarded_for(req: &Request<Incoming>) -> Result<Option<(IpAddr, &str)>, ()> {
-    let Some(x_forward_for) = req.headers().get("X-Forwarded-For") else {
-        return Ok(None);
-    };
+pub(super) fn extract_x_forwarded_for(req: &Request<Incoming>) -> Option<(IpAddr, &str)> {
+    let x_forward_for = req.headers().get("X-Forwarded-For")?;
 
     // X-Forwarded-For: <client>, <proxy1>, <proxy2>
     let x_forward_for = x_forward_for.to_str().unwrap_or_default();
     let x_forward_for = x_forward_for.split_once(',').map(|x| x.0).unwrap_or(x_forward_for);
     let ip: Option<IpAddr> = x_forward_for.parse().ok();
-    Ok(ip.map(|ip| (ip, x_forward_for)))
+    ip.map(|ip| (ip, x_forward_for))
 }
 
 #[inline]
-pub(super) fn extract_path_prefix(req: &Request<Incoming>) -> Result<&str, ()> {
-    let path = req.uri().path();
-    let min_len = min(path.len(), 1);
-    if &path[0..min_len] != "/" {
-        warn!("Rejecting connection with bad path prefix in upgrade request: {}", req.uri());
-        return Err(());
+pub(super) fn extract_path_prefix(path: &str) -> Result<&str, PathPrefixErr> {
+    if !path.starts_with('/') {
+        return Err(PathPrefixErr::BadPathPrefix);
     }
 
-    let Some((l, r)) = path[min_len..].split_once('/') else {
-        warn!("Rejecting connection with bad upgrade request: {}", req.uri());
-        return Err(());
-    };
+    let (l, r) = path[1..].split_once('/').ok_or(PathPrefixErr::BadUpgradeRequest)?;
 
-    if !r.ends_with("events") {
-        warn!("Rejecting connection with bad upgrade request: {}", req.uri());
-        return Err(());
+    match r.ends_with("events") {
+        true => Ok(l),
+        false => Err(PathPrefixErr::BadUpgradeRequest),
     }
+}
 
-    Ok(l)
+#[derive(Debug, Display, Error)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+pub(super) enum PathPrefixErr {
+    #[display("bad path prefix in upgrade request")]
+    BadPathPrefix,
+    #[display("bad upgrade request")]
+    BadUpgradeRequest,
 }
 
 #[inline]
-pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<JwtTunnelConfig>, ()> {
+pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> anyhow::Result<TokenData<JwtTunnelConfig>, HttpResponse> {
     let jwt = req
         .headers()
         .get(SEC_WEBSOCKET_PROTOCOL)
@@ -93,19 +95,13 @@ pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> Result<TokenData<J
         .or_else(|| req.headers().get(COOKIE).and_then(|header| header.to_str().ok()))
         .unwrap_or_default();
 
-    let jwt = match jwt_token_to_tunnel(jwt) {
-        Ok(jwt) => jwt,
-        err => {
-            warn!(
-                "error while decoding jwt for tunnel info {:?} header {:?}",
-                err,
-                req.headers().get(SEC_WEBSOCKET_PROTOCOL)
-            );
-            return Err(());
-        }
-    };
-
-    Ok(jwt)
+    jwt_token_to_tunnel(jwt).map_err(|err| {
+        warn!(
+            "error while decoding jwt for tunnel info {err:?} header {:?}",
+            req.headers().get(SEC_WEBSOCKET_PROTOCOL)
+        );
+        bad_request()
+    })
 }
 
 impl RestrictionConfig {
@@ -496,5 +492,32 @@ mod tests {
         };
         assert!(!config.is_allowed(&remote));
         assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+    }
+
+    #[test]
+    fn test_extract_path_prefix_happy_path() {
+        assert_eq!(extract_path_prefix("/prefix/events"), Ok("prefix"));
+        assert_eq!(extract_path_prefix("/prefix/a/events"), Ok("prefix"));
+        assert_eq!(extract_path_prefix("/prefix/a/b/events"), Ok("prefix"));
+    }
+
+    #[test]
+    fn test_extract_path_prefix_no_events_suffix() {
+        assert_eq!(extract_path_prefix("/prefix/events/"), Err(PathPrefixErr::BadUpgradeRequest));
+        assert_eq!(extract_path_prefix("/prefix"), Err(PathPrefixErr::BadUpgradeRequest));
+        assert_eq!(extract_path_prefix("/prefixevents"), Err(PathPrefixErr::BadUpgradeRequest));
+        assert_eq!(extract_path_prefix("/prefix/event"), Err(PathPrefixErr::BadUpgradeRequest));
+        assert_eq!(extract_path_prefix("/prefix/a"), Err(PathPrefixErr::BadUpgradeRequest));
+        assert_eq!(extract_path_prefix("/prefix/a/b"), Err(PathPrefixErr::BadUpgradeRequest));
+    }
+
+    #[test]
+    fn test_extract_path_prefix_no_slash_prefix() {
+        assert_eq!(extract_path_prefix(""), Err(PathPrefixErr::BadPathPrefix));
+        assert_eq!(extract_path_prefix("p"), Err(PathPrefixErr::BadPathPrefix));
+        assert_eq!(extract_path_prefix("\\"), Err(PathPrefixErr::BadPathPrefix));
+        assert_eq!(extract_path_prefix("prefix/events"), Err(PathPrefixErr::BadPathPrefix));
+        assert_eq!(extract_path_prefix("prefix/a/events"), Err(PathPrefixErr::BadPathPrefix));
+        assert_eq!(extract_path_prefix("prefix/a/b/events"), Err(PathPrefixErr::BadPathPrefix));
     }
 }
