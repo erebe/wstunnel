@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::io;
+use std::net::SocketAddr;
 use std::str::FromStr;
 use opentelemetry::global;
 use tracing::warn;
@@ -53,7 +54,7 @@ pub struct Wstunnel {
         verbatim_doc_comment,
         default_value = None,
     )]
-    metrics_provider_address: Option<String>,
+    metrics_provider_address: Option<SocketAddr>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -96,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if let Some(addr) = args.metrics_provider_address {
-        match metrics::setup_metrics_provider(addr.as_str()).await {
+        match metrics::setup_metrics_provider(&addr).await {
             Ok(provider) => {
                 let _ = global::set_meter_provider(provider);
             }

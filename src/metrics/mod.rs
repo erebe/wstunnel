@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::service::service_fn;
@@ -9,7 +11,7 @@ use prometheus::{Encoder, TextEncoder};
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
-pub async fn setup_metrics_provider(addr: &str) -> anyhow::Result<SdkMeterProvider> {
+pub async fn setup_metrics_provider(addr: &SocketAddr) -> anyhow::Result<SdkMeterProvider> {
     let registry = prometheus::Registry::new();
 
     // configure OpenTelemetry to use this registry
