@@ -274,7 +274,10 @@ mod tests {
 
         let mitm_proxy: ContainerAsync<MitmProxy> = MitmProxy.with_network(network_name).start().await.unwrap();
 
-        let proxy_port = mitm_proxy.get_host_port_ipv4(8080).await.unwrap();
+        let proxy_port = match network_name {
+            "host" => 8080,
+            _ => mitm_proxy.get_host_port_ipv4(8080).await.unwrap(),
+        };
 
         // bind to a dynamic port - avoid conflicts
         let server = TcpListener::bind((host, 0)).await.unwrap();
