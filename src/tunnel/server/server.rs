@@ -7,12 +7,10 @@ use std::fmt::{Debug, Formatter};
 use crate::protocols;
 use crate::tunnel::{try_to_sock_addr, LocalProtocol, RemoteAddr};
 use arc_swap::ArcSwap;
-use bytes::Bytes;
-use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
-use hyper::{http, Request, Response, StatusCode, Version};
+use hyper::{http, Request, StatusCode, Version};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use parking_lot::Mutex;
 use socket2::SockRef;
@@ -26,6 +24,7 @@ use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
 use crate::restrictions::config_reloader::RestrictionsRulesReloader;
 use crate::restrictions::types::{RestrictionConfig, RestrictionsRules};
+use crate::somark::SoMark;
 use crate::tunnel::connectors::{TcpTunnelConnector, TunnelConnector, UdpTunnelConnector};
 use crate::tunnel::listeners::{HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener};
 use crate::tunnel::server::handler_http2::http_server_upgrade;
@@ -54,7 +53,7 @@ pub struct TlsServerConfig {
 }
 
 pub struct WsServerConfig {
-    pub socket_so_mark: Option<u32>,
+    pub socket_so_mark: SoMark,
     pub bind: SocketAddr,
     pub websocket_ping_frequency: Option<Duration>,
     pub timeout_connect: Duration,
@@ -370,7 +369,7 @@ impl WsServer {
 
             let span = span!(Level::INFO, "cnx", peer = peer_addr.to_string(),);
             info!(parent: &span, "Accepting connection");
-            if let Err(err) = protocols::tcp::configure_socket(SockRef::from(&stream), &None) {
+            if let Err(err) = protocols::tcp::configure_socket(SockRef::from(&stream), SoMark::new(None)) {
                 warn!("Error while configuring server socket {:?}", err);
             }
 

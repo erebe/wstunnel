@@ -693,7 +693,7 @@ mod parsers {
         use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
         use test_case::test_case;
         use url::Host;
-    
+
         #[test_case("localhost:443" => (Host::Domain("localhost".to_string()), 443, BTreeMap::new()) ; "with domain")]
         #[test_case("127.0.0.1:443" => (Host::Ipv4(Ipv4Addr::new(127, 0, 0, 1)), 443, BTreeMap::new()) ; "with IPv4")]
         #[test_case("[::1]:8080" => (Host::Ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 8080, BTreeMap::new()) ; "with IpV6")]
@@ -701,10 +701,10 @@ mod parsers {
         fn test_parse_tunnel_dest(input: &str) -> (Host<String>, u16, BTreeMap<String, String>) {
             parse_tunnel_dest(input).unwrap()
         }
-    
+
         const LOCALHOST_IP4: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 443);
         const LOCALHOST_IP6: SocketAddrV6 = SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0);
-    
+
         #[test_case("domain.com:443" => matches Err(_) ; "with domain")]
         #[test_case("127.0.0.1" => matches Err(_) ; "with no port")]
         #[test_case("127.0.0.1:444444443" => matches Err(_) ; "with too long port")]
@@ -713,7 +713,7 @@ mod parsers {
         fn test_parse_local_bind(input: &str) -> Result<(SocketAddr, &str), io::Error> {
             parse_local_bind(input)
         }
-    
+
         #[test_case("domain.com:443" => panics ""; "with no protocol")]
         #[test_case("sdsf://443:domain.com:443" => panics ""; "with invalid protocol")]
         #[test_case("tcp://443:domain.com:4443" =>

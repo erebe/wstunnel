@@ -2,6 +2,7 @@ use crate::protocols;
 use crate::protocols::dns::DnsResolver;
 use crate::restrictions::types;
 use crate::restrictions::types::{AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules};
+use crate::somark::SoMark;
 use crate::tunnel::client::{WsClient, WsClientConfig};
 use crate::tunnel::listeners::{TcpTunnelListener, UdpTunnelListener};
 use crate::tunnel::server::{WsServer, WsServerConfig};
@@ -23,13 +24,13 @@ use url::Host;
 
 #[fixture]
 fn dns_resolver() -> DnsResolver {
-    DnsResolver::new_from_urls(&[], None, None, true).expect("Cannot create DNS resolver")
+    DnsResolver::new_from_urls(&[], None, SoMark::new(None), true).expect("Cannot create DNS resolver")
 }
 
 #[fixture]
 fn server_no_tls(dns_resolver: DnsResolver) -> WsServer {
     let server_config = WsServerConfig {
-        socket_so_mark: None,
+        socket_so_mark: SoMark::new(None),
         bind: "127.0.0.1:8080".parse().unwrap(),
         websocket_ping_frequency: Some(Duration::from_secs(10)),
         timeout_connect: Duration::from_secs(10),
@@ -47,7 +48,7 @@ async fn client_ws(dns_resolver: DnsResolver) -> WsClient {
     let client_config = WsClientConfig {
         remote_addr: TransportAddr::new(TransportScheme::Ws, Host::Ipv4("127.0.0.1".parse().unwrap()), 8080, None)
             .unwrap(),
-        socket_so_mark: None,
+        socket_so_mark: SoMark::new(None),
         http_upgrade_path_prefix: "wstunnel".to_string(),
         http_upgrade_credentials: None,
         http_headers: HashMap::new(),
@@ -130,7 +131,7 @@ async fn test_tcp_tunnel(
     let mut client = protocols::tcp::connect(
         &TUNNEL_LISTEN.1,
         TUNNEL_LISTEN.0.port(),
-        None,
+        SoMark::new(None),
         Duration::from_secs(10),
         &dns_resolver,
     )
@@ -178,7 +179,7 @@ async fn test_udp_tunnel(
         &TUNNEL_LISTEN.1,
         TUNNEL_LISTEN.0.port(),
         Duration::from_secs(10),
-        None,
+        SoMark::new(None),
         &dns_resolver,
     )
     .await

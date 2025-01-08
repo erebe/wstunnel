@@ -21,6 +21,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::futures::Notified;
 
 use crate::protocols::dns::DnsResolver;
+use crate::somark::SoMark;
 use tokio::sync::Notify;
 use tokio::time::{sleep, timeout, Interval};
 use tracing::{debug, error, info};
@@ -39,7 +40,7 @@ struct UdpServer {
 
 impl UdpServer {
     pub fn new(listener: UdpSocket, timeout: Option<Duration>) -> Self {
-        let socket = socket2::SockRef::from(&listener);
+        let socket = SockRef::from(&listener);
 
         // Increase receive buffer
         const BUF_SIZES: [usize; 7] = [64usize, 32usize, 16usize, 8usize, 4usize, 2usize, 1usize];
@@ -161,9 +162,11 @@ impl UdpStream {
         (s, io)
     }
 
+    #[cfg_attr(not(target_os = "linux"), expect(dead_code))]
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.send_socket.local_addr()
     }
+
     pub fn writer(&self) -> UdpStreamWriter {
         UdpStreamWriter {
             send_socket: self.send_socket.clone(),
@@ -331,7 +334,7 @@ pub async fn connect(
     host: &Host<String>,
     port: u16,
     connect_timeout: Duration,
-    so_mark: Option<u32>,
+    so_mark: SoMark,
     dns_resolver: &DnsResolver,
 ) -> anyhow::Result<WsUdpSocket> {
     info!("Opening UDP connection to {}:{}", host, port);
@@ -363,12 +366,9 @@ pub async fn connect(
             }
         };
 
-        #[cfg(target_os = "linux")]
-        if let Some(so_mark) = so_mark {
-            SockRef::from(&socket)
-                .set_mark(so_mark)
-                .with_context(|| format!("cannot set SO_MARK on socket: {:?}", io::Error::last_os_error()))?;
-        }
+        so_mark
+            .set_mark(SockRef::from(&socket))
+            .context("cannot set SO_MARK on socket")?;
 
         // Spawn the connection attempt in the join set.
         // We include a delay of ix * 250 milliseconds, as per RFC8305.

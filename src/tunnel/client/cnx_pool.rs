@@ -31,7 +31,6 @@ impl ManageConnection for WsConnection {
 
     #[instrument(level = "trace", name = "cnx_server", skip_all)]
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        let so_mark = self.socket_so_mark;
         let timeout = self.timeout_connect;
 
         let tcp_stream = if let Some(http_proxy) = &self.http_proxy {
@@ -39,7 +38,7 @@ impl ManageConnection for WsConnection {
                 http_proxy,
                 self.remote_addr.host(),
                 self.remote_addr.port(),
-                so_mark,
+                self.socket_so_mark,
                 timeout,
                 &self.dns_resolver,
             )
@@ -48,7 +47,7 @@ impl ManageConnection for WsConnection {
             protocols::tcp::connect(
                 self.remote_addr.host(),
                 self.remote_addr.port(),
-                so_mark,
+                self.socket_so_mark,
                 timeout,
                 &self.dns_resolver,
             )

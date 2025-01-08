@@ -12,7 +12,6 @@ use hyper::body::{Body, Incoming};
 use hyper::header::{HeaderValue, COOKIE, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{http, Request, Response, StatusCode};
 use jsonwebtoken::TokenData;
-use std::cmp::min;
 use std::net::IpAddr;
 use tracing::{error, info, warn};
 use url::Host;

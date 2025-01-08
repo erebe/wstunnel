@@ -1,4 +1,5 @@
 use crate::protocols::dns::DnsResolver;
+use crate::somark::SoMark;
 use crate::tunnel::transport::TransportAddr;
 use hyper::header::{HeaderName, HeaderValue};
 use parking_lot::RwLock;
@@ -14,7 +15,7 @@ use url::{Host, Url};
 #[derive(Clone)]
 pub struct WsClientConfig {
     pub remote_addr: TransportAddr,
-    pub socket_so_mark: Option<u32>,
+    pub socket_so_mark: SoMark,
     pub http_upgrade_path_prefix: String,
     pub http_upgrade_credentials: Option<HeaderValue>,
     pub http_headers: HashMap<HeaderName, HeaderValue>,

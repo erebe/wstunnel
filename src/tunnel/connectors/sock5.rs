@@ -12,17 +12,18 @@ use crate::protocols;
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::udp;
 use crate::protocols::udp::WsUdpSocket;
+use crate::somark::SoMark;
 use crate::tunnel::connectors::TunnelConnector;
 use crate::tunnel::{LocalProtocol, RemoteAddr};
 
 pub struct Socks5TunnelConnector<'a> {
-    so_mark: Option<u32>,
+    so_mark: SoMark,
     connect_timeout: Duration,
     dns_resolver: &'a DnsResolver,
 }
 
 impl Socks5TunnelConnector<'_> {
-    pub fn new(so_mark: Option<u32>, connect_timeout: Duration, dns_resolver: &DnsResolver) -> Socks5TunnelConnector {
+    pub fn new(so_mark: SoMark, connect_timeout: Duration, dns_resolver: &DnsResolver) -> Socks5TunnelConnector {
         Socks5TunnelConnector {
             so_mark,
             connect_timeout,
