@@ -32,7 +32,7 @@ ARG BIN_TARGET=--bins
 ARG PROFILE=release
 
 #ENV RUSTFLAGS="-C link-arg=-Wl,--compress-debug-sections=zlib -C force-frame-pointers=yes"
-RUN cargo build --profile=${PROFILE} ${BIN_TARGET}
+RUN cargo build --package=wstunnel-cli --profile=${PROFILE} ${BIN_TARGET}
 
 
 ############################################################
