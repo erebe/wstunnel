@@ -1,12 +1,15 @@
 use clap::Parser;
 use std::io;
+use std::net::SocketAddr;
 use std::str::FromStr;
+use opentelemetry::global;
 use tracing::warn;
 use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 use wstunnel::config::{Client, Server};
 use wstunnel::LocalProtocol;
 use wstunnel::{run_client, run_server};
+use wstunnel::metrics;
 
 /// Use Websocket or HTTP2 protocol to tunnel {TCP,UDP} traffic
 /// wsTunnelClient <---> wsTunnelServer <---> RemoteHost
@@ -43,6 +46,15 @@ pub struct Wstunnel {
         default_value = "INFO"
     )]
     log_lvl: String,
+
+    /// Set the listen address for the prometheus metrics exporter.
+    #[arg(
+        long,
+        global = true,
+        verbatim_doc_comment,
+        default_value = None,
+    )]
+    metrics_provider_address: Option<SocketAddr>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -82,6 +94,17 @@ async fn main() -> anyhow::Result<()> {
     };
     if let Err(err) = fdlimit::raise_fd_limit() {
         warn!("Failed to set soft filelimit to hard file limit: {}", err)
+    }
+
+    if let Some(addr) = args.metrics_provider_address {
+        match metrics::setup_metrics_provider(&addr).await {
+            Ok(provider) => {
+                let _ = global::set_meter_provider(provider);
+            }
+            Err(err) => {
+                panic!("Failed to setup metrics server: {err:?}")
+            }
+        }
     }
 
     match args.commands {
