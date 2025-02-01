@@ -129,10 +129,6 @@ pub async fn propagate_local_to_remote(
         let read_len = select! {
             biased;
 
-            read_len = local_rx.read_buf(ws_tx.buf_mut()) => read_len,
-
-            _ = &mut should_close => break,
-
             _ = &mut has_pending_operations_pin => {
                 has_pending_operations = notify.notified();
                 has_pending_operations_pin = unsafe { Pin::new_unchecked(&mut has_pending_operations) };
@@ -144,6 +140,10 @@ pub async fn propagate_local_to_remote(
                     }
                 }
             },
+
+            read_len = local_rx.read_buf(ws_tx.buf_mut()) => read_len,
+
+            _ = &mut should_close => break,
 
             _ = timeout.tick(), if ping_frequency.is_some() => {
                 debug!("sending ping to keep connection alive");

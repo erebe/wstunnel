@@ -140,11 +140,13 @@ impl TunnelWrite for WebsocketTunnelWrite {
                     }
                 }
                 OpCode::Ping => {
+                    debug!("sending pong frame");
                     if self.inner.write_frame(Frame::pong(frame.payload)).await.is_err() {
                         return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send pong frame"));
                     }
                 }
                 OpCode::Pong => {
+                    debug!("received pong frame");
                     self.in_flight_ping.fetch_sub(1, Relaxed);
                 }
                 OpCode::Continuation | OpCode::Text | OpCode::Binary => unreachable!(),
