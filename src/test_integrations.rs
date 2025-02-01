@@ -39,6 +39,7 @@ fn server_no_tls(dns_resolver: DnsResolver) -> WsServer {
         dns_resolver,
         restriction_config: None,
         http_proxy: None,
+        remote_server_idle_timeout: Duration::from_secs(30),
     };
     WsServer::new(server_config)
 }

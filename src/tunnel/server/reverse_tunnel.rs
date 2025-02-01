@@ -42,6 +42,7 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
     pub async fn run_listening_server(
         &self,
         bind_addr: SocketAddr,
+        idle_timeout: Duration,
         gen_listening_server: impl Future<Output = anyhow::Result<T>>,
     ) -> anyhow::Result<((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr)>
     where
@@ -52,7 +53,6 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
             listening_server
         } else {
             let listening_server = gen_listening_server.await?;
-            let send_timeout = Duration::from_secs(60 * 3);
             let (tx, rx) = async_channel::bounded(10);
             let nb_seen_clients = Arc::new(AtomicUsize::new(0));
             let seen_clients = nb_seen_clients.clone();
@@ -64,7 +64,7 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
                     server.lock().remove(&local_srv2);
                 });
 
-                let mut timer = time::interval(send_timeout);
+                let mut timer = time::interval(idle_timeout);
                 pin_mut!(listening_server);
                 loop {
                     select! {
@@ -77,8 +77,8 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
                                     continue;
                                 }
                                 Some(Ok(cnx)) => {
-                                    if time::timeout(send_timeout, tx.send(cnx)).await.is_err() {
-                                        info!("New reverse connection failed to be picked by client after {}s. Closing reverse tunnel server", send_timeout.as_secs());
+                                    if time::timeout(idle_timeout, tx.send(cnx)).await.is_err() {
+                                        info!("New reverse connection failed to be picked by client after {}s. Closing reverse tunnel server", idle_timeout.as_secs());
                                         break;
                                     }
                                 }
@@ -89,7 +89,7 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
                             // if no client connected to the reverse tunnel server, close it
                             // <= 1 because the server itself has a receiver
                             if seen_clients.swap(0, Ordering::Relaxed) == 0 && tx.receiver_count() <= 1 {
-                                info!("No client connected to reverse tunnel server for {}s. Closing reverse tunnel server", send_timeout.as_secs());
+                                info!("No client connected to reverse tunnel server for {}s. Closing reverse tunnel server", idle_timeout.as_secs());
                                 break;
                             }
                         },

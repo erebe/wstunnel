@@ -339,6 +339,11 @@ pub struct Server {
         )
     )]
     pub http_proxy_password: Option<String>,
+
+    /// Configure how much time a remote-to-local server is going to wait idle (without any new ws clients) before unbinding itself/stopping the server
+    /// Default is 190 seconds/3min
+    #[cfg_attr(feature = "clap", arg(long, value_name = "seconds", default_value = "3m", value_parser = parsers::parse_duration_sec, verbatim_doc_comment,))]
+    pub remote_to_local_server_idle_timeout_sec: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -355,6 +360,7 @@ mod parsers {
     use crate::tunnel::LocalProtocol;
     use base64::Engine;
     use hyper::http::{HeaderName, HeaderValue};
+    use std::cmp::max;
     use std::collections::BTreeMap;
     use std::io;
     use std::io::ErrorKind;
@@ -368,14 +374,21 @@ mod parsers {
     pub fn parse_duration_sec(arg: &str) -> Result<Duration, io::Error> {
         use std::io::Error;
 
+        let (arg, multiplier) = match &arg[max(0, arg.len() - 1)..] {
+            "s" => (&arg[..arg.len() - 1], 1),
+            "m" => (&arg[..arg.len() - 1], 60),
+            "h" => (&arg[..arg.len() - 1], 3600),
+            _ => (arg, 1),
+        };
+
         let Ok(secs) = arg.parse::<u64>() else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("cannot duration of seconds from {}", arg),
+                format!("cannot parse duration of seconds from {}", arg),
             ));
         };
 
-        Ok(Duration::from_secs(secs))
+        Ok(Duration::from_secs(secs * multiplier))
     }
 
     pub fn parse_local_bind(arg: &str) -> Result<(SocketAddr, &str), io::Error> {

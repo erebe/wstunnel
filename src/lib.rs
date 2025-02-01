@@ -450,6 +450,7 @@ pub async fn run_server(args: Server) -> anyhow::Result<()> {
         .expect("Cannot create DNS resolver"),
         restriction_config: args.restrict_config,
         http_proxy,
+        remote_server_idle_timeout: args.remote_to_local_server_idle_timeout_sec,
     };
     let server = WsServer::new(server_config);
 

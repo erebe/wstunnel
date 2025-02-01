@@ -62,6 +62,7 @@ pub struct WsServerConfig {
     pub dns_resolver: DnsResolver,
     pub restriction_config: Option<PathBuf>,
     pub http_proxy: Option<Url>,
+    pub remote_server_idle_timeout: Duration,
 }
 
 #[derive(Clone)]
@@ -196,7 +197,9 @@ impl WsServer {
                 let local_srv = (remote.host, remote_port);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { TcpTunnelListener::new(bind, local_srv.clone(), false).await };
-                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
+                let ((local_rx, local_tx), remote) = SERVERS
+                    .run_listening_server(bind, self.config.remote_server_idle_timeout, listening_server)
+                    .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
@@ -208,7 +211,9 @@ impl WsServer {
                 let local_srv = (remote.host, remote_port);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { UdpTunnelListener::new(bind, local_srv.clone(), timeout).await };
-                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
+                let ((local_rx, local_tx), remote) = SERVERS
+                    .run_listening_server(bind, self.config.remote_server_idle_timeout, listening_server)
+                    .await?;
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
             LocalProtocol::ReverseSocks5 { timeout, credentials } => {
@@ -219,7 +224,9 @@ impl WsServer {
                 let local_srv = (remote.host, remote_port);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { Socks5TunnelListener::new(bind, timeout, credentials).await };
-                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
+                let ((local_rx, local_tx), remote) = SERVERS
+                    .run_listening_server(bind, self.config.remote_server_idle_timeout, listening_server)
+                    .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
@@ -231,7 +238,9 @@ impl WsServer {
                 let local_srv = (remote.host, remote_port);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { HttpProxyTunnelListener::new(bind, timeout, credentials, false).await };
-                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
+                let ((local_rx, local_tx), remote) = SERVERS
+                    .run_listening_server(bind, self.config.remote_server_idle_timeout, listening_server)
+                    .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
@@ -245,7 +254,9 @@ impl WsServer {
                 let local_srv = (remote.host, remote_port);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { UnixTunnelListener::new(path, local_srv, false).await };
-                let ((local_rx, local_tx), remote) = SERVERS.run_listening_server(bind, listening_server).await?;
+                let ((local_rx, local_tx), remote) = SERVERS
+                    .run_listening_server(bind, self.config.remote_server_idle_timeout, listening_server)
+                    .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
@@ -481,6 +492,7 @@ impl Debug for WsServerConfig {
             .field("websocket_mask_frame", &self.websocket_mask_frame)
             .field("restriction_config", &self.restriction_config)
             .field("tls", &self.tls.is_some())
+            .field("remote_server_idle_timeout", &self.remote_server_idle_timeout)
             .field(
                 "mTLS",
                 &self
