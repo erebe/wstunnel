@@ -9,12 +9,10 @@ use std::fmt::{Debug, Formatter};
 use crate::protocols;
 use crate::tunnel::{try_to_sock_addr, LocalProtocol, RemoteAddr};
 use arc_swap::ArcSwap;
-use bytes::Bytes;
-use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
-use hyper::{http, Request, Response, StatusCode, Version};
+use hyper::{http, Request, StatusCode, Version};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use parking_lot::Mutex;
 use socket2::SockRef;
@@ -68,6 +66,7 @@ pub struct WsServerConfig {
 }
 
 pub struct WsServerMetrics {
+    pub unbounded: bool,
     pub connections: Counter<u64>,
 }
 
@@ -78,11 +77,12 @@ pub struct WsServer {
 }
 
 impl WsServer {
-    pub fn new(config: WsServerConfig) -> Self {
+    pub fn new(config: WsServerConfig, unbounded_metrics: bool) -> Self {
         let meter = global::meter_provider().meter("wstunnel");
         Self {
             config: Arc::new(config),
             metrics: Arc::new(WsServerMetrics {
+                unbounded: unbounded_metrics,
                 connections: meter
                     .u64_counter("connections_created")
                     .with_description("Counts the connections created. Attributes allow to split by remote host")
@@ -141,13 +141,15 @@ impl WsServer {
         })?;
         info!("Tunnel accepted due to matched restriction: {}", restriction.name);
 
-        self.metrics.connections.add(
-            1,
+        let attributes: &[KeyValue] = if self.metrics.unbounded {
             &[
                 KeyValue::new("remote_host", format!("{}", remote.host)),
                 KeyValue::new("remote_port", i64::from(remote.port)),
-            ],
-        );
+            ]
+        } else {
+            &[]
+        };
+        self.metrics.connections.add(1, attributes);
         let req_protocol = remote.protocol.clone();
         let inject_cookie = req_protocol.is_dynamic_reverse_tunnel();
         let tunnel = self

@@ -55,6 +55,15 @@ pub struct Wstunnel {
         default_value = None,
     )]
     metrics_provider_address: Option<SocketAddr>,
+
+    /// Allow metrics to take up unbounded space (OOM risk!).
+    #[arg(
+        long,
+        global = true,
+        verbatim_doc_comment,
+        default_value = "false",
+    )]
+    metrics_unbounded: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]

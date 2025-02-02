@@ -450,7 +450,7 @@ pub async fn run_server(args: Server) -> anyhow::Result<()> {
         restriction_config: args.restrict_config,
         http_proxy,
     };
-    let server = WsServer::new(server_config);
+    let server = WsServer::new(server_config, false);
 
     info!(
         "Starting wstunnel server v{} with config {:?}",

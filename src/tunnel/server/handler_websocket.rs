@@ -3,7 +3,6 @@ use crate::tunnel::server::utils::{bad_request, inject_cookie, HttpResponse};
 use crate::tunnel::server::WsServer;
 use crate::tunnel::transport;
 use crate::tunnel::transport::websocket::mk_websocket_tunnel;
-use bytes::Bytes;
 use fastwebsockets::Role;
 use http_body_util::combinators::BoxBody;
 use http_body_util::Either;
