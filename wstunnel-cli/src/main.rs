@@ -120,8 +120,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Client(args) => {
             run_client(*args).await?;
         }
-        Commands::Server(args) => {
-            run_server(*args).await?;
+        Commands::Server(server_args) => {
+            run_server(*server_args, args.metrics_unbounded).await?;
         }
     }
 

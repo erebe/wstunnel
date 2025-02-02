@@ -372,7 +372,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn run_server(args: Server) -> anyhow::Result<()> {
+pub async fn run_server(args: Server, unbounded_metrics: bool) -> anyhow::Result<()> {
     let tls_config = if args.remote_addr.scheme() == "wss" {
         let tls_certificate = if let Some(cert_path) = &args.tls_certificate {
             tls::load_certificates_from_pem(cert_path).expect("Cannot load tls certificate")
@@ -450,7 +450,7 @@ pub async fn run_server(args: Server) -> anyhow::Result<()> {
         restriction_config: args.restrict_config,
         http_proxy,
     };
-    let server = WsServer::new(server_config, false);
+    let server = WsServer::new(server_config, unbounded_metrics);
 
     info!(
         "Starting wstunnel server v{} with config {:?}",
