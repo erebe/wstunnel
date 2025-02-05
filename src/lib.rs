@@ -112,7 +112,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
         http_header_host: host_header,
         timeout_connect: Duration::from_secs(10),
         websocket_ping_frequency: args
-            .websocket_ping_frequency_sec
+            .websocket_ping_frequency
             .or(Some(Duration::from_secs(30)))
             .filter(|d| d.as_secs() > 0),
         websocket_mask_frame: args.websocket_mask_frame,
@@ -126,7 +126,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
         http_proxy,
     };
 
-    let client = WsClient::new(client_config, args.connection_min_idle, args.connection_retry_max_backoff_sec).await?;
+    let client = WsClient::new(client_config, args.connection_min_idle, args.connection_retry_max_backoff).await?;
     info!("Starting wstunnel client v{}", env!("CARGO_PKG_VERSION"),);
 
     // Keep track of all spawned tunnels
@@ -435,7 +435,7 @@ pub async fn run_server(args: Server) -> anyhow::Result<()> {
         socket_so_mark: SoMark::new(args.socket_so_mark),
         bind: args.remote_addr.socket_addrs(|| Some(8080))?[0],
         websocket_ping_frequency: args
-            .websocket_ping_frequency_sec
+            .websocket_ping_frequency
             .or(Some(Duration::from_secs(30)))
             .filter(|d| d.as_secs() > 0),
         timeout_connect: Duration::from_secs(10),
@@ -450,7 +450,7 @@ pub async fn run_server(args: Server) -> anyhow::Result<()> {
         .expect("Cannot create DNS resolver"),
         restriction_config: args.restrict_config,
         http_proxy,
-        remote_server_idle_timeout: args.remote_to_local_server_idle_timeout_sec,
+        remote_server_idle_timeout: args.remote_to_local_server_idle_timeout,
     };
     let server = WsServer::new(server_config);
 

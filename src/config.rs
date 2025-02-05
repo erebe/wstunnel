@@ -62,8 +62,15 @@ pub struct Client {
     pub connection_min_idle: u32,
 
     /// The maximum of time in seconds while we are going to try to connect to the server before failing the connection/tunnel request
-    #[cfg_attr(feature = "clap", arg(long, value_name = "DURATION_IN_SECONDS", default_value = "300", value_parser = parsers::parse_duration_sec, verbatim_doc_comment))]
-    pub connection_retry_max_backoff_sec: Duration,
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "5m",
+        value_parser = parsers::parse_duration_sec,
+        alias = "connection-retry-max-backoff-sec",
+        verbatim_doc_comment
+    ))]
+    pub connection_retry_max_backoff: Duration,
 
     /// Domain name that will be used as SNI during TLS handshake
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
@@ -133,8 +140,15 @@ pub struct Client {
 
     /// Frequency at which the client will send websocket pings to the server.
     /// Set to zero to disable.
-    #[cfg_attr(feature = "clap", arg(long, value_name = "seconds", default_value = "30", value_parser = parsers::parse_duration_sec, verbatim_doc_comment))]
-    pub websocket_ping_frequency_sec: Option<Duration>,
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "30s",
+        value_parser = parsers::parse_duration_sec,
+        alias = "websocket-ping-frequency-sec",
+        verbatim_doc_comment
+    ))]
+    pub websocket_ping_frequency: Option<Duration>,
 
     /// Enable the masking of websocket frames. Default is false
     /// Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
@@ -223,8 +237,15 @@ pub struct Server {
 
     /// Frequency at which the server will send websocket ping to client.
     /// Set to zero to disable.
-    #[cfg_attr(feature = "clap", arg(long, value_name = "seconds", default_value = "30", value_parser = parsers::parse_duration_sec, verbatim_doc_comment))]
-    pub websocket_ping_frequency_sec: Option<Duration>,
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "30s",
+        value_parser = parsers::parse_duration_sec,
+        alias = "websocket-ping-frequency-sec",
+        verbatim_doc_comment
+    ))]
+    pub websocket_ping_frequency: Option<Duration>,
 
     /// Enable the masking of websocket frames. Default is false
     /// Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
@@ -342,8 +363,15 @@ pub struct Server {
 
     /// Configure how much time a remote-to-local server is going to wait idle (without any new ws clients) before unbinding itself/stopping the server
     /// Default is 190 seconds/3min
-    #[cfg_attr(feature = "clap", arg(long, value_name = "seconds", default_value = "3m", value_parser = parsers::parse_duration_sec, verbatim_doc_comment,))]
-    pub remote_to_local_server_idle_timeout_sec: Duration,
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "3m",
+        value_parser = parsers::parse_duration_sec,
+        alias = "remote-to-local-server-idle-timeout-sec",
+        verbatim_doc_comment,
+    ))]
+    pub remote_to_local_server_idle_timeout: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq)]
