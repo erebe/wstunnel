@@ -37,7 +37,7 @@ RUN cargo build --package=wstunnel-cli --profile=${PROFILE} ${BIN_TARGET}
 
 ############################################################
 # Final image
-FROM debian:bookworm-slim as final-image
+FROM debian:bookworm-slim AS final-image
 
 RUN useradd -ms /bin/bash app && \
         apt-get update && \
