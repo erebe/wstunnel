@@ -8,6 +8,13 @@ use wstunnel::config::{Client, Server};
 use wstunnel::LocalProtocol;
 use wstunnel::{run_client, run_server};
 
+#[cfg(feature = "jemalloc")]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 /// Use Websocket or HTTP2 protocol to tunnel {TCP,UDP} traffic
 /// wsTunnelClient <---> wsTunnelServer <---> RemoteHost
 #[derive(clap::Parser, Debug)]

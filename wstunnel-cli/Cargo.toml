@@ -12,6 +12,12 @@ tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "local-time"] }
 wstunnel = { path = ".." , features = ["clap"] }
 
+tikv-jemallocator = {  version = "0.6", optional = true }
+
+[features]
+default = []
+jemalloc = ["dep:tikv-jemallocator"]
+
 [[bin]]
 name = "wstunnel"
 path = "src/main.rs"
