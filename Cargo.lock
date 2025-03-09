@@ -3618,7 +3618,7 @@ dependencies = [
 
 [[package]]
 name = "wstunnel-cli"
-version = "10.1.9"
+version = "10.1.10"
 dependencies = [
  "anyhow",
  "clap",
