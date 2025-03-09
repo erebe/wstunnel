@@ -4,7 +4,7 @@ _default:
     @just --list
 
 make_release $VERSION $FORCE="":
-   sed -i 's/^version = .*/version = "'$VERSION'"/g' wstunnel-cli/Cargo.toml
+   sed -i 's/^version = .*/version = "'$VERSION'"/g' wstunnel-cli/Cargo.toml Cargo.toml
    cargo fmt --all -- --check --color=always || (echo "Use cargo fmt to format your code"; exit 1)
    cargo clippy --all --all-features -- -D warnings || (echo "Solve your clippy warnings to succeed"; exit 1)
    git add Cargo.*
