@@ -3,7 +3,7 @@ members = ["wstunnel-cli"]
 
 [package]
 name = "wstunnel"
-version = "10.1.10"
+version = "10.1.8"
 edition = "2021"
 repository = "https://github.com/erebe/wstunnel.git"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -16,11 +16,10 @@ scopeguard = "1.2.0"
 
 bb8 = { version = "0.9.0", features = [] }
 bytes = { version = "1.10.1", features = [] }
-clap = { version = "4.5.31", features = ["derive", "env"], optional = true }
+clap = { version = "4.5.34", features = ["derive", "env"], optional = true }
 fast-socks5 = { version = "0.10.0", features = [] }
 fastwebsockets = { version = "0.10.0", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.31" }
-hickory-resolver = { version = "0.24.4", features = ["tokio", "dns-over-https-rustls", "dns-over-rustls", "native-certs"] }
 ppp = { version = "2.3.0", features = [] }
 async-channel = { version = "2.3.1", features = [] }
 arc-swap = { version = "1.7.1", features = [] }
@@ -33,9 +32,9 @@ ipnet = { version = "2.11.0", features = ["serde"] }
 
 hyper = { version = "1.6.0", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1.10", features = ["tokio", "server", "server-auto"] }
-http-body-util = { version = "0.1.2" }
+http-body-util = { version = "0.1.3" }
 jsonwebtoken = { version = "9.3.1", default-features = false }
-log = "0.4.26"
+log = "0.4.27"
 nix = { version = "0.29.0", features = ["socket", "net", "uio"] }
 parking_lot = "0.12.3"
 pin-project = "1"
@@ -44,20 +43,20 @@ notify = { version = "8.0.0", features = [] }
 rustls-native-certs = { version = "0.8.1", features = [] }
 rustls-pemfile = { version = "2.2.0", features = [] }
 x509-parser = "0.17.0"
-serde = { version = "1.0.218", features = ["derive"] }
-socket2 = { version = "0.5.8", features = [] }
-tokio = { version = "1.44.0", features = ["io-std", "net", "signal", "sync", "time"] }
+serde = { version = "1.0.219", features = ["derive"] }
+socket2 = { version = "0.5.9", features = [] }
+tokio = { version = "1.44.1", features = ["io-std", "net", "signal", "sync", "time"] }
 tokio-stream = { version = "0.1.17", features = ["net"] }
 
 tracing = { version = "0.1.41", features = ["log"] }
 url = "2.5.4"
 urlencoding = "2.1.3"
-uuid = { version = "1.15.1", features = ["v7", "serde"] }
+uuid = { version = "1.16.0", features = ["v7", "serde"] }
 derive_more = { version = "2.0.1", features = ["display", "error"] }
 
 [target.'cfg(not(target_family = "unix"))'.dependencies]
 crossterm = { version = "0.28.1" }
-tokio-util = { version = "0.7.13", features = ["io"] }
+tokio-util = { version = "0.7.14", features = ["io"] }
 
 [target.'cfg(target_family = "unix")'.dependencies]
 tokio-fd = "0.3.0"
@@ -65,10 +64,12 @@ tokio-fd = "0.3.0"
 [target.'cfg(all(any(target_os = "linux", target_os = "macos"), any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
 tokio-rustls = { version = "0.26.2", features = [] }
 rcgen = { version = "0.13.2", default-features = false, features = ["aws_lc_rs"] }
+hickory-resolver = { version = "0.25.1", features = ["tls-aws-lc-rs", "https-aws-lc-rs", "tokio", "rustls-platform-verifier"] }
 
 [target.'cfg(not(all(any(target_os = "linux", target_os = "macos"), any(target_arch = "x86_64", target_arch = "aarch64"))))'.dependencies]
 tokio-rustls = { version = "0.26.2", default-features = false, features = ["logging", "tls12", "ring"] }
 rcgen = { version = "0.13.2", default-features = false, features = ["ring"] }
+hickory-resolver = { version = "0.25.1", features = ["tls-ring", "https-ring", "tokio", "rustls-platform-verifier"] }
 
 [dev-dependencies]
 testcontainers = "0.23.3"

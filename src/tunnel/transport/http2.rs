@@ -43,7 +43,7 @@ impl TunnelRead for Http2TunnelRead {
                         return match writer.write_all(data.as_ref()).await {
                             Ok(_) => Ok(()),
                             Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
-                        }
+                        };
                     }
                     Err(err) => {
                         warn!("{:?}", err);
@@ -161,8 +161,9 @@ pub async fn connect(
         None => {
             return Err(anyhow!(
                 "failed to build HTTP request to contact the server {:?}. Most likely path_prefix `{}` or http headers is not valid",
-                req, client.config.http_upgrade_path_prefix
-            ))
+                req,
+                client.config.http_upgrade_path_prefix
+            ));
         }
     };
     for (k, v) in &client.config.http_headers {

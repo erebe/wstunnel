@@ -160,7 +160,7 @@ impl From<&LocalProtocol> for ReverseTunnelConfigProtocol {
             | LocalProtocol::Udp { .. }
             | LocalProtocol::Stdio { .. }
             | LocalProtocol::Socks5 { .. }
-            | LocalProtocol::TProxyTcp { .. }
+            | LocalProtocol::TProxyTcp
             | LocalProtocol::TProxyUdp { .. }
             | LocalProtocol::HttpProxy { .. }
             | LocalProtocol::Unix { .. } => Self::Unknown,
@@ -181,7 +181,7 @@ impl From<&LocalProtocol> for TunnelConfigProtocol {
             | LocalProtocol::ReverseUnix { .. }
             | LocalProtocol::Stdio { .. }
             | LocalProtocol::Socks5 { .. }
-            | LocalProtocol::TProxyTcp { .. }
+            | LocalProtocol::TProxyTcp
             | LocalProtocol::TProxyUdp { .. }
             | LocalProtocol::HttpProxy { .. }
             | LocalProtocol::ReverseHttpProxy { .. }

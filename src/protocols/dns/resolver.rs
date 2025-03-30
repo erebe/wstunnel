@@ -2,11 +2,12 @@ use crate::protocols;
 use crate::somark::SoMark;
 use anyhow::{anyhow, Context};
 use futures_util::{FutureExt, TryFutureExt};
-use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
-use hickory_resolver::name_server::{GenericConnector, RuntimeProvider, TokioRuntimeProvider};
-use hickory_resolver::proto::iocompat::AsyncIoTokioAsStd;
-use hickory_resolver::proto::TokioTime;
-use hickory_resolver::{AsyncResolver, TokioHandle};
+use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts};
+use hickory_resolver::name_server::GenericConnector;
+use hickory_resolver::proto::runtime::iocompat::AsyncIoTokioAsStd;
+use hickory_resolver::proto::runtime::{RuntimeProvider, TokioHandle, TokioRuntimeProvider, TokioTime};
+use hickory_resolver::proto::xfer::Protocol;
+use hickory_resolver::Resolver;
 use log::warn;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -37,7 +38,7 @@ fn sort_socket_addrs(socket_addrs: &[SocketAddr], prefer_ipv6: bool) -> impl Ite
 pub enum DnsResolver {
     System,
     TrustDns {
-        resolver: AsyncResolver<GenericConnector<TokioRuntimeProviderWithSoMark>>,
+        resolver: Resolver<GenericConnector<TokioRuntimeProviderWithSoMark>>,
         prefer_ipv6: bool,
     },
 }
@@ -74,7 +75,7 @@ impl DnsResolver {
             mut opts: ResolverOpts,
             proxy: Option<Url>,
             so_mark: SoMark,
-        ) -> AsyncResolver<GenericConnector<TokioRuntimeProviderWithSoMark>> {
+        ) -> Resolver<GenericConnector<TokioRuntimeProviderWithSoMark>> {
             opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
             opts.timeout = Duration::from_secs(1);
 
@@ -86,11 +87,12 @@ impl DnsResolver {
                 opts.num_concurrent_reqs = cfg.name_servers().len();
             }
 
-            AsyncResolver::new(
+            let mut builder = Resolver::builder_with_config(
                 cfg,
-                opts,
                 GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
-            )
+            );
+            *builder.options_mut() = opts;
+            builder.build()
         }
 
         fn get_sni(resolver: &Url) -> anyhow::Result<String> {
@@ -133,7 +135,9 @@ impl DnsResolver {
         // no dns resolver specified, fall-back to default one
         if resolvers.is_empty() {
             let Ok((cfg, opts)) = hickory_resolver::system_conf::read_system_conf() else {
-                warn!("Fall-backing to system dns resolver. You should consider specifying a dns resolver. To avoid performance issue");
+                warn!(
+                    "Fall-backing to system dns resolver. You should consider specifying a dns resolver. To avoid performance issue"
+                );
                 return Ok(Self::System);
             };
 
@@ -190,7 +194,12 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
     }
 
     #[inline]
-    fn connect_tcp(&self, server_addr: SocketAddr) -> Pin<Box<dyn Send + Future<Output = std::io::Result<Self::Tcp>>>> {
+    fn connect_tcp(
+        &self,
+        server_addr: SocketAddr,
+        _bind_addr: Option<SocketAddr>,
+        timeout: Option<Duration>,
+    ) -> Pin<Box<dyn Send + Future<Output = std::io::Result<Self::Tcp>>>> {
         let so_mark = self.so_mark;
         let proxy = self.proxy.clone();
         let socket = async move {
@@ -205,7 +214,7 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
                     &host,
                     server_addr.port(),
                     so_mark,
-                    Duration::from_secs(10),
+                    timeout.unwrap_or(Duration::from_secs(10)),
                     &DnsResolver::System, // not going to be used as host is directly an ip address
                 )
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
@@ -216,7 +225,7 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
                     &host,
                     server_addr.port(),
                     so_mark,
-                    Duration::from_secs(10),
+                    timeout.unwrap_or(Duration::from_secs(10)),
                     &DnsResolver::System, // not going to be used as host is directly an ip address
                 )
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))

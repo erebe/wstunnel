@@ -45,7 +45,9 @@ impl Socks5UdpServer {
         for size in BUF_SIZES.iter() {
             if let Err(err) = socket.set_recv_buffer_size(size * 1024 * 1024) {
                 warn!("Cannot increase UDP server recv buffer to {} Mib: {}", size, err);
-                warn!("This is not fatal, but can lead to packet loss if you have too much throughput. You must monitor packet loss in this case");
+                warn!(
+                    "This is not fatal, but can lead to packet loss if you have too much throughput. You must monitor packet loss in this case"
+                );
                 continue;
             }
 
@@ -59,7 +61,9 @@ impl Socks5UdpServer {
         for size in BUF_SIZES.iter() {
             if let Err(err) = socket.set_send_buffer_size(size * 1024 * 1024) {
                 warn!("Cannot increase UDP server send buffer to {} Mib: {}", size, err);
-                warn!("This is not fatal, but can lead to packet loss if you have too much throughput. You must monitor packet loss in this case");
+                warn!(
+                    "This is not fatal, but can lead to packet loss if you have too much throughput. You must monitor packet loss in this case"
+                );
                 continue;
             }
 

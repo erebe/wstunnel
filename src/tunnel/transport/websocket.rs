@@ -197,7 +197,7 @@ impl TunnelRead for WebsocketTunnelRead {
                     return match writer.write_all(msg.payload.as_ref()).await {
                         Ok(_) => Ok(()),
                         Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
-                    }
+                    };
                 }
                 OpCode::Close => {
                     let _ = self
@@ -264,8 +264,9 @@ pub async fn connect(
         None => {
             return Err(anyhow!(
                 "failed to build HTTP request to contact the server {:?}. Most likely path_prefix `{}` or http headers is not valid",
-                req.body(Empty::<Bytes>::new()), client_cfg.http_upgrade_path_prefix
-            ))
+                req.body(Empty::<Bytes>::new()),
+                client_cfg.http_upgrade_path_prefix
+            ));
         }
     };
     for (k, v) in &client_cfg.http_headers {

@@ -136,7 +136,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
     for tunnel in args.remote_to_local.into_iter() {
         let client = client.clone();
         match &tunnel.local_protocol {
-            LocalProtocol::ReverseTcp { .. } => {
+            LocalProtocol::ReverseTcp => {
                 spawned_tunnels.push(tokio::spawn(async move {
                     let cfg = client.config.clone();
                     let tcp_connector = TcpTunnelConnector::new(

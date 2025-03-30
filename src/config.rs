@@ -487,7 +487,7 @@ mod parsers {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
                     format!("cannot parse remote port from {}", remaining),
-                ))
+                ));
             }
         };
 
@@ -637,7 +637,7 @@ mod parsers {
                 proxy_protocol: _proxy_protocol,
             } => LocalProtocol::ReverseHttpProxy { timeout, credentials },
             LocalProtocol::Unix { path, .. } => LocalProtocol::ReverseUnix { path },
-            LocalProtocol::ReverseTcp { .. }
+            LocalProtocol::ReverseTcp
             | LocalProtocol::ReverseUdp { .. }
             | LocalProtocol::ReverseSocks5 { .. }
             | LocalProtocol::ReverseHttpProxy { .. }
@@ -648,7 +648,7 @@ mod parsers {
                 return Err(io::Error::new(
                     ErrorKind::InvalidInput,
                     format!("Cannot use {:?} as reverse tunnels {}", proto.local_protocol, arg),
-                ))
+                ));
             }
         };
 
@@ -683,7 +683,7 @@ mod parsers {
                 return Err(io::Error::new(
                     ErrorKind::InvalidInput,
                     format!("cannot parse http header value from {} due to {:?}", value, err),
-                ))
+                ));
             }
         };
 
