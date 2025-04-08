@@ -45,7 +45,7 @@ rustls-pemfile = { version = "2.2.0", features = [] }
 x509-parser = "0.17.0"
 serde = { version = "1.0.219", features = ["derive"] }
 socket2 = { version = "0.5.9", features = [] }
-tokio = { version = "1.44.1", features = ["io-std", "net", "signal", "sync", "time"] }
+tokio = { version = "1.44.2", features = ["io-std", "net", "signal", "sync", "time"] }
 tokio-stream = { version = "0.1.17", features = ["net"] }
 
 tracing = { version = "0.1.41", features = ["log"] }
