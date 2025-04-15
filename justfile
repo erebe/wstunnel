@@ -7,7 +7,7 @@ make_release $VERSION $FORCE="":
    sed -i 's/^version = .*/version = "'$VERSION'"/g' wstunnel-cli/Cargo.toml Cargo.toml
    cargo fmt --all -- --check --color=always || (echo "Use cargo fmt to format your code"; exit 1)
    cargo clippy --all --all-features -- -D warnings || (echo "Solve your clippy warnings to succeed"; exit 1)
-   git add Cargo.*
+   git add Cargo.* wstunnel-cli/Cargo.toml
    git commit -m 'Bump version v'$VERSION
    git tag $FORCE v$VERSION -m 'version v'$VERSION
    git push $FORCE
