@@ -482,7 +482,7 @@ mod parsers {
         let remote_port = match remote.port() {
             Some(remote_port) => remote_port,
             // the url lib does not parse the port if it is the default one
-            None if remaining.ends_with(":443") => 443,
+            None if remaining.ends_with(":443") || remaining.contains(":443?") => 443,
             _ => {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
@@ -736,6 +736,7 @@ mod parsers {
         use url::Host;
 
         #[test_case("localhost:443" => (Host::Domain("localhost".to_string()), 443, BTreeMap::new()) ; "with domain")]
+        #[test_case("localhost:443?timeout_sec=0" => (Host::Domain("localhost".to_string()), 443, btreemap! { "timeout_sec".to_string() => "0".to_string() } ) ; "with domain and options")]
         #[test_case("127.0.0.1:443" => (Host::Ipv4(Ipv4Addr::new(127, 0, 0, 1)), 443, BTreeMap::new()) ; "with IPv4")]
         #[test_case("[::1]:8080" => (Host::Ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 8080, BTreeMap::new()) ; "with IpV6")]
         #[test_case("a:1?timeout_sec=30&b=5" => (Host::Domain("a".to_string()), 1, btreemap! { "b".to_string() => "5".to_string(), "timeout_sec".to_string() => "30".to_string() }) ; "with options")]
