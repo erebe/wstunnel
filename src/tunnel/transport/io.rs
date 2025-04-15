@@ -1,7 +1,7 @@
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
 use bytes::{BufMut, BytesMut};
-use futures_util::{pin_mut, FutureExt};
+use futures_util::{FutureExt, pin_mut};
 use std::future::Future;
 use std::io::ErrorKind;
 use std::pin::Pin;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::select;
-use tokio::sync::{oneshot, Notify};
+use tokio::sync::{Notify, oneshot};
 use tokio::time::Instant;
 use tracing::log::debug;
 use tracing::{error, info, warn};

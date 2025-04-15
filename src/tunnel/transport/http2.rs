@@ -1,15 +1,15 @@
-use super::io::{TunnelRead, TunnelWrite, MAX_PACKET_LENGTH};
+use super::io::{MAX_PACKET_LENGTH, TunnelRead, TunnelWrite};
+use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::WsClient;
 use crate::tunnel::transport::jwt::tunnel_to_jwt_token;
-use crate::tunnel::transport::{headers_from_file, TransportScheme};
-use crate::tunnel::RemoteAddr;
-use anyhow::{anyhow, Context};
+use crate::tunnel::transport::{TransportScheme, headers_from_file};
+use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
 use http_body_util::{BodyExt, BodyStream, StreamBody};
+use hyper::Request;
 use hyper::body::{Frame, Incoming};
 use hyper::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE};
 use hyper::http::response::Parts;
-use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use log::{debug, error, warn};
 use std::future::Future;
@@ -19,9 +19,9 @@ use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
-use tokio::sync::{mpsc, Notify};
-use tokio_stream::wrappers::ReceiverStream;
+use tokio::sync::{Notify, mpsc};
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 pub struct Http2TunnelRead {

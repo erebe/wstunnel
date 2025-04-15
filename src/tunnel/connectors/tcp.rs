@@ -6,8 +6,8 @@ use url::{Host, Url};
 use crate::protocols;
 use crate::protocols::dns::DnsResolver;
 use crate::somark::SoMark;
-use crate::tunnel::connectors::TunnelConnector;
 use crate::tunnel::RemoteAddr;
+use crate::tunnel::connectors::TunnelConnector;
 
 pub struct TcpTunnelConnector<'a> {
     host: &'a Host,

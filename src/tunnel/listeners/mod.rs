@@ -10,9 +10,9 @@ mod udp;
 mod unix_sock;
 
 #[cfg(target_os = "linux")]
-pub use tproxy::new_tproxy_udp;
-#[cfg(target_os = "linux")]
 pub use tproxy::TproxyTcpTunnelListener;
+#[cfg(target_os = "linux")]
+pub use tproxy::new_tproxy_udp;
 
 pub use http_proxy::HttpProxyTunnelListener;
 pub use socks5::Socks5TunnelListener;

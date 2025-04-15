@@ -1,18 +1,18 @@
 use crate::restrictions::types::RestrictionsRules;
-use crate::tunnel::server::utils::{bad_request, inject_cookie, HttpResponse};
 use crate::tunnel::server::WsServer;
+use crate::tunnel::server::utils::{HttpResponse, bad_request, inject_cookie};
 use crate::tunnel::transport;
 use crate::tunnel::transport::websocket::mk_websocket_tunnel;
 use fastwebsockets::Role;
-use http_body_util::combinators::BoxBody;
 use http_body_util::Either;
+use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;
 use hyper::header::{HeaderValue, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{Request, Response};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::oneshot;
-use tracing::{error, warn, Instrument, Span};
+use tracing::{Instrument, Span, error, warn};
 
 pub(super) async fn ws_server_upgrade(
     server: WsServer,

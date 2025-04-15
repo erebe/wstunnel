@@ -1,16 +1,16 @@
 use crate::protocols;
 use crate::protocols::udp;
 use crate::protocols::udp::{UdpStream, UdpStreamWriter};
-use crate::tunnel::{to_host_port, LocalProtocol, RemoteAddr};
-use anyhow::{anyhow, Context};
+use crate::tunnel::{LocalProtocol, RemoteAddr, to_host_port};
+use anyhow::{Context, anyhow};
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::task::{ready, Poll};
+use std::task::{Poll, ready};
 use std::time::Duration;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio_stream::wrappers::TcpListenerStream;
 use tokio_stream::Stream;
+use tokio_stream::wrappers::TcpListenerStream;
 
 pub struct TproxyTcpTunnelListener {
     listener: TcpListenerStream,

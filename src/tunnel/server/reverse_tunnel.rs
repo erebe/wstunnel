@@ -1,17 +1,17 @@
-use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::RemoteAddr;
+use crate::tunnel::listeners::TunnelListener;
 use ahash::AHashMap;
 use anyhow::anyhow;
-use futures_util::{pin_mut, StreamExt};
+use futures_util::{StreamExt, pin_mut};
 use log::warn;
 use parking_lot::Mutex;
 use std::future::Future;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::{select, time};
-use tracing::{info, Instrument, Span};
+use tracing::{Instrument, Span, info};
 
 struct ReverseTunnelItem<T: TunnelListener> {
     #[allow(clippy::type_complexity)]

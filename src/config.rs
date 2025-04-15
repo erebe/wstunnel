@@ -384,8 +384,8 @@ pub struct LocalToRemote {
 #[cfg(feature = "clap")]
 mod parsers {
     use super::LocalToRemote;
-    use crate::tunnel::transport::TransportScheme;
     use crate::tunnel::LocalProtocol;
+    use crate::tunnel::transport::TransportScheme;
     use base64::Engine;
     use hyper::http::{HeaderName, HeaderValue};
     use std::cmp::max;
@@ -726,7 +726,7 @@ mod parsers {
 
     #[cfg(test)]
     mod test {
-        use super::{parse_local_bind, parse_tunnel_arg, parse_tunnel_dest, LocalToRemote};
+        use super::{LocalToRemote, parse_local_bind, parse_tunnel_arg, parse_tunnel_dest};
         use crate::tunnel::LocalProtocol;
         use collection_macros::btreemap;
         use std::collections::BTreeMap;

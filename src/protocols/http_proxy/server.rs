@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use base64::Engine;
-use futures_util::{future, stream, Stream};
+use futures_util::{Stream, future, stream};
 use http_body_util::Empty;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;

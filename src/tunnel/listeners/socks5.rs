@@ -1,10 +1,10 @@
 use crate::protocols::socks5;
 use crate::protocols::socks5::{Socks5Listener, Socks5ReadHalf, Socks5WriteHalf};
 use crate::tunnel::RemoteAddr;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::task::{ready, Poll};
+use std::task::{Poll, ready};
 use std::time::Duration;
 use tokio_stream::Stream;
 

@@ -2,15 +2,15 @@ use crate::restrictions::types::{
     AllowConfig, AllowReverseTunnelConfig, AllowTunnelConfig, MatchConfig, RestrictionConfig, RestrictionsRules,
     ReverseTunnelConfigProtocol, TunnelConfigProtocol,
 };
-use crate::tunnel::transport::{jwt_token_to_tunnel, tunnel_to_jwt_token, JwtTunnelConfig, JWT_HEADER_PREFIX};
 use crate::tunnel::RemoteAddr;
+use crate::tunnel::transport::{JWT_HEADER_PREFIX, JwtTunnelConfig, jwt_token_to_tunnel, tunnel_to_jwt_token};
 use bytes::Bytes;
 use derive_more::{Display, Error};
-use http_body_util::combinators::BoxBody;
 use http_body_util::Either;
+use http_body_util::combinators::BoxBody;
 use hyper::body::{Body, Incoming};
-use hyper::header::{HeaderValue, COOKIE, SEC_WEBSOCKET_PROTOCOL};
-use hyper::{http, Request, Response, StatusCode};
+use hyper::header::{COOKIE, HeaderValue, SEC_WEBSOCKET_PROTOCOL};
+use hyper::{Request, Response, StatusCode, http};
 use jsonwebtoken::TokenData;
 use std::net::IpAddr;
 use tracing::{error, info, warn};

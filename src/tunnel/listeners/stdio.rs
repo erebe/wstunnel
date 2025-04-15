@@ -1,6 +1,6 @@
 use crate::protocols::stdio;
 use crate::tunnel::{LocalProtocol, RemoteAddr};
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use std::pin::Pin;
 use std::task::Poll;
 use tokio::io::{AsyncRead, AsyncWrite};

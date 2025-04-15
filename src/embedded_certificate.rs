@@ -1,5 +1,5 @@
 use log::info;
-use rcgen::{date_time_ymd, CertificateParams, DnType, KeyPair};
+use rcgen::{CertificateParams, DnType, KeyPair, date_time_ymd};
 use std::sync::LazyLock;
 use std::time::Instant;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};

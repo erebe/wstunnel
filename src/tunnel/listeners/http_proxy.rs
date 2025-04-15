@@ -1,10 +1,10 @@
 use crate::protocols::http_proxy;
 use crate::protocols::http_proxy::HttpProxyListener;
 use crate::tunnel::{LocalProtocol, RemoteAddr};
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::task::{ready, Poll};
+use std::task::{Poll, ready};
 use std::time::Duration;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio_stream::Stream;

@@ -5,12 +5,12 @@ use std::fmt;
 use std::fmt::{Debug, Formatter};
 
 use crate::protocols;
-use crate::tunnel::{try_to_sock_addr, LocalProtocol, RemoteAddr};
+use crate::tunnel::{LocalProtocol, RemoteAddr, try_to_sock_addr};
 use arc_swap::ArcSwap;
 use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
-use hyper::{http, Request, StatusCode, Version};
+use hyper::{Request, StatusCode, Version, http};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use parking_lot::Mutex;
 use socket2::SockRef;
@@ -31,15 +31,15 @@ use crate::tunnel::server::handler_http2::http_server_upgrade;
 use crate::tunnel::server::handler_websocket::ws_server_upgrade;
 use crate::tunnel::server::reverse_tunnel::ReverseTunnelServer;
 use crate::tunnel::server::utils::{
-    bad_request, extract_path_prefix, extract_tunnel_info, extract_x_forwarded_for, find_mapped_port, validate_tunnel,
-    HttpResponse,
+    HttpResponse, bad_request, extract_path_prefix, extract_tunnel_info, extract_x_forwarded_for, find_mapped_port,
+    validate_tunnel,
 };
 use crate::tunnel::tls_reloader::TlsReloader;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::TlsAcceptor;
-use tracing::{error, info, span, warn, Instrument, Level, Span};
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use tracing::{Instrument, Level, Span, error, info, span, warn};
 use url::Url;
 
 #[derive(Debug)]

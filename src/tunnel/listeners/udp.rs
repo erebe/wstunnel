@@ -1,11 +1,11 @@
 use crate::protocols::udp;
 use crate::protocols::udp::{UdpStream, UdpStreamWriter};
 use crate::tunnel::{LocalProtocol, RemoteAddr};
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::task::{ready, Poll};
+use std::task::{Poll, ready};
 use std::time::Duration;
 use tokio_stream::Stream;
 use url::Host;

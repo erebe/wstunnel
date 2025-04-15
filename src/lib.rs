@@ -7,21 +7,21 @@ mod somark;
 mod test_integrations;
 mod tunnel;
 
-use crate::config::{Client, Server, DEFAULT_CLIENT_UPGRADE_PATH_PREFIX};
+use crate::config::{Client, DEFAULT_CLIENT_UPGRADE_PATH_PREFIX, Server};
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
 use crate::somark::SoMark;
+pub use crate::tunnel::LocalProtocol;
 use crate::tunnel::client::{TlsClientConfig, WsClient, WsClientConfig};
 use crate::tunnel::connectors::{Socks5TunnelConnector, TcpTunnelConnector, UdpTunnelConnector};
 use crate::tunnel::listeners::{
-    new_stdio_listener, HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener,
+    HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener, new_stdio_listener,
 };
 use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
-pub use crate::tunnel::LocalProtocol;
-use crate::tunnel::{to_host_port, RemoteAddr};
-use anyhow::{anyhow, Context};
+use crate::tunnel::{RemoteAddr, to_host_port};
+use anyhow::{Context, anyhow};
 use futures_util::future::join_all;
 use hyper::header::HOST;
 use hyper::http::HeaderValue;

@@ -1,12 +1,12 @@
 use crate::tunnel;
-use crate::tunnel::client::cnx_pool::WsConnection;
+use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::WsClientConfig;
+use crate::tunnel::client::cnx_pool::WsConnection;
 use crate::tunnel::connectors::TunnelConnector;
 use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::io::{TunnelReader, TunnelWriter};
-use crate::tunnel::transport::{jwt_token_to_tunnel, TransportScheme};
-use crate::tunnel::RemoteAddr;
+use crate::tunnel::transport::{TransportScheme, jwt_token_to_tunnel};
 use anyhow::Context;
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
@@ -16,7 +16,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
-use tracing::{error, event, span, Instrument, Level, Span};
+use tracing::{Instrument, Level, Span, error, event, span};
 use url::Host;
 use uuid::Uuid;
 

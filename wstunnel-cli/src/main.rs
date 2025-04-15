@@ -2,10 +2,10 @@ use clap::Parser;
 use std::io;
 use std::str::FromStr;
 use tracing::warn;
-use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
-use wstunnel::config::{Client, Server};
+use tracing_subscriber::filter::Directive;
 use wstunnel::LocalProtocol;
+use wstunnel::config::{Client, Server};
 use wstunnel::{run_client, run_server};
 
 #[cfg(feature = "jemalloc")]

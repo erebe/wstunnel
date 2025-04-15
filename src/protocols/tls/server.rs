@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use std::fs::File;
 
 use log::warn;
@@ -15,7 +15,7 @@ use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVe
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, Error, KeyLogFile, SignatureScheme};
-use tokio_rustls::{rustls, TlsAcceptor, TlsConnector};
+use tokio_rustls::{TlsAcceptor, TlsConnector, rustls};
 use tracing::info;
 
 #[derive(Debug)]

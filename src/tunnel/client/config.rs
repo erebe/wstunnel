@@ -8,8 +8,8 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
-use tokio_rustls::rustls::pki_types::{DnsName, ServerName};
 use tokio_rustls::TlsConnector;
+use tokio_rustls::rustls::pki_types::{DnsName, ServerName};
 use url::{Host, Url};
 
 #[derive(Clone)]

@@ -1,13 +1,13 @@
 use crate::protocols;
 use crate::somark::SoMark;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use futures_util::{FutureExt, TryFutureExt};
+use hickory_resolver::Resolver;
 use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::GenericConnector;
 use hickory_resolver::proto::runtime::iocompat::AsyncIoTokioAsStd;
 use hickory_resolver::proto::runtime::{RuntimeProvider, TokioHandle, TokioRuntimeProvider, TokioTime};
 use hickory_resolver::proto::xfer::Protocol;
-use hickory_resolver::Resolver;
 use log::warn;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};

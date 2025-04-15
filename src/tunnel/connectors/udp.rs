@@ -6,8 +6,8 @@ use crate::protocols;
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::udp::WsUdpSocket;
 use crate::somark::SoMark;
-use crate::tunnel::connectors::TunnelConnector;
 use crate::tunnel::RemoteAddr;
+use crate::tunnel::connectors::TunnelConnector;
 
 pub struct UdpTunnelConnector<'a> {
     host: &'a Host,

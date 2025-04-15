@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Context};
-use futures_util::{stream, Stream};
+use anyhow::{Context, anyhow};
+use futures_util::{Stream, stream};
 
 use parking_lot::RwLock;
 use pin_project::{pin_project, pinned_drop};
@@ -12,9 +12,9 @@ use tokio::task::JoinSet;
 
 use log::warn;
 use socket2::SockRef;
-use std::pin::{pin, Pin};
+use std::pin::{Pin, pin};
 use std::sync::{Arc, Weak};
-use std::task::{ready, Poll};
+use std::task::{Poll, ready};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
@@ -23,7 +23,7 @@ use tokio::sync::futures::Notified;
 use crate::protocols::dns::DnsResolver;
 use crate::somark::SoMark;
 use tokio::sync::Notify;
-use tokio::time::{sleep, timeout, Interval};
+use tokio::time::{Interval, sleep, timeout};
 use tracing::{debug, error, info};
 use url::Host;
 
@@ -501,7 +501,7 @@ pub fn mk_send_socket_tproxy(listener: &Arc<UdpSocket>) -> anyhow::Result<Arc<Ud
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures_util::{pin_mut, StreamExt};
+    use futures_util::{StreamExt, pin_mut};
     use tokio::io::AsyncReadExt;
     use tokio::time::error::Elapsed;
     use tokio::time::timeout;

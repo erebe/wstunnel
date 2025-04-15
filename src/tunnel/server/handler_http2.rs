@@ -1,6 +1,6 @@
 use crate::restrictions::types::RestrictionsRules;
-use crate::tunnel::server::utils::{bad_request, inject_cookie, HttpResponse};
 use crate::tunnel::server::WsServer;
+use crate::tunnel::server::utils::{HttpResponse, bad_request, inject_cookie};
 use crate::tunnel::transport;
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
 use bytes::Bytes;

@@ -1,5 +1,5 @@
 use anyhow::Context;
-use futures_util::{stream, Stream};
+use futures_util::{Stream, stream};
 
 use parking_lot::RwLock;
 use pin_project::{pin_project, pinned_drop};
@@ -13,9 +13,9 @@ use bytes::{Buf, Bytes, BytesMut};
 use fast_socks5::new_udp_header;
 use fast_socks5::util::target_addr::TargetAddr;
 use log::warn;
-use std::pin::{pin, Pin};
+use std::pin::{Pin, pin};
 use std::sync::{Arc, Weak};
-use std::task::{ready, Poll};
+use std::task::{Poll, ready};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
