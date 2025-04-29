@@ -3,6 +3,7 @@ use crate::somark::SoMark;
 use crate::tunnel::transport::TransportAddr;
 use hyper::header::{HeaderName, HeaderValue};
 use parking_lot::RwLock;
+use tokio_rustls::rustls::RootCertStore;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -57,6 +58,8 @@ pub struct TlsClientConfig {
     pub tls_connector: Arc<RwLock<TlsConnector>>,
     pub tls_certificate_path: Option<PathBuf>,
     pub tls_key_path: Option<PathBuf>,
+    pub root_store: RootCertStore,
+    pub tls_ech_enabled: bool,
 }
 
 impl TlsClientConfig {

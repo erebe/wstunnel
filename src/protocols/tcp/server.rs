@@ -1,4 +1,5 @@
 use anyhow::{Context, anyhow};
+use tokio_rustls::rustls::client::EchConfig;
 use std::{io, vec};
 use tokio::task::JoinSet;
 
@@ -53,23 +54,23 @@ pub async fn connect(
     so_mark: SoMark,
     connect_timeout: Duration,
     dns_resolver: &DnsResolver,
-) -> Result<TcpStream, anyhow::Error> {
+) -> Result<(TcpStream, Option<EchConfig>), anyhow::Error> {
     info!("Opening TCP connection to {}:{}", host, port);
 
-    let socket_addrs: Vec<SocketAddr> = match host {
+    let socket_addrs: (Vec<SocketAddr>, Option<EchConfig>) = match host {
         Host::Domain(domain) => dns_resolver
             .lookup_host(domain.as_str(), port)
             .await
             .with_context(|| format!("cannot resolve domain: {}", domain))?,
-        Host::Ipv4(ip) => vec![SocketAddr::V4(SocketAddrV4::new(*ip, port))],
-        Host::Ipv6(ip) => vec![SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))],
+        Host::Ipv4(ip) => (vec![SocketAddr::V4(SocketAddrV4::new(*ip, port))], None),
+        Host::Ipv6(ip) => (vec![SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))], None),
     };
 
     let mut cnx = None;
     let mut last_err = None;
     let mut join_set = JoinSet::new();
 
-    for (ix, addr) in socket_addrs.into_iter().enumerate() {
+    for (ix, addr) in socket_addrs.0.into_iter().enumerate() {
         let socket = match &addr {
             SocketAddr::V4(_) => TcpSocket::new_v4(),
             SocketAddr::V6(_) => TcpSocket::new_v6(),
@@ -115,7 +116,7 @@ pub async fn connect(
                     "Connected to tcp endpoint {}, aborted all other connection attempts",
                     stream.peer_addr()?
                 );
-                cnx = Some(stream);
+                cnx = Some((stream, socket_addrs.1.clone()));
             }
             Ok(Err((addr, err))) => {
                 debug!("Cannot connect to tcp endpoint {addr} reason {err}");
@@ -141,13 +142,13 @@ pub async fn connect_with_http_proxy(
     so_mark: SoMark,
     connect_timeout: Duration,
     dns_resolver: &DnsResolver,
-) -> Result<TcpStream, anyhow::Error> {
+) -> Result<(TcpStream, Option<EchConfig>), anyhow::Error> {
     let proxy_host = proxy.host().context("Cannot parse proxy host")?.to_owned();
     let proxy_port = proxy.port_or_known_default().unwrap_or(80);
 
     info!("Connecting to http proxy {}:{}", proxy_host, proxy_port);
     let mut socket = connect(&proxy_host, proxy_port, so_mark, connect_timeout, dns_resolver).await?;
-    debug!("Connected to http proxy {}", socket.peer_addr().unwrap());
+    debug!("Connected to http proxy {}", socket.0.peer_addr().unwrap());
 
     let authorization = if let Some((user, password)) = proxy.password().map(|p| (proxy.username(), p)) {
         let user = urlencoding::decode(user).with_context(|| format!("Cannot urldecode proxy user: {}", user))?;
@@ -161,11 +162,11 @@ pub async fn connect_with_http_proxy(
 
     let connect_request = format!("CONNECT {host}:{port} HTTP/1.0\r\nHost: {host}:{port}\r\n{authorization}\r\n");
     debug!("Sending request:\n{}", connect_request);
-    socket.write_all(connect_request.as_bytes()).await?;
+    socket.0.write_all(connect_request.as_bytes()).await?;
 
     let mut buf = BytesMut::with_capacity(1024);
     loop {
-        let nb_bytes = tokio::time::timeout(connect_timeout, socket.read_buf(&mut buf)).await;
+        let nb_bytes = tokio::time::timeout(connect_timeout, socket.0.read_buf(&mut buf)).await;
         match nb_bytes {
             Ok(Ok(0)) => {
                 return Err(anyhow!(
@@ -294,7 +295,7 @@ mod tests {
         .await
         .unwrap();
 
-        client.write_all(b"GET / HTTP/1.1\r\n\r\n".as_slice()).await.unwrap();
+        client.0.write_all(b"GET / HTTP/1.1\r\n\r\n".as_slice()).await.unwrap();
         let client_srv = server.accept().await.unwrap().0;
         pin_mut!(client_srv);
 
@@ -304,7 +305,7 @@ mod tests {
         client_srv.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
 
         client_srv.get_mut().shutdown().await.unwrap();
-        let _ = client.read(&mut buf).await.unwrap();
+        let _ = client.0.read(&mut buf).await.unwrap();
         assert!(buf.starts_with(b"HTTP/1.1 200 OK\r\n\r\n"));
     }
 }

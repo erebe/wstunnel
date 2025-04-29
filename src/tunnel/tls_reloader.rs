@@ -300,7 +300,7 @@ impl TlsReloader {
                                 return;
                             }
                         };
-                        *tls.tls_connector.write() = tls_connector;
+                        *tls.tls_connector.write() = tls_connector.0;
                         this.tls_reload_certificate.store(true, Ordering::Relaxed);
                     }
                     (Err(err), _) | (_, Err(err)) => {
@@ -343,7 +343,7 @@ impl TlsReloader {
                                 return;
                             }
                         };
-                        *tls.tls_connector.write() = tls_connector;
+                        *tls.tls_connector.write() = tls_connector.0;
                         this.tls_reload_certificate.store(true, Ordering::Relaxed);
                     }
                     (Err(err), _) | (_, Err(err)) => {

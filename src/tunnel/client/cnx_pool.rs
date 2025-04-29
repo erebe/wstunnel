@@ -58,7 +58,7 @@ impl ManageConnection for WsConnection {
             let tls_stream = tls::connect(self, tcp_stream).await?;
             Ok(Some(TransportStream::from_client_tls(tls_stream, Bytes::default())))
         } else {
-            Ok(Some(TransportStream::from_tcp(tcp_stream, Bytes::default())))
+            Ok(Some(TransportStream::from_tcp(tcp_stream.0, Bytes::default())))
         }
     }
 
