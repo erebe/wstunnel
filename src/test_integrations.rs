@@ -25,7 +25,7 @@ use url::Host;
 
 #[fixture]
 fn dns_resolver() -> DnsResolver {
-    DnsResolver::new_from_urls(&[], None, SoMark::new(None), true).expect("Cannot create DNS resolver")
+    DnsResolver::new_from_urls(&[], None, SoMark::new(None), true, false).expect("Cannot create DNS resolver")
 }
 
 #[fixture]
@@ -148,7 +148,7 @@ async fn test_tcp_tunnel(
     .await
     .unwrap();
 
-    client.write_all(b"Hello").await.unwrap();
+    client.0.write_all(b"Hello").await.unwrap();
     let mut dd = tcp_listener.next().await.unwrap().unwrap();
     let mut buf = BytesMut::new();
     dd.read_buf(&mut buf).await.unwrap();
@@ -156,7 +156,7 @@ async fn test_tcp_tunnel(
     buf.clear();
 
     dd.write_all(b"world!").await.unwrap();
-    client.read_buf(&mut buf).await.unwrap();
+    client.0.read_buf(&mut buf).await.unwrap();
     assert_eq!(&buf[..6], b"world!");
 }
 

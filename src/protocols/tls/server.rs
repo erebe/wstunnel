@@ -1,4 +1,6 @@
 use anyhow::{Context, anyhow};
+use tokio_rustls::rustls::client::{EchConfig, EchMode};
+use tokio_rustls::rustls::crypto::ring;
 use std::fs::File;
 
 use log::warn;
@@ -8,13 +10,13 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
-use crate::tunnel::client::WsClientConfig;
+use crate::tunnel::client::{TlsClientConfig, WsClientConfig};
 use crate::tunnel::server::TlsServerConfig;
 use crate::tunnel::transport::TransportAddr;
 use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
-use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, Error, KeyLogFile, SignatureScheme};
+use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, Error, KeyLogFile, RootCertStore, SignatureScheme};
 use tokio_rustls::{TlsAcceptor, TlsConnector, rustls};
 use tracing::info;
 
@@ -108,7 +110,7 @@ pub fn tls_connector(
     enable_sni: bool,
     tls_client_certificate: Option<Vec<CertificateDer<'static>>>,
     tls_client_key: Option<PrivateKeyDer<'static>>,
-) -> anyhow::Result<TlsConnector> {
+) -> anyhow::Result<(TlsConnector, RootCertStore)> {
     let mut root_store = rustls::RootCertStore::empty();
 
     // Load system certificates and add them to the root store
@@ -122,8 +124,10 @@ pub fn tls_connector(
             continue;
         }
     }
+    
+    rustls::crypto::ring::default_provider().install_default().expect("Failed to install rustls crypto provider");
 
-    let config_builder = ClientConfig::builder().with_root_certificates(root_store);
+    let config_builder = ClientConfig::builder().with_root_certificates(root_store.clone());
 
     let mut config = match (tls_client_certificate, tls_client_key) {
         (Some(tls_client_certificate), Some(tls_client_key)) => config_builder
@@ -142,7 +146,7 @@ pub fn tls_connector(
 
     config.alpn_protocols = alpn_protocols;
     let tls_connector = TlsConnector::from(Arc::new(config));
-    Ok(tls_connector)
+    Ok((tls_connector, root_store))
 }
 
 pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsAcceptor> {
@@ -173,7 +177,7 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
-pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
+pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: (TcpStream, Option<EchConfig>)) -> anyhow::Result<TlsStream<TcpStream>> {
     let sni = client_cfg.tls_server_name();
     let (tls_connector, sni_disabled) = match &client_cfg.remote_addr {
         TransportAddr::Wss { tls, .. } => (tls.tls_connector(), tls.tls_sni_disabled),
@@ -197,13 +201,54 @@ pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyh
         );
     }
 
-    let tls_stream = tls_connector.connect(sni, tcp_stream).await.with_context(|| {
+    let connector = tls_connector.clone();
+
+    let tls_config = match &client_cfg.remote_addr {
+        TransportAddr::Wss { tls, .. } => Some(tls),
+        TransportAddr::Https { tls, .. } => Some(tls),
+        _ => None,
+    };
+
+    let tls_stream = if let (Some(tls_config) , Some(ech_config), Some(true)) = (tls_config, tcp_stream.1, is_ech_enabled(tls_config)) {
+        tls_connect_with_ech(ech_config, tls_config, tls_connector.clone(), client_cfg,  tcp_stream.0, sni).await?
+    } else {
+        connector.connect(sni, tcp_stream.0).await?
+    };
+
+    Ok(tls_stream)
+}
+
+fn is_ech_enabled(tls_config: Option<&TlsClientConfig>) -> Option<bool> {
+    match tls_config {
+        Some(config) => return Some(config.tls_ech_enabled),
+        _ => None
+    }
+}
+
+async fn tls_connect_with_ech(
+    ech_config: EchConfig,
+    tls_config: &TlsClientConfig, 
+    original_connector: TlsConnector,
+    client_cfg: &WsClientConfig,
+    tcp_stream: TcpStream,
+    sni: ServerName<'static>
+) -> anyhow::Result<TlsStream<TcpStream>>  {
+    let mut ech_client_config = ClientConfig::builder_with_provider(ring::default_provider().into())
+                    .with_ech(EchMode::from(ech_config))?
+                    .with_root_certificates(tls_config.root_store.clone())
+                    .with_no_client_auth();
+
+    let original_config = original_connector.config();
+                ech_client_config.key_log = original_config.key_log.clone();
+                ech_client_config.alpn_protocols = original_config.alpn_protocols.clone();
+                
+    return TlsConnector::from(Arc::new(ech_client_config))
+        .connect(sni, tcp_stream)
+        .await.with_context(|| {
         format!(
             "failed to do TLS handshake with the server {}:{}",
             client_cfg.remote_addr.host(),
             client_cfg.remote_addr.port()
         )
-    })?;
-
-    Ok(tls_stream)
+    });
 }

@@ -97,6 +97,10 @@ pub struct Client {
     #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]
     pub tls_sni_disable: bool,
 
+    /// Enable ECH during TLS handshake
+    #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]
+    pub tls_ech_enable: bool,
+
     /// Enable TLS certificate verification.
     /// Disabled by default. The client will happily connect to any server with self-signed certificate.
     #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]

@@ -46,7 +46,7 @@ impl TunnelConnector for TcpTunnelConnector<'_> {
         };
 
         let stream = protocols::tcp::connect(host, port, self.so_mark, self.connect_timeout, self.dns_resolver).await?;
-        Ok(stream.into_split())
+        Ok(stream.0.into_split())
     }
 
     async fn connect_with_http_proxy(
@@ -68,6 +68,6 @@ impl TunnelConnector for TcpTunnelConnector<'_> {
             self.dns_resolver,
         )
         .await?;
-        Ok(stream.into_split())
+        Ok(stream.0.into_split())
     }
 }

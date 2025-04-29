@@ -3,6 +3,7 @@ use futures_util::{Stream, stream};
 
 use parking_lot::RwLock;
 use pin_project::{pin_project, pinned_drop};
+use tokio_rustls::rustls::client::EchConfig;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::{Error, ErrorKind};
@@ -343,20 +344,20 @@ pub async fn connect(
 ) -> anyhow::Result<WsUdpSocket> {
     info!("Opening UDP connection to {}:{}", host, port);
 
-    let socket_addrs: Vec<SocketAddr> = match host {
-        Host::Ipv4(ip) => vec![SocketAddr::V4(SocketAddrV4::new(*ip, port))],
-        Host::Ipv6(ip) => vec![SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))],
+    let socket_addrs: (Vec<SocketAddr>, Option<EchConfig>) = match host {
         Host::Domain(domain) => dns_resolver
             .lookup_host(domain.as_str(), port)
             .await
             .with_context(|| format!("cannot resolve domain: {}", domain))?,
+        Host::Ipv4(ip) => (vec![SocketAddr::V4(SocketAddrV4::new(*ip, port))], None),
+        Host::Ipv6(ip) => (vec![SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))], None),
     };
 
     let mut cnx = None;
     let mut last_err = None;
     let mut join_set = JoinSet::new();
 
-    for (ix, addr) in socket_addrs.into_iter().enumerate() {
+    for (ix, addr) in socket_addrs.0.into_iter().enumerate() {
         let socket = match &addr {
             SocketAddr::V4(_) => UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).await,
             SocketAddr::V6(_) => UdpSocket::bind(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)).await,
