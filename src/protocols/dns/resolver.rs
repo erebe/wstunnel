@@ -2,13 +2,18 @@ use crate::protocols;
 use crate::somark::SoMark;
 use anyhow::{Context, anyhow};
 use futures_util::{FutureExt, TryFutureExt};
-use hickory_resolver::Resolver;
 use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::GenericConnector;
+use hickory_resolver::proto::rr::rdata::svcb::{SvcParamKey, SvcParamValue};
+use hickory_resolver::proto::rr::{RData, RecordType};
 use hickory_resolver::proto::runtime::iocompat::AsyncIoTokioAsStd;
 use hickory_resolver::proto::runtime::{RuntimeProvider, TokioHandle, TokioRuntimeProvider, TokioTime};
 use hickory_resolver::proto::xfer::Protocol;
+use hickory_resolver::{Resolver, ResolveError};
 use log::warn;
+use tokio_rustls::rustls::client::EchConfig;
+use tokio_rustls::rustls::crypto::aws_lc_rs::hpke::ALL_SUPPORTED_SUITES;
+use tokio_rustls::rustls::pki_types::EchConfigListBytes;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::pin::Pin;
@@ -44,10 +49,13 @@ pub enum DnsResolver {
 }
 
 impl DnsResolver {
-    pub async fn lookup_host(&self, domain: &str, port: u16) -> anyhow::Result<Vec<SocketAddr>> {
-        let addrs: Vec<SocketAddr> = match self {
-            Self::System => tokio::net::lookup_host(format!("{}:{}", domain, port)).await?.collect(),
+    pub async fn lookup_host(&self, domain: &str, port: u16) -> anyhow::Result<(Vec<SocketAddr>, Option<EchConfig>)> {
+        let addrs: (Vec<SocketAddr>, Option<EchConfig>) = match self {
+            Self::System => {
+                (tokio::net::lookup_host(format!("{}:{}", domain, port)).await?.collect(), Self::lookup_ech_config(domain).await?)
+            },
             Self::TrustDns { resolver, prefer_ipv6 } => {
+
                 let addrs: Vec<_> = resolver
                     .lookup_ip(domain)
                     .await?
@@ -57,11 +65,44 @@ impl DnsResolver {
                         IpAddr::V6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
                     })
                     .collect();
-                sort_socket_addrs(&addrs, *prefer_ipv6).copied().collect()
+                let sorted_addr = sort_socket_addrs(&addrs, *prefer_ipv6).copied().collect();
+                (sorted_addr, Self::lookup_ech_config(domain).await?)
             }
         };
 
         Ok(addrs)
+    }
+
+    async fn lookup_ech_config(domain: &str) -> Result<Option<EchConfig>, ResolveError> {
+        let resolver = Resolver::builder_tokio().unwrap().build();
+
+        let lookup = resolver
+            .lookup(domain, RecordType::HTTPS)
+            .await?;
+
+        let mut ech_config_lists = Vec::new();
+        for r in lookup.record_iter() {
+            let RData::HTTPS(svcb) = r.data() else {
+                continue;
+            };
+    
+            ech_config_lists.extend(
+                svcb.svc_params()
+                    .iter()
+                    .find_map(|sp| match sp {
+                        (SvcParamKey::EchConfigList, SvcParamValue::EchConfigList(e)) => {
+                            Some(EchConfigListBytes::from(e.clone().0))
+                        }
+                        _ => None,
+                    }),
+            )
+        }
+
+        let ech_config = ech_config_lists
+            .into_iter()
+            .find_map(|list| EchConfig::new(list, ALL_SUPPORTED_SUITES).ok());
+
+        Ok(ech_config)
     }
 
     pub fn new_from_urls(
@@ -218,8 +259,10 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
                     &DnsResolver::System, // not going to be used as host is directly an ip address
                 )
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map_ok(|s| s.0)
                 .map(|s| s.map(AsyncIoTokioAsStd))
                 .await
+                
             } else {
                 protocols::tcp::connect(
                     &host,
@@ -229,6 +272,7 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
                     &DnsResolver::System, // not going to be used as host is directly an ip address
                 )
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map_ok(|s| s.0)
                 .map(|s| s.map(AsyncIoTokioAsStd))
                 .await
             }

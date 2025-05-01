@@ -1,4 +1,6 @@
 use anyhow::{Context, anyhow};
+use tokio_rustls::rustls::client::{EchConfig, EchMode};
+use tokio_rustls::rustls::crypto::aws_lc_rs;
 use std::fs::File;
 
 use log::warn;
@@ -173,7 +175,7 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
-pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
+pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: (TcpStream, Option<EchConfig>)) -> anyhow::Result<TlsStream<TcpStream>> {
     let sni = client_cfg.tls_server_name();
     let (tls_connector, sni_disabled) = match &client_cfg.remote_addr {
         TransportAddr::Wss { tls, .. } => (tls.tls_connector(), tls.tls_sni_disabled),
@@ -197,7 +199,39 @@ pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyh
         );
     }
 
-    let tls_stream = tls_connector.connect(sni, tcp_stream).await.with_context(|| {
+    let mut connector = tls_connector.clone();
+
+    // The endpoint supports ech, we need to create a new TlsConnector with the
+    // ech config that we got from the HTTPS dns record.
+    if let Some(ech_config) = tcp_stream.1 {
+        let mut root_store = rustls::RootCertStore::empty();
+
+        let certs = rustls_native_certs::load_native_certs();
+        certs.errors.iter().for_each(|err| {
+            warn!("cannot load system some system certificates: {}", err);
+        });
+        for cert in certs.certs {
+            if let Err(err) = root_store.add(cert) {
+                warn!("cannot load a system certificate: {:?}", err);
+                continue;
+            }
+        }
+
+        let mut ech_client_config = ClientConfig::builder_with_provider(aws_lc_rs::default_provider().into())
+            .with_ech(EchMode::from(ech_config))?
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+
+        let original_config = connector.config();
+        ech_client_config.key_log = original_config.key_log.clone();
+        ech_client_config.alpn_protocols = original_config.alpn_protocols.clone();
+        
+        connector = TlsConnector::from(Arc::new(ech_client_config));
+    }
+
+    let tls_stream = connector
+        .connect(sni, tcp_stream.0)
+        .await.with_context(|| {
         format!(
             "failed to do TLS handshake with the server {}:{}",
             client_cfg.remote_addr.host(),
