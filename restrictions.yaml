@@ -10,6 +10,9 @@ restrictions:
       # The regex does a match, so if you want to match exactly you need to bound the pattern with ^ $
       # I.e: "tesotron" is going to match "XXXtesotronXXX", but "^tesotron$" is going to match only "tesotron"
       - !PathPrefix "^.*$"
+      # This match applies only if it succeeds to match the Authentication Header with the given regex.
+      # If present, Authentication Header must exists and must match the regex.
+      # - !Authorization "^[Bb]earer +actual_bearer_token_to_match$"
       # The only other possible match type for now is !Any, that match everything/any request
       # - !Any
 

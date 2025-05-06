@@ -50,6 +50,12 @@ pub(super) fn find_mapped_port(req_port: u16, restriction: &RestrictionConfig) -
 }
 
 #[inline]
+pub(super) fn extract_authorization(req: &Request<Incoming>) -> Option<&str> {
+    let val = req.headers().get("Authorization")?;
+    val.to_str().ok()
+}
+
+#[inline]
 pub(super) fn extract_x_forwarded_for(req: &Request<Incoming>) -> Option<(IpAddr, &str)> {
     let x_forward_for = req.headers().get("X-Forwarded-For")?;
 
@@ -104,12 +110,13 @@ pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> anyhow::Result<Tok
 }
 
 impl RestrictionConfig {
-    /// Returns true if the path prefix matches the restriction or if the restriction is set to allow any path.
+    /// Returns true if the parameters match the restriction config
     #[inline]
-    fn for_path(self: &RestrictionConfig, path_prefix: &str) -> bool {
+    fn filter(self: &RestrictionConfig, path_prefix: &str, authorization: Option<&str>) -> bool {
         self.r#match.iter().all(|m| match m {
             MatchConfig::Any => true,
             MatchConfig::PathPrefix(path) => path.is_match(path_prefix),
+            MatchConfig::Authorization(auth) => authorization.is_some_and(|val| auth.is_match(val)),
         })
     }
 }
@@ -186,12 +193,13 @@ impl AllowConfig {
 pub(super) fn validate_tunnel<'a>(
     remote: &RemoteAddr,
     path_prefix: &str,
+    authorization: Option<&str>,
     restrictions: &'a RestrictionsRules,
 ) -> Option<&'a RestrictionConfig> {
     restrictions
         .restrictions
         .iter()
-        .filter(|restriction| restriction.for_path(path_prefix))
+        .filter(|restriction| restriction.filter(path_prefix, authorization))
         .find(|restriction| restriction.allow.iter().any(|allow| allow.is_allowed(remote)))
 }
 
@@ -249,7 +257,9 @@ mod tests {
             port: 80,
         };
         assert_eq!(
-            validate_tunnel(&remote, "/doesnt/matter", &restrictions).unwrap().name,
+            validate_tunnel(&remote, "/doesnt/matter", None, &restrictions)
+                .unwrap()
+                .name,
             restrictions.restrictions[0].name
         );
 
@@ -259,7 +269,9 @@ mod tests {
             port: 80,
         };
         assert_eq!(
-            validate_tunnel(&remote, "/doesnt/matter", &restrictions).unwrap().name,
+            validate_tunnel(&remote, "/doesnt/matter", None, &restrictions)
+                .unwrap()
+                .name,
             restrictions.restrictions[1].name
         );
 
@@ -268,14 +280,14 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 81,
         };
-        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_none());
+        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
 
         let remote = RemoteAddr {
             protocol: LocalProtocol::Tcp { proxy_protocol: false },
             host: Host::Ipv4([127, 0, 1, 1].into()),
             port: 80,
         };
-        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_none());
+        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
 
         let remote = RemoteAddr {
             protocol: LocalProtocol::Tcp { proxy_protocol: false },
@@ -283,7 +295,9 @@ mod tests {
             port: 80,
         };
         assert_eq!(
-            validate_tunnel(&remote, "/doesnt/matter", &restrictions).unwrap().name,
+            validate_tunnel(&remote, "/doesnt/matter", None, &restrictions)
+                .unwrap()
+                .name,
             restrictions.restrictions[0].name
         );
 
@@ -292,14 +306,14 @@ mod tests {
             host: Host::Domain("not.com".into()),
             port: 80,
         };
-        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_none());
+        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
 
         let remote = RemoteAddr {
             protocol: LocalProtocol::Tcp { proxy_protocol: false },
             host: Host::Ipv6(Ipv6Addr::LOCALHOST),
             port: 80,
         };
-        assert!(validate_tunnel(&remote, "/doesnt/matter", &restrictions).is_none());
+        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
     }
 
     #[test]
