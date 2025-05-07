@@ -23,6 +23,8 @@ pub enum MatchConfig {
     Any,
     #[serde(with = "serde_regex")]
     PathPrefix(Regex),
+    #[serde(with = "serde_regex")]
+    Authorization(Regex),
 }
 
 #[derive(Debug, Clone, Deserialize)]

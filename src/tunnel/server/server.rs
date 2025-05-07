@@ -31,8 +31,8 @@ use crate::tunnel::server::handler_http2::http_server_upgrade;
 use crate::tunnel::server::handler_websocket::ws_server_upgrade;
 use crate::tunnel::server::reverse_tunnel::ReverseTunnelServer;
 use crate::tunnel::server::utils::{
-    HttpResponse, bad_request, extract_path_prefix, extract_tunnel_info, extract_x_forwarded_for, find_mapped_port,
-    validate_tunnel,
+    HttpResponse, bad_request, extract_authorization, extract_path_prefix, extract_tunnel_info,
+    extract_x_forwarded_for, find_mapped_port, validate_tunnel,
 };
 use crate::tunnel::tls_reloader::TlsReloader;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -121,7 +121,9 @@ impl WsServer {
             bad_request()
         })?;
 
-        let restriction = validate_tunnel(&remote, path_prefix, &restrictions).ok_or_else(|| {
+        let authorization = extract_authorization(req);
+
+        let restriction = validate_tunnel(&remote, path_prefix, authorization, &restrictions).ok_or_else(|| {
             warn!("Rejecting connection with not allowed destination: {remote:?}");
             bad_request()
         })?;
