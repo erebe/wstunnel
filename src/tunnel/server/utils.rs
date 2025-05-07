@@ -9,7 +9,7 @@ use derive_more::{Display, Error};
 use http_body_util::Either;
 use http_body_util::combinators::BoxBody;
 use hyper::body::{Body, Incoming};
-use hyper::header::{COOKIE, HeaderValue, SEC_WEBSOCKET_PROTOCOL};
+use hyper::header::{AUTHORIZATION, COOKIE, HeaderValue, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{Request, Response, StatusCode, http};
 use jsonwebtoken::TokenData;
 use std::net::IpAddr;
@@ -51,8 +51,7 @@ pub(super) fn find_mapped_port(req_port: u16, restriction: &RestrictionConfig) -
 
 #[inline]
 pub(super) fn extract_authorization(req: &Request<Incoming>) -> Option<&str> {
-    let val = req.headers().get("Authorization")?;
-    val.to_str().ok()
+    req.headers().get(AUTHORIZATION)?.to_str().ok()
 }
 
 #[inline]
@@ -112,11 +111,11 @@ pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> anyhow::Result<Tok
 impl RestrictionConfig {
     /// Returns true if the parameters match the restriction config
     #[inline]
-    fn filter(self: &RestrictionConfig, path_prefix: &str, authorization: Option<&str>) -> bool {
+    fn filter(self: &RestrictionConfig, path_prefix: &str, authorization_header_val: Option<&str>) -> bool {
         self.r#match.iter().all(|m| match m {
             MatchConfig::Any => true,
             MatchConfig::PathPrefix(path) => path.is_match(path_prefix),
-            MatchConfig::Authorization(auth) => authorization.is_some_and(|val| auth.is_match(val)),
+            MatchConfig::Authorization(auth) => authorization_header_val.is_some_and(|val| auth.is_match(val)),
         })
     }
 }

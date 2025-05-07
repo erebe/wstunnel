@@ -122,7 +122,6 @@ impl WsServer {
         })?;
 
         let authorization = extract_authorization(req);
-
         let restriction = validate_tunnel(&remote, path_prefix, authorization, &restrictions).ok_or_else(|| {
             warn!("Rejecting connection with not allowed destination: {remote:?}");
             bad_request()
