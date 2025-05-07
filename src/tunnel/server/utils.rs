@@ -216,7 +216,7 @@ pub(super) fn inject_cookie(response: &mut http::Response<impl Body>, remote_add
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::restrictions::types::{AllowReverseTunnelConfig, AllowTunnelConfig};
+    use crate::restrictions::types::{AllowReverseTunnelConfig, AllowTunnelConfig, default_cidr, default_host};
     use crate::tunnel::LocalProtocol;
     use ipnet::{IpNet, Ipv4Net};
     use regex::Regex;
@@ -313,6 +313,38 @@ mod tests {
             host: Host::Ipv6(Ipv6Addr::LOCALHOST),
             port: 80,
         };
+        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
+    }
+
+    #[test]
+    fn test_validate_tunnel_with_auth() {
+        let restrictions = RestrictionsRules {
+            restrictions: vec![RestrictionConfig {
+                name: "restrict1".into(),
+                r#match: vec![MatchConfig::Authorization(
+                    Regex::new("^[Bb]earer +the-bearer-token$").unwrap(),
+                )],
+                allow: vec![AllowConfig::Tunnel(AllowTunnelConfig {
+                    protocol: vec![],
+                    port: vec![],
+                    cidr: default_cidr(),
+                    host: default_host(),
+                })],
+            }],
+        };
+
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Ipv4([127, 0, 0, 1].into()),
+            port: 80,
+        };
+        assert_eq!(
+            validate_tunnel(&remote, "/doesnt/matter", Some("Bearer the-bearer-token"), &restrictions)
+                .unwrap()
+                .name,
+            restrictions.restrictions[0].name
+        );
+        assert!(validate_tunnel(&remote, "/doesnt/matter", Some("Bearer other-bearer-token"), &restrictions).is_none());
         assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
     }
 
