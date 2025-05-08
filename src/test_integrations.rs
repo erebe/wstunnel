@@ -62,7 +62,9 @@ async fn client_ws(dns_resolver: DnsResolver) -> WsClient {
         http_proxy: None,
     };
 
-    WsClient::new(client_config, 1, Duration::from_secs(1)).await.unwrap()
+    WsClient::new(client_config, 1, Duration::from_secs(1), Duration::from_secs(1))
+        .await
+        .unwrap()
 }
 
 #[fixture]
