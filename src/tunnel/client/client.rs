@@ -11,6 +11,7 @@ use anyhow::Context;
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
 use log::debug;
+use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -24,6 +25,7 @@ use uuid::Uuid;
 pub struct WsClient {
     pub config: Arc<WsClientConfig>,
     pub cnx_pool: bb8::Pool<WsConnection>,
+    reverse_reconnect_max_delay: Duration,
     _tls_reloader: Arc<TlsReloader>,
 }
 
@@ -32,6 +34,7 @@ impl WsClient {
         config: WsClientConfig,
         connection_min_idle: u32,
         connection_retry_max_backoff_sec: Duration,
+        reverse_reconnect_max_delay: Duration,
     ) -> anyhow::Result<Self> {
         let config = Arc::new(config);
         let cnx = WsConnection::new(config.clone());
@@ -48,6 +51,7 @@ impl WsClient {
         Ok(Self {
             config,
             cnx_pool,
+            reverse_reconnect_max_delay,
             _tls_reloader: Arc::new(tls_reloader),
         })
     }
@@ -133,6 +137,9 @@ impl WsClient {
         remote_addr: RemoteAddr,
         connector: impl TunnelConnector,
     ) -> anyhow::Result<()> {
+        const INITIAL_DELAY: Duration = Duration::from_secs(1);
+        let mut delay = INITIAL_DELAY;
+
         loop {
             let client = self.clone();
             let request_id = Uuid::now_v7();
@@ -151,8 +158,9 @@ impl WsClient {
                     {
                         Ok((r, w, response)) => (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response),
                         Err(err) => {
-                            event!(parent: &span, Level::ERROR, "Retrying in 1sec, cannot connect to remote server: {:?}", err);
-                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            event!(parent: &span, Level::ERROR, "Retrying in {:?}, cannot connect to remote server: {:?}", delay, err);
+                            tokio::time::sleep(delay).await;
+                            delay = min(delay * 2, self.reverse_reconnect_max_delay);
                             continue;
                         }
                     }
@@ -164,13 +172,15 @@ impl WsClient {
                     {
                         Ok((r, w, response)) => (TunnelReader::Http2(r), TunnelWriter::Http2(w), response),
                         Err(err) => {
-                            event!(parent: &span, Level::ERROR, "Retrying in 1sec, cannot connect to remote server: {:?}", err);
-                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            event!(parent: &span, Level::ERROR, "Retrying in {:?}, cannot connect to remote server: {:?}", delay, err);
+                            tokio::time::sleep(delay).await;
+                            delay = min(delay * 2, self.reverse_reconnect_max_delay);
                             continue;
                         }
                     }
                 }
             };
+            delay = INITIAL_DELAY;
 
             // Connect to endpoint
             event!(parent: &span, Level::DEBUG, "Server response: {:?}", response);

@@ -126,7 +126,13 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
         http_proxy,
     };
 
-    let client = WsClient::new(client_config, args.connection_min_idle, args.connection_retry_max_backoff).await?;
+    let client = WsClient::new(
+        client_config,
+        args.connection_min_idle,
+        args.connection_retry_max_backoff,
+        args.reverse_reconnect_max_delay,
+    )
+    .await?;
     info!("Starting wstunnel client v{}", env!("CARGO_PKG_VERSION"),);
 
     // Keep track of all spawned tunnels

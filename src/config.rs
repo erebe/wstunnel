@@ -72,6 +72,17 @@ pub struct Client {
     ))]
     pub connection_retry_max_backoff: Duration,
 
+    /// The maximum delay between failed reverse tunnel reconnection attempts
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "1s",
+        value_parser = parsers::parse_duration_sec,
+        alias = "reverse-reconnect-max-delay-sec",
+        verbatim_doc_comment
+    ))]
+    pub reverse_reconnect_max_delay: Duration,
+
     /// Domain name that will be used as SNI during TLS handshake
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
     ///          or it will be flagged as fishy and your request rejected
