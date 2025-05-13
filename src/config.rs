@@ -72,16 +72,19 @@ pub struct Client {
     ))]
     pub connection_retry_max_backoff: Duration,
 
-    /// The maximum delay between failed reverse tunnel reconnection attempts
+    /// When using reverse tunnel, the client will try to always keep a connection to the server to await for new tunnels
+    /// This delay is the maximum of time the client will wait before trying to reconnect to the server in case of failure.
+    /// The client follows an exponential backoff strategy until it reaches this maximum delay
+    /// By default, the client tries to reconnect every 1 second
     #[cfg_attr(feature = "clap", arg(
         long,
         value_name = "DURATION(s|m|h)",
         default_value = "1s",
         value_parser = parsers::parse_duration_sec,
-        alias = "reverse-reconnect-max-delay-sec",
+        alias = "reverse-tunnel-connection-retry-max-backoff-sec",
         verbatim_doc_comment
     ))]
-    pub reverse_reconnect_max_delay: Duration,
+    pub reverse_tunnel_connection_retry_max_backoff: Duration,
 
     /// Domain name that will be used as SNI during TLS handshake
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.

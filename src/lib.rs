@@ -130,7 +130,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
         client_config,
         args.connection_min_idle,
         args.connection_retry_max_backoff,
-        args.reverse_reconnect_max_delay,
+        args.reverse_tunnel_connection_retry_max_backoff,
     )
     .await?;
     info!("Starting wstunnel client v{}", env!("CARGO_PKG_VERSION"),);
