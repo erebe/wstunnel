@@ -1,4 +1,4 @@
-use crate::tunnel;
+use crate::executor::DefaultTokioExecutor;
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::client::cnx_pool::WsConnection;
@@ -7,6 +7,7 @@ use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::io::{TunnelReader, TunnelWriter};
 use crate::tunnel::transport::{TransportScheme, jwt_token_to_tunnel};
+use crate::{TokioExecutor, tunnel};
 use anyhow::Context;
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
@@ -22,19 +23,21 @@ use url::Host;
 use uuid::Uuid;
 
 #[derive(Clone)]
-pub struct WsClient {
+pub struct WsClient<E: TokioExecutor = DefaultTokioExecutor> {
     pub config: Arc<WsClientConfig>,
     pub cnx_pool: bb8::Pool<WsConnection>,
     reverse_tunnel_connection_retry_max_backoff: Duration,
     _tls_reloader: Arc<TlsReloader>,
+    pub(crate) executor: E,
 }
 
-impl WsClient {
+impl<E: TokioExecutor> WsClient<E> {
     pub async fn new(
         config: WsClientConfig,
         connection_min_idle: u32,
         connection_retry_max_backoff: Duration,
         reverse_tunnel_connection_retry_max_backoff: Duration,
+        executor: E,
     ) -> anyhow::Result<Self> {
         let config = Arc::new(config);
         let cnx = WsConnection::new(config.clone());
@@ -53,11 +56,10 @@ impl WsClient {
             cnx_pool,
             reverse_tunnel_connection_retry_max_backoff,
             _tls_reloader: Arc::new(tls_reloader),
+            executor,
         })
     }
-}
 
-impl WsClient {
     async fn connect_to_server<R, W>(
         &self,
         request_id: Uuid,
@@ -88,7 +90,7 @@ impl WsClient {
 
         // Forward local tx to websocket tx
         let ping_frequency = self.config.websocket_ping_frequency;
-        tokio::spawn(
+        self.executor.spawn(
             super::super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, ping_frequency)
                 .instrument(Span::current()),
         );
@@ -126,7 +128,7 @@ impl WsClient {
             }
             .instrument(span);
 
-            tokio::spawn(tunnel);
+            self.executor.spawn(tunnel);
         }
 
         Ok(())
@@ -212,18 +214,17 @@ impl WsClient {
             };
 
             let (close_tx, close_rx) = oneshot::channel::<()>();
-            let tunnel = async move {
+            self.executor.spawn({
                 let ping_frequency = client.config.websocket_ping_frequency;
-                tokio::spawn(
-                    super::super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, ping_frequency)
-                        .in_current_span(),
-                );
+                super::super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, ping_frequency)
+                    .instrument(span.clone())
+            });
 
-                // Forward websocket rx to local rx
-                let _ = super::super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).await;
-            }
-            .instrument(span.clone());
-            tokio::spawn(tunnel);
+            // Forward websocket rx to local rx
+            self.executor.spawn(
+                super::super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx)
+                    .instrument(span.clone()),
+            );
         }
     }
 }

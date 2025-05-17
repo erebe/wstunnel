@@ -1,5 +1,6 @@
 pub mod config;
 mod embedded_certificate;
+pub mod executor;
 mod protocols;
 mod restrictions;
 mod somark;
@@ -8,6 +9,7 @@ mod test_integrations;
 mod tunnel;
 
 use crate::config::{Client, DEFAULT_CLIENT_UPGRADE_PATH_PREFIX, Server};
+use crate::executor::TokioExecutor;
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
@@ -22,19 +24,20 @@ use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
 use crate::tunnel::{RemoteAddr, to_host_port};
 use anyhow::{Context, anyhow};
-use futures_util::future::join_all;
 use hyper::header::HOST;
 use hyper::http::HeaderValue;
 use log::debug;
 use parking_lot::{Mutex, RwLock};
+use std::fmt::Debug;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
+use tokio::task::AbortHandle;
 use tracing::{error, info};
 use url::Url;
 
-pub async fn run_client(args: Client) -> anyhow::Result<()> {
+pub async fn run_client(args: Client, executor: impl TokioExecutor) -> anyhow::Result<()> {
     let (tls_certificate, tls_key) = if let (Some(cert), Some(key)) =
         (args.tls_certificate.as_ref(), args.tls_private_key.as_ref())
     {
@@ -131,19 +134,21 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
         args.connection_min_idle,
         args.connection_retry_max_backoff,
         args.reverse_tunnel_connection_retry_max_backoff,
+        executor,
     )
     .await?;
+    let executor = client.executor.clone();
+    let mut tunnels: Vec<AbortHandle> = Vec::with_capacity(args.remote_to_local.len() + args.local_to_remote.len());
     info!("Starting wstunnel client v{}", env!("CARGO_PKG_VERSION"),);
 
     // Keep track of all spawned tunnels
-    let mut spawned_tunnels = Vec::new();
 
     // Start tunnels
     for tunnel in args.remote_to_local.into_iter() {
         let client = client.clone();
         match &tunnel.local_protocol {
             LocalProtocol::ReverseTcp => {
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     let cfg = client.config.clone();
                     let tcp_connector = TcpTunnelConnector::new(
                         &tunnel.remote.0,
@@ -165,8 +170,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
             }
             LocalProtocol::ReverseUdp { timeout } => {
                 let timeout = *timeout;
-
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     let cfg = client.config.clone();
                     let (host, port) = to_host_port(tunnel.local);
                     let remote = RemoteAddr {
@@ -190,7 +194,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
             LocalProtocol::ReverseSocks5 { timeout, credentials } => {
                 let credentials = credentials.clone();
                 let timeout = *timeout;
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     let cfg = client.config.clone();
                     let (host, port) = to_host_port(tunnel.local);
                     let remote = RemoteAddr {
@@ -209,7 +213,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
             LocalProtocol::ReverseHttpProxy { timeout, credentials } => {
                 let credentials = credentials.clone();
                 let timeout = *timeout;
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     let cfg = client.config.clone();
                     let (host, port) = to_host_port(tunnel.local);
                     let remote = RemoteAddr {
@@ -232,7 +236,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
             }
             LocalProtocol::ReverseUnix { path } => {
                 let path = path.clone();
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     let cfg = client.config.clone();
                     let tcp_connector = TcpTunnelConnector::new(
                         &tunnel.remote.0,
@@ -272,7 +276,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
         match &tunnel.local_protocol {
             LocalProtocol::Tcp { proxy_protocol } => {
                 let server = TcpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *proxy_protocol).await?;
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
                     }
@@ -283,7 +287,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
                 use crate::tunnel::listeners::TproxyTcpTunnelListener;
                 let server = TproxyTcpTunnelListener::new(tunnel.local, false).await?;
 
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
                     }
@@ -293,7 +297,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
             LocalProtocol::Unix { path, proxy_protocol } => {
                 use crate::tunnel::listeners::UnixTunnelListener;
                 let server = UnixTunnelListener::new(path, tunnel.remote.clone(), *proxy_protocol).await?;
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
                     }
@@ -308,7 +312,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
             LocalProtocol::TProxyUdp { timeout } => {
                 use crate::tunnel::listeners::new_tproxy_udp;
                 let server = new_tproxy_udp(tunnel.local, *timeout).await?;
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
                     }
@@ -321,7 +325,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
             LocalProtocol::Udp { timeout } => {
                 let server = UdpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *timeout).await?;
 
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
                     }
@@ -329,7 +333,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
             }
             LocalProtocol::Socks5 { timeout, credentials } => {
                 let server = Socks5TunnelListener::new(tunnel.local, *timeout, credentials.clone()).await?;
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
                     }
@@ -342,7 +346,7 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
             } => {
                 let server =
                     HttpProxyTunnelListener::new(tunnel.local, *timeout, credentials.clone(), *proxy_protocol).await?;
-                spawned_tunnels.push(tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
                     }
@@ -351,11 +355,11 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
 
             LocalProtocol::Stdio { proxy_protocol } => {
                 let (server, mut handle) = new_stdio_listener(tunnel.remote.clone(), *proxy_protocol).await?;
-                tokio::spawn(async move {
+                tunnels.push(executor.spawn(async move {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
                     }
-                });
+                }));
 
                 // We need to wait for either a ctrl+c of that the stdio tunnel is closed
                 // to force exit the program
@@ -375,11 +379,16 @@ pub async fn run_client(args: Client) -> anyhow::Result<()> {
     }
 
     // wait for all tunnels to complete
-    join_all(spawned_tunnels).await;
+    let mut ticker = tokio::time::interval(Duration::from_secs(1));
+    for tunnel in tunnels.into_iter() {
+        while !tunnel.is_finished() {
+            ticker.tick().await;
+        }
+    }
     Ok(())
 }
 
-pub async fn run_server(args: Server) -> anyhow::Result<()> {
+pub async fn run_server(args: Server, executor: impl TokioExecutor) -> anyhow::Result<()> {
     let tls_config = if args.remote_addr.scheme() == "wss" {
         let tls_certificate = if let Some(cert_path) = &args.tls_certificate {
             tls::load_certificates_from_pem(cert_path).expect("Cannot load tls certificate")
@@ -428,12 +437,11 @@ pub async fn run_server(args: Server) -> anyhow::Result<()> {
             })
             .collect();
 
-        let restriction_cfg = RestrictionsRules::from_path_prefix(
+        RestrictionsRules::from_path_prefix(
             args.restrict_http_upgrade_path_prefix.as_deref().unwrap_or(&[]),
             &restrict_to,
         )
-        .expect("Cannot convert restriction rules from path-prefix and restric-to");
-        restriction_cfg
+        .expect("Cannot convert restriction rules from path-prefix and restric-to")
     };
 
     let http_proxy = mk_http_proxy(args.http_proxy, args.http_proxy_login, args.http_proxy_password)?;
@@ -458,7 +466,7 @@ pub async fn run_server(args: Server) -> anyhow::Result<()> {
         http_proxy,
         remote_server_idle_timeout: args.remote_to_local_server_idle_timeout,
     };
-    let server = WsServer::new(server_config);
+    let server = WsServer::new(server_config, executor);
 
     info!(
         "Starting wstunnel server v{} with config {:?}",

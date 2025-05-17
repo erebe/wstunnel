@@ -4,22 +4,8 @@ use http_body_util::Either;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 
+use crate::executor::DefaultTokioExecutor;
 use crate::protocols;
-use crate::tunnel::{LocalProtocol, RemoteAddr, try_to_sock_addr};
-use arc_swap::ArcSwap;
-use hyper::body::Incoming;
-use hyper::server::conn::{http1, http2};
-use hyper::service::service_fn;
-use hyper::{Request, StatusCode, Version, http};
-use hyper_util::rt::{TokioExecutor, TokioTimer};
-use parking_lot::Mutex;
-use socket2::SockRef;
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::pin::Pin;
-use std::sync::{Arc, LazyLock};
-use std::time::Duration;
-
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
 use crate::restrictions::config_reloader::RestrictionsRulesReloader;
@@ -35,6 +21,20 @@ use crate::tunnel::server::utils::{
     extract_x_forwarded_for, find_mapped_port, validate_tunnel,
 };
 use crate::tunnel::tls_reloader::TlsReloader;
+use crate::tunnel::{LocalProtocol, RemoteAddr, try_to_sock_addr};
+use arc_swap::ArcSwap;
+use hyper::body::Incoming;
+use hyper::server::conn::{http1, http2};
+use hyper::service::service_fn;
+use hyper::{Request, StatusCode, Version, http};
+use hyper_util::rt::{TokioExecutor, TokioTimer};
+use parking_lot::Mutex;
+use socket2::SockRef;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
@@ -66,14 +66,16 @@ pub struct WsServerConfig {
 }
 
 #[derive(Clone)]
-pub struct WsServer {
+pub struct WsServer<E: crate::TokioExecutor = DefaultTokioExecutor> {
     pub config: Arc<WsServerConfig>,
+    pub executor: E,
 }
 
-impl WsServer {
-    pub fn new(config: WsServerConfig) -> Self {
+impl<E: crate::TokioExecutor> WsServer<E> {
+    pub fn new(config: WsServerConfig, executor: E) -> Self {
         Self {
             config: Arc::new(config),
+            executor,
         }
     }
 
@@ -199,7 +201,12 @@ impl WsServer {
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { TcpTunnelListener::new(bind, local_srv.clone(), false).await };
                 let ((local_rx, local_tx), remote) = SERVERS
-                    .run_listening_server(bind, self.config.remote_server_idle_timeout, listening_server)
+                    .run_listening_server(
+                        &self.executor,
+                        bind,
+                        self.config.remote_server_idle_timeout,
+                        listening_server,
+                    )
                     .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
@@ -213,7 +220,12 @@ impl WsServer {
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { UdpTunnelListener::new(bind, local_srv.clone(), timeout).await };
                 let ((local_rx, local_tx), remote) = SERVERS
-                    .run_listening_server(bind, self.config.remote_server_idle_timeout, listening_server)
+                    .run_listening_server(
+                        &self.executor,
+                        bind,
+                        self.config.remote_server_idle_timeout,
+                        listening_server,
+                    )
                     .await?;
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }
@@ -226,7 +238,12 @@ impl WsServer {
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { Socks5TunnelListener::new(bind, timeout, credentials).await };
                 let ((local_rx, local_tx), remote) = SERVERS
-                    .run_listening_server(bind, self.config.remote_server_idle_timeout, listening_server)
+                    .run_listening_server(
+                        &self.executor,
+                        bind,
+                        self.config.remote_server_idle_timeout,
+                        listening_server,
+                    )
                     .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
@@ -240,7 +257,12 @@ impl WsServer {
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { HttpProxyTunnelListener::new(bind, timeout, credentials, false).await };
                 let ((local_rx, local_tx), remote) = SERVERS
-                    .run_listening_server(bind, self.config.remote_server_idle_timeout, listening_server)
+                    .run_listening_server(
+                        &self.executor,
+                        bind,
+                        self.config.remote_server_idle_timeout,
+                        listening_server,
+                    )
                     .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
@@ -256,7 +278,12 @@ impl WsServer {
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { UnixTunnelListener::new(path, local_srv, false).await };
                 let ((local_rx, local_tx), remote) = SERVERS
-                    .run_listening_server(bind, self.config.remote_server_idle_timeout, listening_server)
+                    .run_listening_server(
+                        &self.executor,
+                        bind,
+                        self.config.remote_server_idle_timeout,
+                        listening_server,
+                    )
                     .await?;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
@@ -282,7 +309,7 @@ impl WsServer {
         info!("Starting wstunnel server listening on {}", self.config.bind);
 
         // setup upgrade request handler
-        let mk_websocket_upgrade_fn = |server: WsServer,
+        let mk_websocket_upgrade_fn = |server: WsServer<_>,
                                        restrictions: Arc<ArcSwap<RestrictionsRules>>,
                                        restrict_path: Option<String>,
                                        client_addr: SocketAddr| {
@@ -299,7 +326,7 @@ impl WsServer {
             }
         };
 
-        let mk_http_upgrade_fn = |server: WsServer,
+        let mk_http_upgrade_fn = |server: WsServer<_>,
                                   restrictions: Arc<ArcSwap<RestrictionsRules>>,
                                   restrict_path: Option<String>,
                                   client_addr: SocketAddr| {
@@ -316,7 +343,7 @@ impl WsServer {
             }
         };
 
-        let mk_auto_upgrade_fn = |server: WsServer,
+        let mk_auto_upgrade_fn = |server: WsServer<_>,
                                   restrictions: Arc<ArcSwap<RestrictionsRules>>,
                                   restrict_path: Option<String>,
                                   client_addr: SocketAddr| {
@@ -445,7 +472,7 @@ impl WsServer {
                     }
                     .instrument(span);
 
-                    tokio::spawn(fut);
+                    self.executor.spawn(fut);
                 }
                 // HTTP without TLS
                 None => {
@@ -466,7 +493,7 @@ impl WsServer {
                     }
                     .instrument(span);
 
-                    tokio::spawn(fut);
+                    self.executor.spawn(fut);
                 }
             }
         }

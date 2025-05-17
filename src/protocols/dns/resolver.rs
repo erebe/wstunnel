@@ -217,7 +217,7 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
                     timeout.unwrap_or(Duration::from_secs(10)),
                     &DnsResolver::System, // not going to be used as host is directly an ip address
                 )
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map_err(std::io::Error::other)
                 .map(|s| s.map(AsyncIoTokioAsStd))
                 .await
             } else {
@@ -228,7 +228,7 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
                     timeout.unwrap_or(Duration::from_secs(10)),
                     &DnsResolver::System, // not going to be used as host is directly an ip address
                 )
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map_err(std::io::Error::other)
                 .map(|s| s.map(AsyncIoTokioAsStd))
                 .await
             }

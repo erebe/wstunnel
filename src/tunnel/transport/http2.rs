@@ -20,17 +20,27 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::{Notify, mpsc};
+use tokio::task::AbortHandle;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 pub struct Http2TunnelRead {
     inner: BodyStream<Incoming>,
+    cnx_poller: Option<AbortHandle>,
 }
 
 impl Http2TunnelRead {
-    pub const fn new(inner: BodyStream<Incoming>) -> Self {
-        Self { inner }
+    pub const fn new(inner: BodyStream<Incoming>, cnx_poller: Option<AbortHandle>) -> Self {
+        Self { inner, cnx_poller }
+    }
+}
+
+impl Drop for Http2TunnelRead {
+    fn drop(&mut self) {
+        if let Some(t) = self.cnx_poller.as_ref() {
+            t.abort()
+        }
     }
 }
 
@@ -112,7 +122,7 @@ impl TunnelWrite for Http2TunnelWrite {
 
 pub async fn connect(
     request_id: Uuid,
-    client: &WsClient,
+    client: &WsClient<impl crate::TokioExecutor>,
     dest_addr: &RemoteAddr,
 ) -> anyhow::Result<(Http2TunnelRead, Http2TunnelWrite, Parts)> {
     let mut pooled_cnx = match client.cnx_pool.get().await {
@@ -202,7 +212,7 @@ pub async fn connect(
         .handshake(TokioIo::new(transport))
         .await
         .with_context(|| format!("failed to do http2 handshake with the server {:?}", client.config.remote_addr))?;
-    tokio::spawn(async move {
+    let cnx_poller = client.executor.spawn(async move {
         if let Err(err) = cnx.await {
             error!("{:?}", err)
         }
@@ -222,5 +232,9 @@ pub async fn connect(
     }
 
     let (parts, body) = response.into_parts();
-    Ok((Http2TunnelRead::new(BodyStream::new(body)), Http2TunnelWrite::new(tx), parts))
+    Ok((
+        Http2TunnelRead::new(BodyStream::new(body), Some(cnx_poller)),
+        Http2TunnelWrite::new(tx),
+        parts,
+    ))
 }

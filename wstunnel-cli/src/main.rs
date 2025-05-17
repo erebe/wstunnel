@@ -6,6 +6,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::Directive;
 use wstunnel::LocalProtocol;
 use wstunnel::config::{Client, Server};
+use wstunnel::executor::DefaultTokioExecutor;
 use wstunnel::{run_client, run_server};
 
 #[cfg(feature = "jemalloc")]
@@ -93,10 +94,10 @@ async fn main() -> anyhow::Result<()> {
 
     match args.commands {
         Commands::Client(args) => {
-            run_client(*args).await?;
+            run_client(*args, DefaultTokioExecutor::default()).await?;
         }
         Commands::Server(args) => {
-            run_server(*args).await?;
+            run_server(*args, DefaultTokioExecutor::default()).await?;
         }
     }
 

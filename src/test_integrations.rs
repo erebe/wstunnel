@@ -1,3 +1,4 @@
+use crate::executor::DefaultTokioExecutor;
 use crate::protocols;
 use crate::protocols::dns::DnsResolver;
 use crate::restrictions::types;
@@ -41,7 +42,7 @@ fn server_no_tls(dns_resolver: DnsResolver) -> WsServer {
         http_proxy: None,
         remote_server_idle_timeout: Duration::from_secs(30),
     };
-    WsServer::new(server_config)
+    WsServer::new(server_config, DefaultTokioExecutor::default())
 }
 
 #[fixture]
@@ -62,9 +63,15 @@ async fn client_ws(dns_resolver: DnsResolver) -> WsClient {
         http_proxy: None,
     };
 
-    WsClient::new(client_config, 1, Duration::from_secs(1), Duration::from_secs(1))
-        .await
-        .unwrap()
+    WsClient::new(
+        client_config,
+        1,
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        DefaultTokioExecutor::default(),
+    )
+    .await
+    .unwrap()
 }
 
 #[fixture]

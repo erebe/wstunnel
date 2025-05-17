@@ -1,3 +1,4 @@
+use crate::TokioExecutor;
 use crate::restrictions::types::RestrictionsRules;
 use crate::tunnel::server::WsServer;
 use crate::tunnel::server::utils::{HttpResponse, bad_request, inject_cookie};
@@ -15,7 +16,7 @@ use tokio::sync::oneshot;
 use tracing::{Instrument, Span, error, warn};
 
 pub(super) async fn ws_server_upgrade(
-    server: WsServer,
+    server: WsServer<impl TokioExecutor>,
     restrictions: Arc<RestrictionsRules>,
     restrict_path_prefix: Option<String>,
     client_addr: SocketAddr,
@@ -43,7 +44,8 @@ pub(super) async fn ws_server_upgrade(
         }
     };
 
-    tokio::spawn(
+    let executor = server.executor.clone();
+    server.executor.spawn(
         async move {
             let (ws_rx, ws_tx) = match fut.await {
                 Ok(ws) => match mk_websocket_tunnel(ws, Role::Server, mask_frame) {
@@ -60,9 +62,8 @@ pub(super) async fn ws_server_upgrade(
             };
             let (close_tx, close_rx) = oneshot::channel::<()>();
 
-            tokio::task::spawn(
-                transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).instrument(Span::current()),
-            );
+            executor
+                .spawn(transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).instrument(Span::current()));
 
             let _ = transport::io::propagate_local_to_remote(
                 local_rx,
