@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use futures_util::FutureExt;
 use http_body_util::Either;
 use std::fmt;
@@ -395,7 +395,9 @@ impl<E: crate::TokioExecutor> WsServer<E> {
 
         // Bind server and run forever to serve incoming connections.
         let restrictions = RestrictionsRulesReloader::new(restrictions, self.config.restriction_config.clone())?;
-        let listener = TcpListener::bind(&self.config.bind).await?;
+        let listener = TcpListener::bind(&self.config.bind)
+            .await
+            .with_context(|| format!("Failed to bind to socket on {}", self.config.bind))?;
 
         loop {
             let (stream, peer_addr) = match listener.accept().await {
@@ -406,7 +408,7 @@ impl<E: crate::TokioExecutor> WsServer<E> {
                 }
             };
 
-            let span = span!(Level::INFO, "cnx", peer = peer_addr.to_string(),);
+            let span = span!(Level::INFO, "cnx", peer = peer_addr.to_string());
             info!(parent: &span, "Accepting connection");
             if let Err(err) = protocols::tcp::configure_socket(SockRef::from(&stream), SoMark::new(None)) {
                 warn!("Error while configuring server socket {:?}", err);
