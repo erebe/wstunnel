@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/erebe/wstunnel/raw/main/docs/logo_wstunnel.png" alt="wstunnel logo"/>
+  <img src="https://github.com/erebe/wstunnel/raw/main/docs/logo_wstunnel.png" alt="wstunnel logo" width="500"/>
 </p>
 
 <p align="right">
