@@ -19,7 +19,7 @@ pub static TLS_CERTIFICATE: LazyLock<(Vec<CertificateDer<'static>>, PrivateKeyDe
     cert.not_before = date_time_ymd(year, month, day);
 
     let el = now.elapsed();
-    let year = 2024 + (el.as_nanos() % 50) as i32;
+    let year = 2025 + (el.as_nanos() % 50) as i32;
     let month = 1 + (el.as_nanos() % 12) as u8;
     let day = 1 + (el.as_nanos() % 28) as u8;
     cert.not_after = date_time_ymd(year, month, day);
