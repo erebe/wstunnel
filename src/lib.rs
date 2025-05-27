@@ -24,6 +24,7 @@ use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
 use crate::tunnel::{RemoteAddr, to_host_port};
 use anyhow::{Context, anyhow};
+use executor::JoinSetTokioExecutor;
 use futures_util::future::BoxFuture;
 use hyper::header::HOST;
 use hyper::http::HeaderValue;
@@ -38,7 +39,8 @@ use tokio::task::JoinSet;
 use tracing::{error, info};
 use url::Url;
 
-pub async fn run_client(args: Client, executor: impl TokioExecutor) -> anyhow::Result<()> {
+pub async fn run_client(args: Client) -> anyhow::Result<()> {
+    let executor = JoinSetTokioExecutor::default();
     let tunnels = create_client_tunnels(args, executor.clone()).await?;
 
     // Start all tunnels
