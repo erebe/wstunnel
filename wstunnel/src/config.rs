@@ -1,5 +1,5 @@
 use crate::tunnel::LocalProtocol;
-use hyper::http::{HeaderName, HeaderValue};
+pub use hyper::http::{HeaderName, HeaderValue};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
