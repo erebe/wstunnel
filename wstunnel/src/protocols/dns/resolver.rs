@@ -39,7 +39,7 @@ fn sort_socket_addrs(socket_addrs: &[SocketAddr], prefer_ipv6: bool) -> impl Ite
     })
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum DnsResolver {
     System,
     TrustDns {

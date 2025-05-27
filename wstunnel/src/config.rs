@@ -8,7 +8,7 @@ use url::{Host, Url};
 
 pub const DEFAULT_CLIENT_UPGRADE_PATH_PREFIX: &str = "v1";
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
 pub struct Client {
     /// Listen on local and forwards traffic from remote. Can be specified multiple times
