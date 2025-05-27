@@ -67,3 +67,9 @@ impl TokioExecutor for JoinSetTokioExecutor {
         })
     }
 }
+
+impl Drop for JoinSetTokioExecutor {
+    fn drop(&mut self) {
+        self.abort_all();
+    }
+}
