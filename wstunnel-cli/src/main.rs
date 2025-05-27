@@ -94,11 +94,16 @@ async fn main() -> anyhow::Result<()> {
 
     match args.commands {
         Commands::Client(args) => {
-            run_client(*args, DefaultTokioExecutor::default())
+            let results = run_client(*args, DefaultTokioExecutor::default())
                 .await
                 .unwrap_or_else(|err| {
                     panic!("Cannot start wstunnel client: {:?}", err);
                 });
+            for r in results {
+                if let Err(err) = r {
+                    tracing::error!("{err:?}");
+                }
+            }
         }
         Commands::Server(args) => {
             run_server(*args, DefaultTokioExecutor::default())
