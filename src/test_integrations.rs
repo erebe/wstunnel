@@ -134,7 +134,7 @@ async fn test_tcp_tunnel(
         .await
         .unwrap();
     tokio::spawn(async move {
-        client_ws.run_tunnel(server).await.unwrap();
+        client_ws.run_tunnel(server, None).await.unwrap();
     });
 
     let mut tcp_listener = protocols::tcp::run_server(ENDPOINT_LISTEN.0, false).await.unwrap();
@@ -179,7 +179,7 @@ async fn test_udp_tunnel(
         .await
         .unwrap();
     tokio::spawn(async move {
-        client_ws.run_tunnel(server).await.unwrap();
+        client_ws.run_tunnel(server, None).await.unwrap();
     });
 
     let udp_listener = protocols::udp::run_server(ENDPOINT_LISTEN.0, None, |_| Ok(()), |s| Ok(s.clone()))

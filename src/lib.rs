@@ -35,28 +35,21 @@ use std::time::Duration;
 use tokio::select;
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
-use tracing::{error, info};
+use tracing::info;
 use url::Url;
 
-pub async fn run_client(args: Client, executor: impl TokioExecutor) -> anyhow::Result<()> {
+/// The outer error is a global setup error, the vec contains Results from the individual tunnels.
+/// FIXME: this should be two vec's which line up with the `local_to_remote` and `remote_to_local` vec's.
+/// FIXME: perhaps a better API would be one that set up a single tunnel so it could return a single error.
+pub async fn run_client(args: Client, executor: impl TokioExecutor) -> anyhow::Result<Vec<anyhow::Result<()>>> {
     let tunnels = create_client_tunnels(args, executor.clone()).await?;
-
-    // Start all tunnels
-    let (tx, rx) = oneshot::channel();
-    executor.spawn(async move {
-        let _ = JoinSet::from_iter(tunnels).join_all().await;
-        let _ = tx.send(());
-    });
-
-    // wait for all tunnels to finish
-    rx.await?;
-    Ok(())
+    Ok(JoinSet::from_iter(tunnels).join_all().await)
 }
 
 async fn create_client_tunnels(
     args: Client,
     executor: impl TokioExecutor,
-) -> anyhow::Result<Vec<BoxFuture<'static, ()>>> {
+) -> anyhow::Result<Vec<BoxFuture<'static, anyhow::Result<()>>>> {
     let (tls_certificate, tls_key) = if let (Some(cert), Some(key)) =
         (args.tls_certificate.as_ref(), args.tls_private_key.as_ref())
     {
@@ -159,7 +152,8 @@ async fn create_client_tunnels(
     info!("Starting wstunnel client v{}", env!("CARGO_PKG_VERSION"),);
 
     // Keep track of all spawned tunnels
-    let mut tunnels: Vec<BoxFuture<()>> = Vec::with_capacity(args.remote_to_local.len() + args.local_to_remote.len());
+    let mut tunnels: Vec<BoxFuture<anyhow::Result<()>>> =
+        Vec::with_capacity(args.remote_to_local.len() + args.local_to_remote.len());
     macro_rules! spawn_tunnel {
         ( $($s:stmt);* ) => {
             tunnels.push(Box::pin(async move {
@@ -188,9 +182,7 @@ async fn create_client_tunnels(
                         host,
                         port,
                     };
-                    if let Err(err) = client.run_reverse_tunnel(remote, tcp_connector).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_reverse_tunnel(remote, tcp_connector).await
                 }
             }
             LocalProtocol::ReverseUdp { timeout } => {
@@ -211,9 +203,7 @@ async fn create_client_tunnels(
                         &cfg.dns_resolver,
                     );
 
-                    if let Err(err) = client.run_reverse_tunnel(remote.clone(), udp_connector).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_reverse_tunnel(remote.clone(), udp_connector).await
                 }
             }
             LocalProtocol::ReverseSocks5 { timeout, credentials } => {
@@ -230,9 +220,7 @@ async fn create_client_tunnels(
                     let socks_connector =
                         Socks5TunnelConnector::new(cfg.socket_so_mark, cfg.timeout_connect, &cfg.dns_resolver);
 
-                    if let Err(err) = client.run_reverse_tunnel(remote, socks_connector).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_reverse_tunnel(remote, socks_connector).await
                 }
             }
             LocalProtocol::ReverseHttpProxy { timeout, credentials } => {
@@ -254,9 +242,7 @@ async fn create_client_tunnels(
                         &cfg.dns_resolver,
                     );
 
-                    if let Err(err) = client.run_reverse_tunnel(remote, tcp_connector).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_reverse_tunnel(remote, tcp_connector).await
                 }
             }
             LocalProtocol::ReverseUnix { path } => {
@@ -277,9 +263,7 @@ async fn create_client_tunnels(
                         host,
                         port,
                     };
-                    if let Err(err) = client.run_reverse_tunnel(remote, tcp_connector).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_reverse_tunnel(remote, tcp_connector).await
                 }
             }
             LocalProtocol::Stdio { .. }
@@ -302,9 +286,7 @@ async fn create_client_tunnels(
             LocalProtocol::Tcp { proxy_protocol } => {
                 let server = TcpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *proxy_protocol).await?;
                 spawn_tunnel! {
-                    if let Err(err) = client.run_tunnel(server).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_tunnel(server, tunnel.error_channel.clone()).await
                 }
             }
             #[cfg(target_os = "linux")]
@@ -313,9 +295,7 @@ async fn create_client_tunnels(
                 let server = TproxyTcpTunnelListener::new(tunnel.local, false).await?;
 
                 spawn_tunnel! {
-                    if let Err(err) = client.run_tunnel(server).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_tunnel(server, tunnel.error_channel.clone()).await
                 }
             }
             #[cfg(unix)]
@@ -323,9 +303,7 @@ async fn create_client_tunnels(
                 use crate::tunnel::listeners::UnixTunnelListener;
                 let server = UnixTunnelListener::new(path, tunnel.remote.clone(), *proxy_protocol).await?;
                 spawn_tunnel! {
-                    if let Err(err) = client.run_tunnel(server).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_tunnel(server, tunnel.error_channel.clone()).await
                 }
             }
             #[cfg(not(unix))]
@@ -338,9 +316,7 @@ async fn create_client_tunnels(
                 use crate::tunnel::listeners::new_tproxy_udp;
                 let server = new_tproxy_udp(tunnel.local, *timeout).await?;
                 spawn_tunnel! {
-                    if let Err(err) = client.run_tunnel(server).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_tunnel(server, tunnel.error_channel.clone()).await
                 }
             }
             #[cfg(not(target_os = "linux"))]
@@ -350,17 +326,13 @@ async fn create_client_tunnels(
             LocalProtocol::Udp { timeout } => {
                 let server = UdpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *timeout).await?;
                 spawn_tunnel! {
-                    if let Err(err) = client.run_tunnel(server).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_tunnel(server, tunnel.error_channel.clone()).await
                 }
             }
             LocalProtocol::Socks5 { timeout, credentials } => {
                 let server = Socks5TunnelListener::new(tunnel.local, *timeout, credentials.clone()).await?;
                 spawn_tunnel! {
-                    if let Err(err) = client.run_tunnel(server).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_tunnel(server, tunnel.error_channel.clone()).await
                 }
             }
             LocalProtocol::HttpProxy {
@@ -371,18 +343,14 @@ async fn create_client_tunnels(
                 let server =
                     HttpProxyTunnelListener::new(tunnel.local, *timeout, credentials.clone(), *proxy_protocol).await?;
                 spawn_tunnel! {
-                    if let Err(err) = client.run_tunnel(server).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_tunnel(server, tunnel.error_channel.clone()).await
                 }
             }
 
             LocalProtocol::Stdio { proxy_protocol } => {
                 let (server, mut handle) = new_stdio_listener(tunnel.remote.clone(), *proxy_protocol).await?;
                 spawn_tunnel! {
-                    if let Err(err) = client.run_tunnel(server).await {
-                        error!("{:?}", err);
-                    }
+                    client.run_tunnel(server, tunnel.error_channel.clone()).await
                 }
 
                 // We need to wait for either a ctrl+c of that the stdio tunnel is closed

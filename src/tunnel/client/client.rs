@@ -101,7 +101,11 @@ impl<E: TokioExecutor> WsClient<E> {
         Ok(())
     }
 
-    pub async fn run_tunnel(self, tunnel_listener: impl TunnelListener) -> anyhow::Result<()> {
+    pub async fn run_tunnel(
+        self,
+        tunnel_listener: impl TunnelListener,
+        error_channel: Option<tokio::sync::mpsc::Sender<anyhow::Error>>,
+    ) -> anyhow::Result<()> {
         pin_mut!(tunnel_listener);
         while let Some(cnx) = tunnel_listener.next().await {
             let (cnx_stream, remote_addr) = match cnx {
@@ -120,11 +124,17 @@ impl<E: TokioExecutor> WsClient<E> {
                 remote = format!("{}:{}", remote_addr.host, remote_addr.port)
             );
             let client = self.clone();
+            let error_channel = error_channel.clone();
             let tunnel = async move {
-                let _ = client
-                    .connect_to_server(request_id, &remote_addr, cnx_stream)
-                    .await
-                    .map_err(|err| error!("{:?}", err));
+                if let Err(err) = client.connect_to_server(request_id, &remote_addr, cnx_stream).await {
+                    if let Some(channel) = &error_channel {
+                        if let Err(err) = channel.send(err).await {
+                            error!("{err:?}");
+                        }
+                    } else {
+                        error!("{err:?}");
+                    }
+                }
             }
             .instrument(span);
 

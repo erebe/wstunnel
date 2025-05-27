@@ -388,11 +388,19 @@ pub struct Server {
     pub remote_to_local_server_idle_timeout: Duration,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct LocalToRemote {
     pub local_protocol: LocalProtocol,
     pub local: SocketAddr,
     pub remote: (Host, u16),
+    /// Hopefully transient connection errors, et cetera. If None, errors are sent to tracing::error! and then ignored.
+    pub error_channel: Option<tokio::sync::mpsc::Sender<anyhow::Error>>,
+}
+
+impl PartialEq for LocalToRemote {
+    fn eq(&self, other: &Self) -> bool {
+        self.local_protocol == other.local_protocol && self.local == other.local && self.remote == other.remote
+    }
 }
 
 #[cfg(feature = "clap")]
@@ -542,6 +550,7 @@ mod parsers {
                     },
                     local: local_bind,
                     remote: (dest_host, dest_port),
+                    error_channel: None,
                 })
             }
             "udp" => {
@@ -554,6 +563,7 @@ mod parsers {
                     },
                     local: local_bind,
                     remote: (dest_host, dest_port),
+                    error_channel: None,
                 })
             }
             "unix" => {
@@ -571,6 +581,7 @@ mod parsers {
                     },
                     local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
                     remote: (dest_host, dest_port),
+                    error_channel: None,
                 })
             }
             "http" => {
@@ -585,6 +596,7 @@ mod parsers {
                     },
                     local: local_bind,
                     remote: (dest_host, dest_port),
+                    error_channel: None,
                 })
             }
             "socks5" => {
@@ -598,6 +610,7 @@ mod parsers {
                     },
                     local: local_bind,
                     remote: (dest_host, dest_port),
+                    error_channel: None,
                 })
             }
             "stdio" => {
@@ -608,6 +621,7 @@ mod parsers {
                     },
                     local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(0), 0)),
                     remote: (dest_host, dest_port),
+                    error_channel: None,
                 })
             }
             "tproxy+tcp" => {
@@ -618,6 +632,7 @@ mod parsers {
                     local_protocol: LocalProtocol::TProxyTcp,
                     local: local_bind,
                     remote: (dest_host, dest_port),
+                    error_channel: None,
                 })
             }
             "tproxy+udp" => {
@@ -630,6 +645,7 @@ mod parsers {
                     },
                     local: local_bind,
                     remote: (dest_host, dest_port),
+                    error_channel: None,
                 })
             }
             _ => Err(Error::new(
@@ -670,6 +686,7 @@ mod parsers {
             local_protocol,
             local: proto.local,
             remote: proto.remote,
+            error_channel: None,
         })
     }
 
