@@ -62,7 +62,7 @@ tokio-util = { version = "0.7.15", features = ["io"] }
 tokio-fd = "0.3.0"
 
 [target.'cfg(all(any(target_os = "linux", target_os = "macos"), any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
-tokio-rustls = { version = "0.26.2", features = ["ring"] }
+tokio-rustls = { version = "0.26.2", features = [] }
 rcgen = { version = "0.13.2", default-features = false, features = ["aws_lc_rs"] }
 hickory-resolver = { version = "0.25.2", features = ["tls-aws-lc-rs", "https-aws-lc-rs", "tokio", "rustls-platform-verifier"] }
 

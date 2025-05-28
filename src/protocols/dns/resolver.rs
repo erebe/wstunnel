@@ -3,23 +3,22 @@ use crate::somark::SoMark;
 use anyhow::{Context, anyhow};
 use futures_util::{FutureExt, TryFutureExt};
 use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts};
-use hickory_resolver::name_server::{ConnectionProvider, GenericConnector};
+use hickory_resolver::name_server::GenericConnector;
 use hickory_resolver::proto::rr::rdata::svcb::{SvcParamKey, SvcParamValue};
 use hickory_resolver::proto::rr::{RData, RecordType};
 use hickory_resolver::proto::runtime::iocompat::AsyncIoTokioAsStd;
 use hickory_resolver::proto::runtime::{RuntimeProvider, TokioHandle, TokioRuntimeProvider, TokioTime};
 use hickory_resolver::proto::xfer::Protocol;
-use hickory_resolver::{Resolver, ResolveError};
+use hickory_resolver::{ResolveError, Resolver};
 use log::warn;
-use tokio_rustls::rustls::client::EchConfig;
-use tokio_rustls::rustls::crypto::aws_lc_rs::hpke::ALL_SUPPORTED_SUITES;
-use tokio_rustls::rustls::pki_types::EchConfigListBytes;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpStream, UdpSocket};
+use tokio_rustls::rustls::client::EchConfig;
+use tokio_rustls::rustls::pki_types::EchConfigListBytes;
 use url::{Host, Url};
 
 // Interleave v4 and v6 addresses as per RFC8305.
@@ -50,18 +49,14 @@ pub enum DnsResolver {
 }
 
 impl DnsResolver {
-    pub async fn lookup_host(&self, domain: &str, port: u16) -> anyhow::Result<(Vec<SocketAddr>, Option<EchConfig>)> {
-        let addrs: (Vec<SocketAddr>, Option<EchConfig>) = match self {
-            Self::System => {
-                (tokio::net::lookup_host(format!("{}:{}", domain, port)).await?.collect(), None)
-            },
-            Self::TrustDns { resolver, prefer_ipv6, ech_enabled } => {
-
-                let mut ech_config: Option<EchConfig> = None;
-                if *ech_enabled {
-                    ech_config = Self::lookup_ech_config(domain, resolver).await?;
-                }
-
+    pub async fn lookup_host(&self, domain: &str, port: u16) -> anyhow::Result<Vec<SocketAddr>> {
+        let addrs = match self {
+            Self::System => tokio::net::lookup_host(format!("{}:{}", domain, port)).await?.collect(),
+            Self::TrustDns {
+                resolver,
+                prefer_ipv6,
+                ech_enabled: _,
+            } => {
                 let addrs: Vec<_> = resolver
                     .lookup_ip(domain)
                     .await?
@@ -71,40 +66,50 @@ impl DnsResolver {
                         IpAddr::V6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
                     })
                     .collect();
-                let sorted_addr = sort_socket_addrs(&addrs, *prefer_ipv6).copied().collect();
-                (sorted_addr, ech_config)
+                sort_socket_addrs(&addrs, *prefer_ipv6).copied().collect()
             }
         };
 
         Ok(addrs)
     }
 
-    async fn lookup_ech_config<P: ConnectionProvider>(domain: &str, resolver: &Resolver<P>) -> Result<Option<EchConfig>, ResolveError> {
-        let lookup = resolver
-            .lookup(domain, RecordType::HTTPS)
-            .await?;
+    pub async fn lookup_ech_config(&self, domain: &Host) -> Result<Option<EchConfig>, ResolveError> {
+        let resolver = match self {
+            DnsResolver::TrustDns {
+                resolver, ech_enabled, ..
+            } if *ech_enabled => resolver,
+            _ => {
+                return Ok(None);
+            }
+        };
 
-        let mut ech_config_lists = Vec::new();
-        for r in lookup.record_iter() {
-            let RData::HTTPS(svcb) = r.data() else {
-                continue;
-            };
-    
-            ech_config_lists.extend(
-                svcb.svc_params()
-                    .iter()
-                    .find_map(|sp| match sp {
-                        (SvcParamKey::EchConfigList, SvcParamValue::EchConfigList(e)) => {
-                            Some(EchConfigListBytes::from(e.clone().0))
-                        }
-                        _ => None,
-                    }),
-            )
-        }
+        let domain = match domain {
+            Host::Domain(domain) => domain,
+            _ => return Ok(None),
+        };
 
-        let ech_config = ech_config_lists
-            .into_iter()
-            .find_map(|list| EchConfig::new(list, ALL_SUPPORTED_SUITES).ok());
+        use tokio_rustls::rustls::crypto::aws_lc_rs::hpke::ALL_SUPPORTED_SUITES;
+        let lookup = resolver.lookup(domain, RecordType::HTTPS).await?;
+
+        let ech_config = lookup
+            .iter()
+            .filter_map(|record_data| {
+                if let RData::HTTPS(svcb) = record_data {
+                    Some(svcb)
+                } else {
+                    None
+                }
+            })
+            .flat_map(|svcb| {
+                svcb.svc_params().iter().filter_map(|sp| {
+                    let (SvcParamKey::EchConfigList, SvcParamValue::EchConfigList(e)) = sp else {
+                        return None;
+                    };
+
+                    EchConfig::new(EchConfigListBytes::from(e.0.as_slice()), ALL_SUPPORTED_SUITES).ok()
+                })
+            })
+            .next();
 
         Ok(ech_config)
     }
@@ -190,7 +195,7 @@ impl DnsResolver {
             return Ok(Self::TrustDns {
                 resolver: mk_resolver(cfg, opts, proxy, so_mark),
                 prefer_ipv6,
-                ech_enabled
+                ech_enabled,
             });
         };
 
@@ -208,7 +213,7 @@ impl DnsResolver {
         Ok(Self::TrustDns {
             resolver: mk_resolver(cfg, ResolverOpts::default(), proxy, so_mark),
             prefer_ipv6,
-            ech_enabled
+            ech_enabled,
         })
     }
 }
@@ -266,10 +271,8 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
                     &DnsResolver::System, // not going to be used as host is directly an ip address
                 )
                 .map_err(std::io::Error::other)
-                .map_ok(|s| s.0)
                 .map(|s| s.map(AsyncIoTokioAsStd))
                 .await
-                
             } else {
                 protocols::tcp::connect(
                     &host,
@@ -279,7 +282,6 @@ impl RuntimeProvider for TokioRuntimeProviderWithSoMark {
                     &DnsResolver::System, // not going to be used as host is directly an ip address
                 )
                 .map_err(std::io::Error::other)
-                .map_ok(|s| s.0)
                 .map(|s| s.map(AsyncIoTokioAsStd))
                 .await
             }

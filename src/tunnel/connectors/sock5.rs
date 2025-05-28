@@ -51,7 +51,7 @@ impl TunnelConnector for Socks5TunnelConnector<'_> {
                     self.dns_resolver,
                 )
                 .await?;
-                let (reader, writer) = stream.0.into_split();
+                let (reader, writer) = stream.into_split();
                 Ok((Socks5Reader::Tcp(reader), Socks5Writer::Tcp(writer)))
             }
             LocalProtocol::Udp { .. } => {
@@ -84,7 +84,7 @@ impl TunnelConnector for Socks5TunnelConnector<'_> {
                     self.dns_resolver,
                 )
                 .await?;
-                let (reader, writer) = stream.0.into_split();
+                let (reader, writer) = stream.into_split();
                 Ok((Socks5Reader::Tcp(reader), Socks5Writer::Tcp(writer)))
             }
             _ => Err(anyhow!("Socks5 UDP cannot use http proxy to connect to destination")),
