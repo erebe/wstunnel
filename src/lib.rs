@@ -82,23 +82,26 @@ async fn create_client_tunnels(
     let transport_scheme = TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
     let tls = match transport_scheme {
         TransportScheme::Ws | TransportScheme::Http => None,
-        TransportScheme::Wss | TransportScheme::Https => Some(TlsClientConfig {
-            tls_connector: Arc::new(RwLock::new(
-                tls::tls_connector(
-                    args.tls_verify_certificate,
-                    transport_scheme.alpn_protocols(),
-                    !args.tls_sni_disable,
-                    tls_certificate,
-                    tls_key,
-                )
-                .expect("Cannot create tls connector"),
-            )),
-            tls_sni_override: args.tls_sni_override,
-            tls_verify_certificate: args.tls_verify_certificate,
-            tls_sni_disabled: args.tls_sni_disable,
-            tls_certificate_path: args.tls_certificate.clone(),
-            tls_key_path: args.tls_private_key.clone(),
-        }),
+        TransportScheme::Wss | TransportScheme::Https => {
+            let opts = tls::tls_connector(
+                args.tls_verify_certificate,
+                transport_scheme.alpn_protocols(),
+                !args.tls_sni_disable,
+                tls_certificate,
+                tls_key,
+            ).expect("Cannot create tls connector");
+
+            Some(TlsClientConfig {
+                tls_connector: Arc::new(RwLock::new(opts.0)),
+                root_store: opts.1,
+                tls_sni_override: args.tls_sni_override,
+                tls_verify_certificate: args.tls_verify_certificate,
+                tls_sni_disabled: args.tls_sni_disable,
+                tls_certificate_path: args.tls_certificate.clone(),
+                tls_key_path: args.tls_private_key.clone(),
+                tls_ech_enabled: args.tls_ech_enable
+            })
+        }
     };
 
     // Extract host header from http_headers
@@ -143,6 +146,7 @@ async fn create_client_tunnels(
             http_proxy.clone(),
             SoMark::new(args.socket_so_mark),
             !args.dns_resolver_prefer_ipv4,
+            args.tls_ech_enable
         )
         .expect("cannot create dns resolver"),
         http_proxy,
@@ -488,6 +492,7 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutor) -> anyhow::
             None,
             SoMark::new(args.socket_so_mark),
             !args.dns_resolver_prefer_ipv4,
+            false
         )
         .expect("Cannot create DNS resolver"),
         restriction_config: args.restrict_config,
