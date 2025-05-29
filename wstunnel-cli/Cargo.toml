@@ -10,7 +10,7 @@ fdlimit = "0.3.0"
 tokio = { version = "1.45.0", features = ["full"] }
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "local-time"] }
-wstunnel = { path = ".." , default-features = false, features = ["clap"] }
+wstunnel = { path = "../wstunnel" , default-features = false, features = ["clap"] }
 
 tikv-jemallocator = {  version = "0.6", optional = true }
 
