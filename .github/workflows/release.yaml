@@ -14,8 +14,9 @@ jobs:
   build:
     name: Build - ${{ matrix.platform.name }}
     # By default, runs on Ubuntu, otherwise, override with the desired os
-    runs-on: ${{ matrix.platform.os || 'ubuntu-22.04' }}
+    runs-on: ${{ matrix.platform.os || 'ubuntu-24.04' }}
     strategy:
+      fail-fast: false
       matrix:
         # Set platforms you want to build your binaries on
         platform:
@@ -26,7 +27,7 @@ jobs:
 
           - name: Linux x86
             target: i686-unknown-linux-musl
-            build-args: "--release"
+            build-args: "--release --features aws-lc-rs-bindgen"
 
           - name: Linux aarch64
             target: aarch64-unknown-linux-musl
@@ -34,15 +35,15 @@ jobs:
 
           - name: Linux armv7hf
             target: armv7-unknown-linux-musleabihf
-            build-args: "--release"
+            build-args: "--release --no-default-features --features ring"
 
           - name: Freebsd x86_64
             target: x86_64-unknown-freebsd
-            build-args: "--release --features=jemalloc"
+            build-args: "--release --no-default-features --features ring --features=jemalloc"
 
           - name: Freebsd x86
             target: i686-unknown-freebsd
-            build-args: "--release"
+            build-args: "--release --no-default-features --features ring"
 
           - name: Android aarch64
             target: aarch64-linux-android
@@ -50,7 +51,7 @@ jobs:
 
           - name: Android armv7
             target: armv7-linux-androideabi
-            build-args: "--release"
+            build-args: "--release --no-default-features --features ring"
 
           #- name: Linux mips
           #  target: mips-unknown-linux-musl
@@ -86,16 +87,17 @@ jobs:
           - name: Windows x86
             os: windows-latest
             target: i686-pc-windows-msvc
-            build-args: "--profile release-with-symbols"
+            build-args: "--profile release-with-symbols --no-default-features --features ring"
 
     steps:
+
       - name: Install package for linux
         if: contains(matrix.platform.target, 'linux')
         run: sudo apt install musl-tools
 
       - name: Install package for Android
         if: contains(matrix.platform.target, 'android')
-        run: sudo apt install android-libunwind android-libunwind-dev  libunwind-dev
+        run: sudo apt install android-libunwind android-libunwind-dev libunwind-dev
 
       - name: Set up JDK 17
         if: contains(matrix.platform.target, 'android')
@@ -125,6 +127,9 @@ jobs:
       - name: Install package for Android
         if: contains(matrix.platform.target, 'android')
         run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install bindgen-cli
+        run: cargo install bindgen-cli
 
       - name: Show command used for Cargo
         run: |

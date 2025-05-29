@@ -19,6 +19,7 @@ default = ["aws-lc-rs"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-lc-rs = ["wstunnel/aws-lc-rs"]
 ring = ["wstunnel/ring"]
+aws-lc-rs-bindgen = ["wstunnel/aws-lc-rs-bindgen"]
 
 [[bin]]
 name = "wstunnel"
