@@ -79,14 +79,32 @@ async fn create_client_tunnels(
         args.http_upgrade_path_prefix
     };
 
+    let http_proxy = mk_http_proxy(args.http_proxy, args.http_proxy_login, args.http_proxy_password)?;
+    let dns_resolver = DnsResolver::new_from_urls(
+        &args.dns_resolver,
+        http_proxy.clone(),
+        SoMark::new(args.socket_so_mark),
+        !args.dns_resolver_prefer_ipv4,
+    )
+    .expect("cannot create dns resolver");
+
     let transport_scheme = TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
     let tls = match transport_scheme {
         TransportScheme::Ws | TransportScheme::Http => None,
         TransportScheme::Wss | TransportScheme::Https => {
-            let (tls_connector, root_store) = tls::tls_connector(
+            let ech_config = if args.tls_ech_enable {
+                dns_resolver
+                    .lookup_ech_config(&args.remote_addr.host().unwrap().to_owned())
+                    .await?
+            } else {
+                None
+            };
+
+            let tls_connector = tls::tls_connector(
                 args.tls_verify_certificate,
                 transport_scheme.alpn_protocols(),
                 !args.tls_sni_disable,
+                ech_config,
                 tls_certificate,
                 tls_key,
             )
@@ -94,7 +112,6 @@ async fn create_client_tunnels(
 
             Some(TlsClientConfig {
                 tls_connector: Arc::new(RwLock::new(tls_connector)),
-                root_store,
                 tls_sni_override: args.tls_sni_override,
                 tls_verify_certificate: args.tls_verify_certificate,
                 tls_sni_disabled: args.tls_sni_disable,
@@ -120,7 +137,6 @@ async fn create_client_tunnels(
         }
     }
 
-    let http_proxy = mk_http_proxy(args.http_proxy, args.http_proxy_login, args.http_proxy_password)?;
     let client_config = WsClientConfig {
         remote_addr: TransportAddr::new(
             TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
@@ -141,14 +157,7 @@ async fn create_client_tunnels(
             .or(Some(Duration::from_secs(30)))
             .filter(|d| d.as_secs() > 0),
         websocket_mask_frame: args.websocket_mask_frame,
-        dns_resolver: DnsResolver::new_from_urls(
-            &args.dns_resolver,
-            http_proxy.clone(),
-            SoMark::new(args.socket_so_mark),
-            !args.dns_resolver_prefer_ipv4,
-            args.tls_ech_enable,
-        )
-        .expect("cannot create dns resolver"),
+        dns_resolver,
         http_proxy,
     };
 
@@ -492,7 +501,6 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutor) -> anyhow::
             None,
             SoMark::new(args.socket_so_mark),
             !args.dns_resolver_prefer_ipv4,
-            false,
         )
         .expect("Cannot create DNS resolver"),
         restriction_config: args.restrict_config,

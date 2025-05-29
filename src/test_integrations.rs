@@ -25,7 +25,7 @@ use url::Host;
 
 #[fixture]
 fn dns_resolver() -> DnsResolver {
-    DnsResolver::new_from_urls(&[], None, SoMark::new(None), true, false).expect("Cannot create DNS resolver")
+    DnsResolver::new_from_urls(&[], None, SoMark::new(None), true).expect("Cannot create DNS resolver")
 }
 
 #[fixture]

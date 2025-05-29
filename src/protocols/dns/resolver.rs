@@ -44,7 +44,6 @@ pub enum DnsResolver {
     TrustDns {
         resolver: Resolver<GenericConnector<TokioRuntimeProviderWithSoMark>>,
         prefer_ipv6: bool,
-        ech_enabled: bool,
     },
 }
 
@@ -52,11 +51,7 @@ impl DnsResolver {
     pub async fn lookup_host(&self, domain: &str, port: u16) -> anyhow::Result<Vec<SocketAddr>> {
         let addrs = match self {
             Self::System => tokio::net::lookup_host(format!("{}:{}", domain, port)).await?.collect(),
-            Self::TrustDns {
-                resolver,
-                prefer_ipv6,
-                ech_enabled: _,
-            } => {
+            Self::TrustDns { resolver, prefer_ipv6 } => {
                 let addrs: Vec<_> = resolver
                     .lookup_ip(domain)
                     .await?
@@ -75,9 +70,7 @@ impl DnsResolver {
 
     pub async fn lookup_ech_config(&self, domain: &Host) -> Result<Option<EchConfig>, ResolveError> {
         let resolver = match self {
-            DnsResolver::TrustDns {
-                resolver, ech_enabled, ..
-            } if *ech_enabled => resolver,
+            DnsResolver::TrustDns { resolver, .. } => resolver,
             _ => {
                 return Ok(None);
             }
@@ -119,7 +112,6 @@ impl DnsResolver {
         proxy: Option<Url>,
         so_mark: SoMark,
         prefer_ipv6: bool,
-        ech_enabled: bool,
     ) -> anyhow::Result<Self> {
         fn mk_resolver(
             cfg: ResolverConfig,
@@ -195,7 +187,6 @@ impl DnsResolver {
             return Ok(Self::TrustDns {
                 resolver: mk_resolver(cfg, opts, proxy, so_mark),
                 prefer_ipv6,
-                ech_enabled,
             });
         };
 
@@ -213,7 +204,6 @@ impl DnsResolver {
         Ok(Self::TrustDns {
             resolver: mk_resolver(cfg, ResolverOpts::default(), proxy, so_mark),
             prefer_ipv6,
-            ech_enabled,
         })
     }
 }

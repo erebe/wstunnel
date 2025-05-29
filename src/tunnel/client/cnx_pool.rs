@@ -55,8 +55,7 @@ impl ManageConnection for WsConnection {
         };
 
         if self.remote_addr.tls().is_some() {
-            let ech_config = self.dns_resolver.lookup_ech_config(self.remote_addr.host()).await?;
-            let tls_stream = tls::connect(self, tcp_stream, ech_config).await?;
+            let tls_stream = tls::connect(self, tcp_stream).await?;
             Ok(Some(TransportStream::from_client_tls(tls_stream, Bytes::default())))
         } else {
             Ok(Some(TransportStream::from_tcp(tcp_stream, Bytes::default())))

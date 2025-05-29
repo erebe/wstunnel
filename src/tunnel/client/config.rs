@@ -9,7 +9,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio_rustls::TlsConnector;
-use tokio_rustls::rustls::RootCertStore;
 use tokio_rustls::rustls::pki_types::{DnsName, ServerName};
 use url::{Host, Url};
 
@@ -58,7 +57,6 @@ pub struct TlsClientConfig {
     pub tls_connector: Arc<RwLock<TlsConnector>>,
     pub tls_certificate_path: Option<PathBuf>,
     pub tls_key_path: Option<PathBuf>,
-    pub root_store: RootCertStore,
 }
 
 impl TlsClientConfig {

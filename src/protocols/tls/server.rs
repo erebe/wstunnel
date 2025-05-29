@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
-use crate::tunnel::client::{TlsClientConfig, WsClientConfig};
+use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::server::TlsServerConfig;
 use crate::tunnel::transport::TransportAddr;
 use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -107,9 +107,10 @@ pub fn tls_connector(
     tls_verify_certificate: bool,
     alpn_protocols: Vec<Vec<u8>>,
     enable_sni: bool,
+    ech_config: Option<EchConfig>,
     tls_client_certificate: Option<Vec<CertificateDer<'static>>>,
     tls_client_key: Option<PrivateKeyDer<'static>>,
-) -> anyhow::Result<(TlsConnector, RootCertStore)> {
+) -> anyhow::Result<TlsConnector> {
     let mut root_store = RootCertStore::empty();
 
     // Load system certificates and add them to the root store
@@ -124,7 +125,14 @@ pub fn tls_connector(
         }
     }
 
-    let config_builder = ClientConfig::builder().with_root_certificates(root_store.clone());
+    let crypto_provider = ClientConfig::builder().crypto_provider().clone();
+    let config_builder = ClientConfig::builder_with_provider(crypto_provider);
+    let config_builder = if let Some(ech_config) = ech_config {
+        config_builder.with_ech(EchMode::Enable(ech_config))?
+    } else {
+        config_builder.with_safe_default_protocol_versions()?
+    };
+    let config_builder = config_builder.with_root_certificates(root_store);
 
     let mut config = match (tls_client_certificate, tls_client_key) {
         (Some(tls_client_certificate), Some(tls_client_key)) => config_builder
@@ -143,7 +151,7 @@ pub fn tls_connector(
 
     config.alpn_protocols = alpn_protocols;
     let tls_connector = TlsConnector::from(Arc::new(config));
-    Ok((tls_connector, root_store))
+    Ok(tls_connector)
 }
 
 pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsAcceptor> {
@@ -174,11 +182,7 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
-pub async fn connect(
-    client_cfg: &WsClientConfig,
-    tcp_stream: TcpStream,
-    ech_config: Option<EchConfig>,
-) -> anyhow::Result<TlsStream<TcpStream>> {
+pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
     let sni = client_cfg.tls_server_name();
     let tls_config = match &client_cfg.remote_addr {
         TransportAddr::Wss { tls, .. } => tls,
@@ -203,30 +207,7 @@ pub async fn connect(
     }
 
     let tls_connector = tls_config.tls_connector();
-    let tls_stream = if let Some(ech_config) = ech_config {
-        //FIXME: do not re-create a tls connector every time ?
-        let tls_connector = tls_connector_with_ech(ech_config, tls_config, tls_connector)?;
-        tls_connector.connect(sni, tcp_stream).await?
-    } else {
-        tls_connector.connect(sni, tcp_stream).await?
-    };
+    let tls_stream = tls_connector.connect(sni, tcp_stream).await?;
 
     Ok(tls_stream)
-}
-
-fn tls_connector_with_ech(
-    ech_config: EchConfig,
-    tls_config: &TlsClientConfig,
-    original_connector: TlsConnector,
-) -> anyhow::Result<TlsConnector> {
-    let original_config = original_connector.config();
-    let mut ech_client_config = ClientConfig::builder_with_provider(original_config.crypto_provider().clone())
-        .with_ech(EchMode::from(ech_config))?
-        .with_root_certificates(tls_config.root_store.clone())
-        .with_no_client_auth();
-
-    ech_client_config.key_log = original_config.key_log.clone();
-    ech_client_config.alpn_protocols = original_config.alpn_protocols.clone();
-
-    Ok(TlsConnector::from(Arc::new(ech_client_config)))
 }

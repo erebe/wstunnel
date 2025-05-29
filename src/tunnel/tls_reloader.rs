@@ -290,6 +290,7 @@ impl TlsReloader {
                             tls.tls_verify_certificate,
                             this.client_config.remote_addr.scheme().alpn_protocols(),
                             !tls.tls_sni_disabled,
+                            None,
                             Some(tls_certs),
                             Some(tls_key),
                         );
@@ -300,7 +301,7 @@ impl TlsReloader {
                                 return;
                             }
                         };
-                        *tls.tls_connector.write() = tls_connector.0;
+                        *tls.tls_connector.write() = tls_connector;
                         this.tls_reload_certificate.store(true, Ordering::Relaxed);
                     }
                     (Err(err), _) | (_, Err(err)) => {
@@ -333,6 +334,7 @@ impl TlsReloader {
                             tls.tls_verify_certificate,
                             this.client_config.remote_addr.scheme().alpn_protocols(),
                             !tls.tls_sni_disabled,
+                            None,
                             Some(tls_certs),
                             Some(tls_key),
                         );
@@ -343,7 +345,7 @@ impl TlsReloader {
                                 return;
                             }
                         };
-                        *tls.tls_connector.write() = tls_connector.0;
+                        *tls.tls_connector.write() = tls_connector;
                         this.tls_reload_certificate.store(true, Ordering::Relaxed);
                     }
                     (Err(err), _) | (_, Err(err)) => {
