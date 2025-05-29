@@ -4,8 +4,6 @@ use anyhow::{Context, anyhow};
 use futures_util::{FutureExt, TryFutureExt};
 use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::GenericConnector;
-use hickory_resolver::proto::rr::rdata::svcb::{SvcParamKey, SvcParamValue};
-use hickory_resolver::proto::rr::{RData, RecordType};
 use hickory_resolver::proto::runtime::iocompat::AsyncIoTokioAsStd;
 use hickory_resolver::proto::runtime::{RuntimeProvider, TokioHandle, TokioRuntimeProvider, TokioTime};
 use hickory_resolver::proto::xfer::Protocol;
@@ -18,7 +16,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio_rustls::rustls::client::EchConfig;
-use tokio_rustls::rustls::pki_types::EchConfigListBytes;
 use url::{Host, Url};
 
 // Interleave v4 and v6 addresses as per RFC8305.
@@ -68,7 +65,18 @@ impl DnsResolver {
         Ok(addrs)
     }
 
+    #[cfg(not(feature = "aws-lc-rs"))]
+    pub async fn lookup_ech_config(&self, _domain: &Host) -> Result<Option<EchConfig>, ResolveError> {
+        Ok(None)
+    }
+
+    #[cfg(feature = "aws-lc-rs")]
     pub async fn lookup_ech_config(&self, domain: &Host) -> Result<Option<EchConfig>, ResolveError> {
+        use hickory_resolver::proto::rr::rdata::svcb::{SvcParamKey, SvcParamValue};
+        use hickory_resolver::proto::rr::{RData, RecordType};
+        use tokio_rustls::rustls::crypto::aws_lc_rs::hpke::ALL_SUPPORTED_SUITES;
+        use tokio_rustls::rustls::pki_types::EchConfigListBytes;
+
         let resolver = match self {
             DnsResolver::TrustDns { resolver, .. } => resolver,
             _ => {
@@ -81,7 +89,6 @@ impl DnsResolver {
             _ => return Ok(None),
         };
 
-        use tokio_rustls::rustls::crypto::aws_lc_rs::hpke::ALL_SUPPORTED_SUITES;
         let lookup = resolver.lookup(domain, RecordType::HTTPS).await?;
 
         let ech_config = lookup
