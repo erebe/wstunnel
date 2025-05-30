@@ -12,7 +12,7 @@ use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::pki_types::{DnsName, ServerName};
 use url::{Host, Url};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WsClientConfig {
     pub remote_addr: TransportAddr,
     pub socket_so_mark: SoMark,
