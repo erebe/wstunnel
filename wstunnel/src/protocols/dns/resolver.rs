@@ -7,7 +7,7 @@ use hickory_resolver::name_server::GenericConnector;
 use hickory_resolver::proto::runtime::iocompat::AsyncIoTokioAsStd;
 use hickory_resolver::proto::runtime::{RuntimeProvider, TokioHandle, TokioRuntimeProvider, TokioTime};
 use hickory_resolver::proto::xfer::Protocol;
-use hickory_resolver::{ResolveError, Resolver};
+use hickory_resolver::{ Resolver};
 use log::warn;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -15,8 +15,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpStream, UdpSocket};
-use tokio_rustls::rustls::client::EchConfig;
 use url::{Host, Url};
+
+#[cfg(feature = "aws-lc-rs")]
+use hickory_resolver::ResolveError;
+#[cfg(feature = "aws-lc-rs")]
+use tokio_rustls::rustls::client::EchConfig;
 
 // Interleave v4 and v6 addresses as per RFC8305.
 // The first address is v6 if we have any v6 addresses.
@@ -63,11 +67,6 @@ impl DnsResolver {
         };
 
         Ok(addrs)
-    }
-
-    #[cfg(not(feature = "aws-lc-rs"))]
-    pub async fn lookup_ech_config(&self, _domain: &Host) -> Result<Option<EchConfig>, ResolveError> {
-        Ok(None)
     }
 
     #[cfg(feature = "aws-lc-rs")]
