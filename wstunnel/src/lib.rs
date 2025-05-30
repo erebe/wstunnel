@@ -94,7 +94,9 @@ async fn create_client_tunnels(
         TransportScheme::Wss | TransportScheme::Https => {
             let ech_config = if args.tls_ech_enable {
                 #[cfg(not(feature = "aws-lc-rs"))]
-                return Err(anyhow!("Your current build does not support ECH. You need to use aws-lc crypto provider"));
+                return Err(anyhow!(
+                    "Your current build does not support ECH. You need to use aws-lc crypto provider"
+                ));
 
                 #[cfg(feature = "aws-lc-rs")]
                 dns_resolver
