@@ -4,7 +4,7 @@ ARG BUILDER_IMAGE=builder_cache
 # Cache image with all the deps
 FROM rust:1.86-bookworm AS builder_cache
 
-RUN rustup component add rustfmt clippy
+RUN rustup component add rustfmt clippy && apt-get update && apt-get install cmake libclang-dev -y
 
 WORKDIR /build
 COPY . ./
