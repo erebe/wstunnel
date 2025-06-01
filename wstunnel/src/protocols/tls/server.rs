@@ -128,6 +128,7 @@ pub fn tls_connector(
     let crypto_provider = ClientConfig::builder().crypto_provider().clone();
     let config_builder = ClientConfig::builder_with_provider(crypto_provider);
     let config_builder = if let Some(ech_config) = ech_config {
+        info!("Using TLS ECH (encrypted sni) with config: {:?}", ech_config);
         config_builder.with_ech(EchMode::Enable(ech_config))?
     } else {
         config_builder.with_safe_default_protocol_versions()?

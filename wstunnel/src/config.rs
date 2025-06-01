@@ -94,10 +94,19 @@ pub struct Client {
 
     /// Disable sending SNI during TLS handshake
     /// Warning: Most reverse proxies rely on it
-    #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long,
+            verbatim_doc_comment,
+            conflicts_with = "tls_sni_override",
+            conflicts_with = "tls_ech_enable"
+        )
+    )]
     pub tls_sni_disable: bool,
 
-    /// Enable ECH during TLS handshake
+    /// Enable ECH (encrypted sni) during TLS handshake to wstunnel server.
+    /// Warning: Ech DNS config is not refreshed over time. It is retrieved only once at startup of the program  
     #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]
     pub tls_ech_enable: bool,
 
