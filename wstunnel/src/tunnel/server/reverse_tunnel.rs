@@ -1,4 +1,4 @@
-use crate::TokioExecutor;
+use crate::executor::TokioExecutorRef;
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::listeners::TunnelListener;
 use ahash::AHashMap;
@@ -51,7 +51,7 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
 
     pub async fn run_listening_server(
         &self,
-        executor: &impl TokioExecutor,
+        executor: &impl TokioExecutorRef,
         bind_addr: SocketAddr,
         idle_timeout: Duration,
         gen_listening_server: impl Future<Output = anyhow::Result<T>>,

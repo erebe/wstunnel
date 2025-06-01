@@ -9,7 +9,7 @@ mod test_integrations;
 mod tunnel;
 
 use crate::config::{Client, DEFAULT_CLIENT_UPGRADE_PATH_PREFIX, Server};
-use crate::executor::TokioExecutor;
+use crate::executor::{TokioExecutor, TokioExecutorRef};
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
@@ -39,7 +39,7 @@ use tracing::{error, info};
 use url::Url;
 
 pub async fn run_client(args: Client, executor: impl TokioExecutor) -> anyhow::Result<()> {
-    let tunnels = create_client_tunnels(args, executor.clone()).await?;
+    let tunnels = create_client_tunnels(args, executor.ref_clone()).await?;
 
     // Start all tunnels
     let (tx, rx) = oneshot::channel();
@@ -55,7 +55,7 @@ pub async fn run_client(args: Client, executor: impl TokioExecutor) -> anyhow::R
 
 async fn create_client_tunnels(
     args: Client,
-    executor: impl TokioExecutor,
+    executor: impl TokioExecutorRef,
 ) -> anyhow::Result<Vec<BoxFuture<'static, ()>>> {
     let (tls_certificate, tls_key) = if let (Some(cert), Some(key)) =
         (args.tls_certificate.as_ref(), args.tls_private_key.as_ref())
@@ -426,7 +426,7 @@ async fn create_client_tunnels(
 
 pub async fn run_server(args: Server, executor: impl TokioExecutor) -> anyhow::Result<()> {
     let (tx, rx) = oneshot::channel();
-    let exec = executor.clone();
+    let exec = executor.ref_clone();
     executor.spawn(async move {
         let ret = run_server_impl(args, exec).await;
         let _ = tx.send(ret);
@@ -435,7 +435,7 @@ pub async fn run_server(args: Server, executor: impl TokioExecutor) -> anyhow::R
     rx.await?
 }
 
-async fn run_server_impl(args: Server, executor: impl TokioExecutor) -> anyhow::Result<()> {
+async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyhow::Result<()> {
     let tls_config = if args.remote_addr.scheme() == "wss" {
         let tls_certificate = if let Some(cert_path) = &args.tls_certificate {
             tls::load_certificates_from_pem(cert_path).expect("Cannot load tls certificate")

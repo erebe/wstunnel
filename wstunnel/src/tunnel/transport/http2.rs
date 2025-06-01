@@ -122,7 +122,7 @@ impl TunnelWrite for Http2TunnelWrite {
 
 pub async fn connect(
     request_id: Uuid,
-    client: &WsClient<impl crate::TokioExecutor>,
+    client: &WsClient<impl crate::TokioExecutorRef>,
     dest_addr: &RemoteAddr,
 ) -> anyhow::Result<(Http2TunnelRead, Http2TunnelWrite, Parts)> {
     let mut pooled_cnx = match client.cnx_pool.get().await {

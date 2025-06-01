@@ -1,4 +1,5 @@
-use crate::executor::DefaultTokioExecutor;
+use crate::executor::{DefaultTokioExecutor, TokioExecutorRef};
+use crate::tunnel;
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::client::cnx_pool::WsConnection;
@@ -7,7 +8,6 @@ use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::io::{TunnelReader, TunnelWriter};
 use crate::tunnel::transport::{TransportScheme, jwt_token_to_tunnel};
-use crate::{TokioExecutor, tunnel};
 use anyhow::Context;
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
@@ -23,7 +23,7 @@ use url::Host;
 use uuid::Uuid;
 
 #[derive(Clone)]
-pub struct WsClient<E: TokioExecutor = DefaultTokioExecutor> {
+pub struct WsClient<E: TokioExecutorRef = DefaultTokioExecutor> {
     pub config: Arc<WsClientConfig>,
     pub cnx_pool: bb8::Pool<WsConnection>,
     reverse_tunnel_connection_retry_max_backoff: Duration,
@@ -31,7 +31,7 @@ pub struct WsClient<E: TokioExecutor = DefaultTokioExecutor> {
     pub(crate) executor: E,
 }
 
-impl<E: TokioExecutor> WsClient<E> {
+impl<E: TokioExecutorRef> WsClient<E> {
     pub async fn new(
         config: WsClientConfig,
         connection_min_idle: u32,

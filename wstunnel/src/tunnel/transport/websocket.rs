@@ -236,7 +236,7 @@ impl TunnelRead for WebsocketTunnelRead {
 
 pub async fn connect(
     request_id: Uuid,
-    client: &WsClient<impl crate::TokioExecutor>,
+    client: &WsClient<impl crate::TokioExecutorRef>,
     dest_addr: &RemoteAddr,
 ) -> anyhow::Result<(WebsocketTunnelRead, WebsocketTunnelWrite, Parts)> {
     let client_cfg = &client.config;

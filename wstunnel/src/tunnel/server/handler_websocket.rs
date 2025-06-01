@@ -1,4 +1,4 @@
-use crate::TokioExecutor;
+use crate::executor::TokioExecutorRef;
 use crate::restrictions::types::RestrictionsRules;
 use crate::tunnel::server::WsServer;
 use crate::tunnel::server::utils::{HttpResponse, bad_request, inject_cookie};
@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 use tracing::{Instrument, Span, error, warn};
 
 pub(super) async fn ws_server_upgrade(
-    server: WsServer<impl TokioExecutor>,
+    server: WsServer<impl TokioExecutorRef>,
     restrictions: Arc<RestrictionsRules>,
     restrict_path_prefix: Option<String>,
     client_addr: SocketAddr,

@@ -66,12 +66,12 @@ pub struct WsServerConfig {
 }
 
 #[derive(Clone)]
-pub struct WsServer<E: crate::TokioExecutor = DefaultTokioExecutor> {
+pub struct WsServer<E: crate::TokioExecutorRef = DefaultTokioExecutor> {
     pub config: Arc<WsServerConfig>,
     pub executor: E,
 }
 
-impl<E: crate::TokioExecutor> WsServer<E> {
+impl<E: crate::TokioExecutorRef> WsServer<E> {
     pub fn new(config: WsServerConfig, executor: E) -> Self {
         Self {
             config: Arc::new(config),
