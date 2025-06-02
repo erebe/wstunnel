@@ -6,7 +6,7 @@ mod restrictions;
 mod somark;
 #[cfg(test)]
 mod test_integrations;
-mod tunnel;
+pub mod tunnel;
 
 use crate::config::{Client, DEFAULT_CLIENT_UPGRADE_PATH_PREFIX, Server};
 use crate::executor::{TokioExecutor, TokioExecutorRef};
@@ -15,7 +15,7 @@ use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
 use crate::somark::SoMark;
 pub use crate::tunnel::LocalProtocol;
-use crate::tunnel::client::{TlsClientConfig, WsClient, WsClientConfig};
+pub use crate::tunnel::client::{TlsClientConfig, WsClient, WsClientConfig};
 use crate::tunnel::connectors::{Socks5TunnelConnector, TcpTunnelConnector, UdpTunnelConnector};
 use crate::tunnel::listeners::{
     HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener, new_stdio_listener,
@@ -53,10 +53,10 @@ pub async fn run_client(args: Client, executor: impl TokioExecutor) -> anyhow::R
     Ok(())
 }
 
-async fn create_client_tunnels(
+pub async fn create_client(
     args: Client,
     executor: impl TokioExecutorRef,
-) -> anyhow::Result<Vec<BoxFuture<'static, ()>>> {
+) -> anyhow::Result<WsClient<impl TokioExecutorRef>> {
     let (tls_certificate, tls_key) = if let (Some(cert), Some(key)) =
         (args.tls_certificate.as_ref(), args.tls_private_key.as_ref())
     {
@@ -177,8 +177,19 @@ async fn create_client_tunnels(
     .await?;
     info!("Starting wstunnel client v{}", env!("CARGO_PKG_VERSION"),);
 
+    Ok(client)
+}
+
+async fn create_client_tunnels(
+    mut args: Client,
+    executor: impl TokioExecutorRef,
+) -> anyhow::Result<Vec<BoxFuture<'static, ()>>> {
+    let remote_to_local = std::mem::take(&mut args.remote_to_local);
+    let local_to_remote = std::mem::take(&mut args.local_to_remote);
+    let client = create_client(args, executor).await?;
+
     // Keep track of all spawned tunnels
-    let mut tunnels: Vec<BoxFuture<()>> = Vec::with_capacity(args.remote_to_local.len() + args.local_to_remote.len());
+    let mut tunnels: Vec<BoxFuture<()>> = Vec::with_capacity(remote_to_local.len() + local_to_remote.len());
     macro_rules! spawn_tunnel {
         ( $($s:stmt);* ) => {
             tunnels.push(Box::pin(async move {
@@ -188,7 +199,7 @@ async fn create_client_tunnels(
     }
 
     // Start tunnels
-    for tunnel in args.remote_to_local.into_iter() {
+    for tunnel in remote_to_local.into_iter() {
         let client = client.clone();
         match &tunnel.local_protocol {
             LocalProtocol::ReverseTcp => {
@@ -314,7 +325,7 @@ async fn create_client_tunnels(
         }
     }
 
-    for tunnel in args.local_to_remote.into_iter() {
+    for tunnel in local_to_remote.into_iter() {
         let client = client.clone();
 
         match &tunnel.local_protocol {
