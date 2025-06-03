@@ -1,4 +1,5 @@
 use ipnet::IpNet;
+use regex::Regex;
 use std::fs::File;
 use std::io::BufReader;
 use std::net::IpAddr;
@@ -6,9 +7,6 @@ use std::ops::RangeInclusive;
 use std::path::Path;
 use std::str::FromStr;
 use std::vec;
-
-use regex::Regex;
-
 use types::RestrictionsRules;
 
 use crate::restrictions::types::{default_cidr, default_host};
@@ -42,37 +40,20 @@ impl RestrictionsRules {
             restrict_to
                 .iter()
                 .map(|(host, port)| {
-                    let reg = Regex::new(&format!("^{}$", regex::escape(host)))?;
                     let tunnels = if let Ok(ip) = IpAddr::from_str(host) {
-                        vec![
-                            types::AllowConfig::Tunnel(types::AllowTunnelConfig {
-                                protocol: vec![],
-                                port: vec![RangeInclusive::new(*port, *port)],
-                                host: reg,
-                                cidr: default_cidr(),
-                            }),
-                            types::AllowConfig::ReverseTunnel(types::AllowReverseTunnelConfig {
-                                protocol: vec![],
-                                port: vec![RangeInclusive::new(*port, *port)],
-                                port_mapping: Default::default(),
-                                cidr: vec![IpNet::new(ip, if ip.is_ipv4() { 32 } else { 128 })?],
-                            }),
-                        ]
+                        vec![types::AllowConfig::Tunnel(types::AllowTunnelConfig {
+                            protocol: vec![],
+                            port: vec![RangeInclusive::new(*port, *port)],
+                            host: Regex::new("^$")?,
+                            cidr: vec![IpNet::new(ip, if ip.is_ipv4() { 32 } else { 128 })?],
+                        })]
                     } else {
-                        vec![
-                            types::AllowConfig::Tunnel(types::AllowTunnelConfig {
-                                protocol: vec![],
-                                port: vec![RangeInclusive::new(*port, *port)],
-                                host: reg,
-                                cidr: default_cidr(),
-                            }),
-                            types::AllowConfig::ReverseTunnel(types::AllowReverseTunnelConfig {
-                                protocol: vec![],
-                                port: vec![],
-                                port_mapping: Default::default(),
-                                cidr: default_cidr(),
-                            }),
-                        ]
+                        vec![types::AllowConfig::Tunnel(types::AllowTunnelConfig {
+                            protocol: vec![],
+                            port: vec![RangeInclusive::new(*port, *port)],
+                            host: Regex::new(&format!("^{}$", regex::escape(host)))?,
+                            cidr: vec![],
+                        })]
                     };
 
                     Ok(tunnels)

@@ -16,7 +16,9 @@ pub trait TunnelConnector {
     type Reader: AsyncRead + Send + 'static;
     type Writer: AsyncWrite + Send + 'static;
 
+    #[allow(async_fn_in_trait)]
     async fn connect(&self, remote: &Option<RemoteAddr>) -> anyhow::Result<(Self::Reader, Self::Writer)>;
+    #[allow(async_fn_in_trait)]
     async fn connect_with_http_proxy(
         &self,
         _proxy: &Url,
