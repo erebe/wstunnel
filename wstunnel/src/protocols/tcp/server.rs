@@ -225,7 +225,8 @@ pub async fn run_server(bind: SocketAddr, ip_transparent: bool) -> Result<TcpLis
     Ok(TcpListenerStream::new(listener))
 }
 
-#[cfg(test)]
+// there is no docker on OpenBSD
+#[cfg(all(test, not(target_os = "openbsd")))]
 mod tests {
     use super::*;
     use futures_util::pin_mut;
