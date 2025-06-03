@@ -60,7 +60,7 @@ impl<E: TokioExecutorRef> WsClient<E> {
         })
     }
 
-    async fn connect_to_server<R, W>(
+    pub async fn connect_to_server<R, W>(
         &self,
         request_id: Uuid,
         remote_cfg: &RemoteAddr,
@@ -103,6 +103,7 @@ impl<E: TokioExecutorRef> WsClient<E> {
 
     pub async fn run_tunnel(self, tunnel_listener: impl TunnelListener) -> anyhow::Result<()> {
         pin_mut!(tunnel_listener);
+        // everybody who connects to the local socket gets their own tunnel
         while let Some(cnx) = tunnel_listener.next().await {
             let (cnx_stream, remote_addr) = match cnx {
                 Ok((cnx_stream, remote_addr)) => (cnx_stream, remote_addr),
