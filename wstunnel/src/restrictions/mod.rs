@@ -1,4 +1,5 @@
 use ipnet::IpNet;
+use regex::Regex;
 use std::fs::File;
 use std::io::BufReader;
 use std::net::IpAddr;
@@ -6,8 +7,6 @@ use std::ops::RangeInclusive;
 use std::path::Path;
 use std::str::FromStr;
 use std::vec;
-
-use regex::Regex;
 
 use types::RestrictionsRules;
 
@@ -42,14 +41,13 @@ impl RestrictionsRules {
             restrict_to
                 .iter()
                 .map(|(host, port)| {
-                    let reg = Regex::new(&format!("^{}$", regex::escape(host)))?;
                     let tunnels = if let Ok(ip) = IpAddr::from_str(host) {
                         vec![
                             types::AllowConfig::Tunnel(types::AllowTunnelConfig {
                                 protocol: vec![],
                                 port: vec![RangeInclusive::new(*port, *port)],
-                                host: reg,
-                                cidr: default_cidr(),
+                                host: Regex::new("^$")?,
+                                cidr: vec![IpNet::new(ip, if ip.is_ipv4() { 32 } else { 128 })?],
                             }),
                             types::AllowConfig::ReverseTunnel(types::AllowReverseTunnelConfig {
                                 protocol: vec![],
@@ -63,7 +61,7 @@ impl RestrictionsRules {
                             types::AllowConfig::Tunnel(types::AllowTunnelConfig {
                                 protocol: vec![],
                                 port: vec![RangeInclusive::new(*port, *port)],
-                                host: reg,
+                                host: Regex::new(&format!("^{}$", regex::escape(host)))?,
                                 cidr: default_cidr(),
                             }),
                             types::AllowConfig::ReverseTunnel(types::AllowReverseTunnelConfig {
