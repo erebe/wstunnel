@@ -25,6 +25,7 @@ pub enum MatchConfig {
     PathPrefix(Regex),
     #[serde(with = "serde_regex")]
     Authorization(Regex),
+    AuthorizationScript(String),
 }
 
 #[derive(Debug, Clone, Deserialize)]
