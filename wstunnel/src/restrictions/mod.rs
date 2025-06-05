@@ -89,3 +89,130 @@ impl RestrictionsRules {
         Ok(Self { restrictions })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::restrictions::types::{AllowConfig, MatchConfig};
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn test_restriction_rule_with_host_restriction() -> anyhow::Result<()> {
+        // Test setup with empty path prefixes and specific host restriction
+        let path_prefixes: Vec<String> = vec![];
+        let restrict_to = vec![("google.com".to_string(), 443)];
+
+        let rules = RestrictionsRules::from_path_prefix(&path_prefixes, &restrict_to)?;
+
+        // Validate the rules structure
+        assert_eq!(rules.restrictions.len(), 1);
+
+        // Get the first restriction
+        let restriction = &rules.restrictions[0];
+
+        // Validate the restriction name
+        assert_eq!(restriction.name, "Allow All");
+
+        // Validate that there's exactly one allow rule
+        assert_eq!(restriction.allow.len(), 1);
+
+        // Check the tunnel configuration
+        if let AllowConfig::Tunnel(tunnel_config) = &restriction.allow[0] {
+            // Validate the host regex pattern
+            assert_eq!(tunnel_config.host.as_str(), "^google\\.com$");
+
+            // Validate the port configuration
+            assert_eq!(tunnel_config.port.len(), 1);
+            assert_eq!(*tunnel_config.port[0].start(), 443);
+            assert_eq!(*tunnel_config.port[0].end(), 443);
+
+            // Validate that CIDR list is empty (since we're using hostname)
+            assert!(tunnel_config.cidr.is_empty());
+        } else {
+            panic!("Expected Tunnel configuration");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_restriction_rule_with_ip_restriction() -> anyhow::Result<()> {
+        // Test setup with empty path prefixes and specific host restriction
+        let path_prefixes: Vec<String> = vec![];
+        let restrict_to = vec![("127.0.0.1".to_string(), 443)];
+
+        let rules = RestrictionsRules::from_path_prefix(&path_prefixes, &restrict_to)?;
+
+        // Validate the rules structure
+        assert_eq!(rules.restrictions.len(), 1);
+
+        // Get the first restriction
+        let restriction = &rules.restrictions[0];
+
+        // Validate the restriction name
+        assert_eq!(restriction.name, "Allow All");
+
+        // Validate that there's exactly one allow rule
+        assert_eq!(restriction.allow.len(), 1);
+        assert_eq!(restriction.r#match.len(), 1);
+
+        // Check the tunnel configuration
+        if let AllowConfig::Tunnel(tunnel_config) = &restriction.allow[0] {
+            // Validate the host regex pattern
+            assert_eq!(tunnel_config.host.as_str(), "^$");
+
+            // Validate the port configuration
+            assert_eq!(tunnel_config.port.len(), 1);
+            assert_eq!(*tunnel_config.port[0].start(), 443);
+            assert_eq!(*tunnel_config.port[0].end(), 443);
+
+            // Validate that CIDR is correct
+            assert_eq!(tunnel_config.cidr.len(), 1);
+            assert_eq!(tunnel_config.cidr[0], IpNet::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 32)?);
+        } else {
+            panic!("Expected Tunnel configuration");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_restriction_rule_with_path_prefix() -> anyhow::Result<()> {
+        // Test setup with path prefix and host restriction
+        let path_prefixes = vec!["/test/path".to_string()];
+        let restrict_to = vec![];
+
+        let rules = RestrictionsRules::from_path_prefix(&path_prefixes, &restrict_to)?;
+
+        // Validate the rules structure
+        assert_eq!(rules.restrictions.len(), 1);
+
+        // Get the first restriction
+        let restriction = &rules.restrictions[0];
+
+        // Validate the restriction name
+        assert_eq!(restriction.name, "Allow path prefix /test/path");
+
+        if let MatchConfig::PathPrefix(reg) = &restriction.r#match[0] {
+            // Validate the host regex pattern
+            assert_eq!(reg.as_str(), "^/test/path$");
+        } else {
+            panic!("Expected Match configuration");
+        }
+
+        if let AllowConfig::Tunnel(tunnel_config) = &restriction.allow[0] {
+            // Validate the host regex pattern
+            assert_eq!(tunnel_config.host.as_str(), "^.*$");
+
+            // Validate the port configuration
+            assert_eq!(tunnel_config.port.len(), 0);
+
+            // Validate that CIDR is correct
+            assert_eq!(tunnel_config.cidr, default_cidr());
+        } else {
+            panic!("Expected Tunnel configuration");
+        }
+
+        Ok(())
+    }
+}
