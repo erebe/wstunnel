@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -x
+
 go_arch=$1
 go_os=$2
 go_arm=$3
@@ -9,7 +11,11 @@ project_name=$4
 case $go_arch in
     amd64) rust_arch='x86_64' ;;
     arm64) rust_arch='aarch64' ;;
-    arm) rust_arch='armv7' ;;
+    arm) case $go_arm in
+           6) rust_arch="arm-" ;;
+           7) rust_arch='armv7-' ;;
+         esac
+    ;;
     386) rust_arch='i686' ;;
     *) echo "unknown arch: $go_arch" && exit 1 ;;
 esac
