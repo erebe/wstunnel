@@ -9,7 +9,11 @@ project_name=$4
 case $go_arch in
     amd64) rust_arch='x86_64' ;;
     arm64) rust_arch='aarch64' ;;
-    arm) rust_arch='armv7' ;;
+    arm) case $go_arm
+           6) rust_arch="armv6" ;;
+           7) rust_arch='armv7' ;;
+         esac
+    ;;
     386) rust_arch='i686' ;;
     *) echo "unknown arch: $go_arch" && exit 1 ;;
 esac

@@ -11,6 +11,7 @@ builds:
       - arm64
       - arm
     goarm:
+      - "6"
       - "7"
     binary: wstunnel
     ignore:
