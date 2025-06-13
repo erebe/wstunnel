@@ -409,10 +409,8 @@ async fn create_client_tunnels(
 
             LocalProtocol::Stdio { proxy_protocol } => {
                 let (server, mut handle) = new_stdio_listener(tunnel.remote.clone(), *proxy_protocol).await?;
-                spawn_tunnel! {
-                    if let Err(err) = client.run_tunnel(server).await {
-                        error!("{:?}", err);
-                    }
+                if let Err(err) = client.run_tunnel(server).await {
+                    error!("{:?}", err);
                 }
 
                 // We need to wait for either a ctrl+c of that the stdio tunnel is closed

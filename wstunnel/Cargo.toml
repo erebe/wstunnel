@@ -13,7 +13,7 @@ scopeguard = "1.2.0"
 
 bb8 = { version = "0.9.0", features = [] }
 bytes = { version = "1.10.1", features = [] }
-clap = { version = "4.5.39", features = ["derive", "env"], optional = true }
+clap = { version = "4.5.40", features = ["derive", "env"], optional = true }
 fast-socks5 = { version = "0.10.0", features = [] }
 fastwebsockets = { version = "0.10.0", features = ["upgrade", "simd", "unstable-split"] }
 futures-util = { version = "0.3.31" }
@@ -28,7 +28,7 @@ serde_yaml = { version = "0.9.34", features = [] }
 ipnet = { version = "2.11.0", features = ["serde"] }
 
 hyper = { version = "1.6.0", features = ["client", "http1", "http2"] }
-hyper-util = { version = "0.1.13", features = ["tokio", "server", "server-auto"] }
+hyper-util = { version = "0.1.14", features = ["tokio", "server", "server-auto"] }
 http-body-util = { version = "0.1.3" }
 jsonwebtoken = { version = "9.3.1", default-features = false }
 log = "0.4.27"
