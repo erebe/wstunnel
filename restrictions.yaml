@@ -10,9 +10,15 @@ restrictions:
       # The regex does a match, so if you want to match exactly you need to bound the pattern with ^ $
       # I.e: "tesotron" is going to match "XXXtesotronXXX", but "^tesotron$" is going to match only "tesotron"
       - !PathPrefix "^.*$"
-      # This match applies only if it succeeds to match the Authentication Header with the given regex.
-      # If present, Authentication Header must exists and must match the regex.
+      # This match applies only if it succeeds to match the Authorization Header with the given regex.
+      # If present, Authorization Header must exists and must match the regex.
       # - !Authorization "^[Bb]earer +actual_bearer_token_to_match$"
+      # This match applies if the Authorization Header is allowed according to a custom lua script.
+      # The lua script must contain a global function named 'auth_validate' that gets the Auth Header value
+      # as a string parameter, and returns true iff the custom logic decides the value is authorized.
+      # Any failure to load/execute the lua script is logged, and considered authorization failure.
+      # If the match is present but no Auth Header exists, it's considered authorization failure.
+      # - !AuthorizationScript "/etc/wstunnel/authrorize.lua"
       # The only other possible match type for now is !Any, that match everything/any request
       # - !Any
 
