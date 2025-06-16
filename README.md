@@ -179,6 +179,10 @@ Options:
           Disable sending SNI during TLS handshake
           Warning: Most reverse proxies rely on it
 
+      --tls-ech-enable
+          Enable ECH (encrypted sni) during TLS handshake to wstunnel server.
+          Warning: Ech DNS config is not refreshed over time. It is retrieved only once at startup of the program
+
       --tls-verify-certificate
           Enable TLS certificate verification.
           Disabled by default. The client will happily connect to any server with self-signed certificate.
