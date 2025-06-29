@@ -51,7 +51,7 @@ pub enum DnsResolver {
 impl DnsResolver {
     pub async fn lookup_host(&self, domain: &str, port: u16) -> anyhow::Result<Vec<SocketAddr>> {
         let addrs = match self {
-            Self::System => tokio::net::lookup_host(format!("{}:{}", domain, port)).await?.collect(),
+            Self::System => tokio::net::lookup_host(format!("{domain}:{port}")).await?.collect(),
             Self::TrustDns { resolver, prefer_ipv6 } => {
                 let addrs: Vec<_> = resolver
                     .lookup_ip(domain)

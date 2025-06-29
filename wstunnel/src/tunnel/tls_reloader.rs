@@ -204,7 +204,7 @@ impl TlsReloader {
                     Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
                 }
                 EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                    trace!("Ignoring event {:?}", event);
+                    trace!("Ignoring event {event:?}");
                 }
             }
         }
@@ -226,7 +226,7 @@ impl TlsReloader {
                     Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
                 }
                 EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                    trace!("Ignoring event {:?}", event);
+                    trace!("Ignoring event {event:?}");
                 }
             }
         }
@@ -253,7 +253,7 @@ impl TlsReloader {
                         Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
                     }
                     EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                        trace!("Ignoring event {:?}", event);
+                        trace!("Ignoring event {event:?}");
                     }
                 }
             }
@@ -314,7 +314,7 @@ impl TlsReloader {
                     Self::try_rewatch_certificate(Client(this.clone()), path.to_path_buf());
                 }
                 EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                    trace!("Ignoring event {:?}", event);
+                    trace!("Ignoring event {event:?}");
                 }
             }
         }
@@ -358,7 +358,7 @@ impl TlsReloader {
                     Self::try_rewatch_certificate(Client(this.clone()), path.to_path_buf());
                 }
                 EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                    trace!("Ignoring event {:?}", event);
+                    trace!("Ignoring event {event:?}");
                 }
             }
         }

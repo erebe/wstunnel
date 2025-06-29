@@ -44,7 +44,7 @@ impl Socks5UdpServer {
         const BUF_SIZES: [usize; 7] = [64usize, 32usize, 16usize, 8usize, 4usize, 2usize, 1usize];
         for size in BUF_SIZES.iter() {
             if let Err(err) = socket.set_recv_buffer_size(size * 1024 * 1024) {
-                warn!("Cannot increase UDP server recv buffer to {} Mib: {}", size, err);
+                warn!("Cannot increase UDP server recv buffer to {size} Mib: {err}");
                 warn!(
                     "This is not fatal, but can lead to packet loss if you have too much throughput. You must monitor packet loss in this case"
                 );
@@ -60,7 +60,7 @@ impl Socks5UdpServer {
 
         for size in BUF_SIZES.iter() {
             if let Err(err) = socket.set_send_buffer_size(size * 1024 * 1024) {
-                warn!("Cannot increase UDP server send buffer to {} Mib: {}", size, err);
+                warn!("Cannot increase UDP server send buffer to {size} Mib: {err}");
                 warn!(
                     "This is not fatal, but can lead to packet loss if you have too much throughput. You must monitor packet loss in this case"
                 );
@@ -236,7 +236,7 @@ pub async fn run_server(
 ) -> Result<impl Stream<Item = io::Result<Socks5UdpStream>>, anyhow::Error> {
     let listener = UdpSocket::bind(bind)
         .await
-        .with_context(|| format!("Cannot create UDP server {:?}", bind))?;
+        .with_context(|| format!("Cannot create UDP server {bind:?}"))?;
 
     let udp_server = Socks5UdpServer::new(listener, timeout);
     static MAX_PACKET_LENGTH: usize = 64 * 1024;
@@ -259,7 +259,7 @@ pub async fn run_server(
                 let (frag, destination_addr, data) = match fast_socks5::parse_udp_request(payload.chunk()).await {
                     Ok((frag, addr, data)) => (frag, addr, data),
                     Err(err) => {
-                        warn!("Skipping invalid UDP socks5 request: {} ", err);
+                        warn!("Skipping invalid UDP socks5 request: {err} ");
                         debug!("Invalid UDP socks5 request: {:?}", payload.chunk());
                         continue;
                     }

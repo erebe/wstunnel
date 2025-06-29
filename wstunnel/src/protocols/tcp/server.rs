@@ -54,13 +54,13 @@ pub async fn connect(
     connect_timeout: Duration,
     dns_resolver: &DnsResolver,
 ) -> Result<TcpStream, anyhow::Error> {
-    info!("Opening TCP connection to {}:{}", host, port);
+    info!("Opening TCP connection to {host}:{port}");
 
     let socket_addrs: Vec<SocketAddr> = match host {
         Host::Domain(domain) => dns_resolver
             .lookup_host(domain.as_str(), port)
             .await
-            .with_context(|| format!("cannot resolve domain: {}", domain))?,
+            .with_context(|| format!("cannot resolve domain: {domain}"))?,
         Host::Ipv4(ip) => vec![SocketAddr::V4(SocketAddrV4::new(*ip, port))],
         Host::Ipv6(ip) => vec![SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))],
     };
@@ -150,11 +150,11 @@ pub async fn connect_with_http_proxy(
     debug!("Connected to http proxy {}", socket.peer_addr()?);
 
     let authorization = if let Some((user, password)) = proxy.password().map(|p| (proxy.username(), p)) {
-        let user = urlencoding::decode(user).with_context(|| format!("Cannot urldecode proxy user: {}", user))?;
+        let user = urlencoding::decode(user).with_context(|| format!("Cannot urldecode proxy user: {user}"))?;
         let password =
-            urlencoding::decode(password).with_context(|| format!("Cannot urldecode proxy password: {}", password))?;
-        let creds = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", user, password));
-        format!("Proxy-Authorization: Basic {}\r\n", creds)
+            urlencoding::decode(password).with_context(|| format!("Cannot urldecode proxy password: {password}"))?;
+        let creds = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));
+        format!("Proxy-Authorization: Basic {creds}\r\n")
     } else {
         "".to_string()
     };
@@ -210,11 +210,11 @@ pub async fn connect_with_http_proxy(
 
 #[cfg_attr(not(target_os = "linux"), expect(unused_variables))]
 pub async fn run_server(bind: SocketAddr, ip_transparent: bool) -> Result<TcpListenerStream, anyhow::Error> {
-    info!("Starting TCP server listening cnx on {}", bind);
+    info!("Starting TCP server listening cnx on {bind}");
 
     let listener = TcpListener::bind(bind)
         .await
-        .with_context(|| format!("Cannot create TCP server {:?}", bind))?;
+        .with_context(|| format!("Cannot create TCP server {bind:?}"))?;
 
     #[cfg(target_os = "linux")]
     if ip_transparent {

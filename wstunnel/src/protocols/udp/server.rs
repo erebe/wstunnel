@@ -46,7 +46,7 @@ impl UdpServer {
         const BUF_SIZES: [usize; 7] = [64usize, 32usize, 16usize, 8usize, 4usize, 2usize, 1usize];
         for size in BUF_SIZES.iter() {
             if let Err(err) = socket.set_recv_buffer_size(size * 1024 * 1024) {
-                warn!("Cannot increase UDP server recv buffer to {} Mib: {}", size, err);
+                warn!("Cannot increase UDP server recv buffer to {size} Mib: {err}");
                 warn!(
                     "This is not fatal, but can lead to packet loss if you have too much throughput. You must monitor packet loss in this case"
                 );
@@ -62,7 +62,7 @@ impl UdpServer {
 
         for size in BUF_SIZES.iter() {
             if let Err(err) = socket.set_send_buffer_size(size * 1024 * 1024) {
-                warn!("Cannot increase UDP server send buffer to {} Mib: {}", size, err);
+                warn!("Cannot increase UDP server send buffer to {size} Mib: {err}");
                 warn!(
                     "This is not fatal, but can lead to packet loss if you have too much throughput. You must monitor packet loss in this case"
                 );
@@ -251,7 +251,7 @@ pub async fn run_server(
 
     let listener = UdpSocket::bind(bind)
         .await
-        .with_context(|| format!("Cannot create UDP server {:?}", bind))?;
+        .with_context(|| format!("Cannot create UDP server {bind:?}"))?;
     configure_listener(&listener)?;
 
     let udp_server = UdpServer::new(listener, timeout);
@@ -347,7 +347,7 @@ pub async fn connect(
         Host::Domain(domain) => dns_resolver
             .lookup_host(domain.as_str(), port)
             .await
-            .with_context(|| format!("cannot resolve domain: {}", domain))?,
+            .with_context(|| format!("cannot resolve domain: {domain}"))?,
         Host::Ipv4(ip) => vec![SocketAddr::V4(SocketAddrV4::new(*ip, port))],
         Host::Ipv6(ip) => vec![SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))],
     };
@@ -365,7 +365,7 @@ pub async fn connect(
         let socket = match socket {
             Ok(socket) => socket,
             Err(err) => {
-                warn!("cannot bind udp socket {:?}", err);
+                warn!("cannot bind udp socket {err:?}");
                 continue;
             }
         };
@@ -482,7 +482,7 @@ pub fn mk_send_socket_tproxy(listener: &Arc<UdpSocket>) -> anyhow::Result<Arc<Ud
                 );
             }
             _ => {
-                warn!("Unknown control message {:?}", cmsg);
+                warn!("Unknown control message {cmsg:?}");
             }
         }
     }

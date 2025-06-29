@@ -529,7 +529,7 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyho
         env!("CARGO_PKG_VERSION"),
         server.config
     );
-    debug!("Restriction rules: {:#?}", restrictions);
+    debug!("Restriction rules: {restrictions:#?}");
     server.serve(restrictions).await
 }
 
@@ -545,7 +545,7 @@ fn mk_http_proxy(
     let mut proxy = if proxy.starts_with("http://") {
         Url::parse(&proxy).with_context(|| "Invalid http proxy url")?
     } else {
-        Url::parse(&format!("http://{}", proxy)).with_context(|| "Invalid http proxy url")?
+        Url::parse(&format!("http://{proxy}")).with_context(|| "Invalid http proxy url")?
     };
 
     if let Some(login) = proxy_login {

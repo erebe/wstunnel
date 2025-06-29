@@ -83,7 +83,7 @@ pub fn load_certificates_from_pem(path: &Path) -> anyhow::Result<Vec<Certificate
         .filter_map(|cert| match cert {
             Ok(cert) => Some(cert),
             Err(err) => {
-                warn!("Error while parsing tls certificate: {:?}", err);
+                warn!("Error while parsing tls certificate: {err:?}");
                 None
             }
         })
@@ -116,11 +116,11 @@ pub fn tls_connector(
     // Load system certificates and add them to the root store
     let certs = rustls_native_certs::load_native_certs();
     certs.errors.iter().for_each(|err| {
-        warn!("cannot load system some system certificates: {}", err);
+        warn!("cannot load system some system certificates: {err}");
     });
     for cert in certs.certs {
         if let Err(err) = root_store.add(cert) {
-            warn!("cannot load a system certificate: {:?}", err);
+            warn!("cannot load a system certificate: {err:?}");
             continue;
         }
     }

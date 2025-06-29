@@ -56,7 +56,7 @@ impl TunnelRead for Http2TunnelRead {
                         };
                     }
                     Err(err) => {
-                        warn!("{:?}", err);
+                        warn!("{err:?}");
                         continue;
                     }
                 },
@@ -201,7 +201,7 @@ pub async fn connect(
             client.config.remote_addr
         )
     })?;
-    debug!("with HTTP upgrade request {:?}", req);
+    debug!("with HTTP upgrade request {req:?}");
     let transport = pooled_cnx.deref_mut().take().unwrap();
     let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
         .timer(TokioTimer::new())
@@ -214,7 +214,7 @@ pub async fn connect(
         .with_context(|| format!("failed to do http2 handshake with the server {:?}", client.config.remote_addr))?;
     let cnx_poller = client.executor.spawn(async move {
         if let Err(err) = cnx.await {
-            error!("{:?}", err)
+            error!("{err:?}")
         }
     });
 

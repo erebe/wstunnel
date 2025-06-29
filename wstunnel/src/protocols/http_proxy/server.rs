@@ -82,13 +82,12 @@ pub async fn run_server(
     credentials: Option<(String, String)>,
 ) -> Result<HttpProxyListener, anyhow::Error> {
     info!(
-        "Starting http proxy server listening cnx on {} with credentials {:?}",
-        bind, credentials
+        "Starting http proxy server listening cnx on {bind} with credentials {credentials:?}"
     );
 
     let listener = TcpListener::bind(bind)
         .await
-        .with_context(|| format!("Cannot create TCP server {:?}", bind))?;
+        .with_context(|| format!("Cannot create TCP server {bind:?}"))?;
 
     let http1 = {
         let mut builder = http1::Builder::new();
@@ -99,7 +98,7 @@ pub async fn run_server(
         builder
     };
     let auth_header =
-        credentials.map(|(user, pass)| base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", user, pass)));
+        credentials.map(|(user, pass)| base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}")));
     let tasks = JoinSet::<Option<(TcpStream, Option<(Host, u16)>)>>::new();
 
     let proxy_cfg = Arc::new((auth_header, http1));
@@ -117,7 +116,7 @@ pub async fn run_server(
                         },
                         None | Some(Ok(None)) => continue,
                         Some(Err(err)) => {
-                            error!("Error while joinning tasks {:?}", err);
+                            error!("Error while joinning tasks {err:?}");
                             continue
                         },
                     }
@@ -127,7 +126,7 @@ pub async fn run_server(
                     match stream {
                         Ok((stream, _)) => (stream, None),
                         Err(err) => {
-                            error!("Error while accepting connection {:?}", err);
+                            error!("Error while accepting connection {err:?}");
                             continue;
                         }
                     }
@@ -152,7 +151,7 @@ pub async fn run_server(
                     match conn_fut.await {
                         Ok(_) => Some((stream, forward_to.into_inner())),
                         Err(err) => {
-                            info!("Error while serving connection: {}", err);
+                            info!("Error while serving connection: {err}");
                             None
                         }
                     }

@@ -84,7 +84,7 @@ impl<E: TokioExecutorRef> WsClient<E> {
             }
         };
 
-        debug!("Server response: {:?}", response);
+        debug!("Server response: {response:?}");
         let (local_rx, local_tx) = duplex_stream;
         let (close_tx, close_rx) = oneshot::channel::<()>();
 

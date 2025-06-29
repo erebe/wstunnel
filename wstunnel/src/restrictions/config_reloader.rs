@@ -148,7 +148,7 @@ impl RestrictionsRulesReloader {
             return;
         }
 
-        trace!("Received event: {:#?}", event);
+        trace!("Received event: {event:#?}");
         if let Some(path) = event.paths.iter().find(|p| p.ends_with(&this.config_path)) {
             match event.kind {
                 EventKind::Create(_) | EventKind::Modify(_) => {
@@ -159,7 +159,7 @@ impl RestrictionsRulesReloader {
                     Self::try_rewatch_config(reloader.clone(), path.to_path_buf());
                 }
                 EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                    trace!("Ignoring event {:?}", event);
+                    trace!("Ignoring event {event:?}");
                 }
             }
         }

@@ -78,7 +78,7 @@ impl RestrictionsRules {
                 .map(|path_prefix| {
                     let reg = Regex::new(&format!("^{}$", regex::escape(path_prefix)))?;
                     Ok(types::RestrictionConfig {
-                        name: format!("Allow path prefix {}", path_prefix),
+                        name: format!("Allow path prefix {path_prefix}"),
                         r#match: vec![types::MatchConfig::PathPrefix(reg)],
                         allow: tunnels_restrictions.clone(),
                     })

@@ -297,7 +297,7 @@ pub async fn connect(
             client_cfg.remote_addr
         )
     })?;
-    debug!("with HTTP upgrade request {:?}", req);
+    debug!("with HTTP upgrade request {req:?}");
     let transport = pooled_cnx.deref_mut().take().unwrap();
     let (ws, response) = fastwebsockets::handshake::client(&TokioExecutor::new(), req, transport)
         .await

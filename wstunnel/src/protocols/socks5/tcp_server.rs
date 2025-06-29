@@ -79,7 +79,7 @@ pub async fn run_server(
 
     let server = Socks5Server::<DenyAuthentication>::bind(bind)
         .await
-        .with_context(|| format!("Cannot create socks5 server {:?}", bind))?;
+        .with_context(|| format!("Cannot create socks5 server {bind:?}"))?;
 
     let mut cfg = Config::default();
     cfg = if let Some((username, password)) = credentials {

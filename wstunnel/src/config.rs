@@ -439,7 +439,7 @@ mod parsers {
         let Ok(secs) = arg.parse::<u64>() else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("cannot parse duration of seconds from {}", arg),
+                format!("cannot parse duration of seconds from {arg}"),
             ));
         };
 
@@ -454,13 +454,13 @@ mod parsers {
             let Some((ipv6_str, remaining)) = arg.split_once(']') else {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    format!("cannot parse IPv6 bind from {}", arg),
+                    format!("cannot parse IPv6 bind from {arg}"),
                 ));
             };
             let Ok(ipv6_addr) = Ipv6Addr::from_str(&ipv6_str[1..]) else {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    format!("cannot parse IPv6 bind from {}", ipv6_str),
+                    format!("cannot parse IPv6 bind from {ipv6_str}"),
                 ));
             };
 
@@ -480,7 +480,7 @@ mod parsers {
         let Ok(bind_port): Result<u16, _> = port_str.parse() else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("cannot parse bind port from {}", port_str),
+                format!("cannot parse bind port from {port_str}"),
             ));
         };
 
@@ -492,17 +492,17 @@ mod parsers {
         use std::io::Error;
 
         // Using http or else the URL lib don't try to fully parse the host into an IPv4/IPv6
-        let Ok(remote) = Url::parse(&format!("https://{}", remaining)) else {
+        let Ok(remote) = Url::parse(&format!("https://{remaining}")) else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("cannot parse remote from {}", remaining),
+                format!("cannot parse remote from {remaining}"),
             ));
         };
 
         let Some(remote_host) = remote.host() else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("cannot parse remote host from {}", remaining),
+                format!("cannot parse remote host from {remaining}"),
             ));
         };
 
@@ -513,7 +513,7 @@ mod parsers {
             _ => {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    format!("cannot parse remote port from {}", remaining),
+                    format!("cannot parse remote port from {remaining}"),
                 ));
             }
         };
@@ -541,7 +541,7 @@ mod parsers {
         let Some((proto, tunnel_info)) = arg.split_once("://") else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("cannot parse protocol from {}", arg),
+                format!("cannot parse protocol from {arg}"),
             ));
         };
 
@@ -573,7 +573,7 @@ mod parsers {
                 let Some((path, remote)) = tunnel_info.split_once(':') else {
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
-                        format!("cannot parse unix socket path from {}", arg),
+                        format!("cannot parse unix socket path from {arg}"),
                     ));
                 };
                 let (dest_host, dest_port, options) = parse_tunnel_dest(remote)?;
@@ -588,7 +588,7 @@ mod parsers {
             }
             "http" => {
                 let (local_bind, remaining) = parse_local_bind(tunnel_info)?;
-                let x = format!("0.0.0.0:0?{}", remaining);
+                let x = format!("0.0.0.0:0?{remaining}");
                 let (dest_host, dest_port, options) = parse_tunnel_dest(&x)?;
                 Ok(LocalToRemote {
                     local_protocol: LocalProtocol::HttpProxy {
@@ -602,7 +602,7 @@ mod parsers {
             }
             "socks5" => {
                 let (local_bind, remaining) = parse_local_bind(tunnel_info)?;
-                let x = format!("0.0.0.0:0?{}", remaining);
+                let x = format!("0.0.0.0:0?{remaining}");
                 let (dest_host, dest_port, options) = parse_tunnel_dest(&x)?;
                 Ok(LocalToRemote {
                     local_protocol: LocalProtocol::Socks5 {
@@ -625,7 +625,7 @@ mod parsers {
             }
             "tproxy+tcp" => {
                 let (local_bind, remaining) = parse_local_bind(tunnel_info)?;
-                let x = format!("0.0.0.0:0?{}", remaining);
+                let x = format!("0.0.0.0:0?{remaining}");
                 let (dest_host, dest_port, _options) = parse_tunnel_dest(&x)?;
                 Ok(LocalToRemote {
                     local_protocol: LocalProtocol::TProxyTcp,
@@ -635,7 +635,7 @@ mod parsers {
             }
             "tproxy+udp" => {
                 let (local_bind, remaining) = parse_local_bind(tunnel_info)?;
-                let x = format!("0.0.0.0:0?{}", remaining);
+                let x = format!("0.0.0.0:0?{remaining}");
                 let (dest_host, dest_port, options) = parse_tunnel_dest(&x)?;
                 Ok(LocalToRemote {
                     local_protocol: LocalProtocol::TProxyUdp {
@@ -647,7 +647,7 @@ mod parsers {
             }
             _ => Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("Invalid local protocol for tunnel {}", arg),
+                format!("Invalid local protocol for tunnel {arg}"),
             )),
         }
     }
@@ -691,7 +691,7 @@ mod parsers {
             Ok(val) => Ok(val),
             Err(err) => Err(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("Invalid sni override: {}", err),
+                format!("Invalid sni override: {err}"),
             )),
         }
     }
@@ -700,7 +700,7 @@ mod parsers {
         let Some((key, value)) = arg.split_once(':') else {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("cannot parse http header from {}", arg),
+                format!("cannot parse http header from {arg}"),
             ));
         };
 
@@ -709,7 +709,7 @@ mod parsers {
             Err(err) => {
                 return Err(io::Error::new(
                     ErrorKind::InvalidInput,
-                    format!("cannot parse http header value from {} due to {:?}", value, err),
+                    format!("cannot parse http header value from {value} due to {err:?}"),
                 ));
             }
         };
@@ -719,10 +719,10 @@ mod parsers {
 
     pub fn parse_http_credentials(arg: &str) -> Result<HeaderValue, io::Error> {
         let encoded = base64::engine::general_purpose::STANDARD.encode(arg.trim().as_bytes());
-        let Ok(header) = HeaderValue::from_str(&format!("Basic {}", encoded)) else {
+        let Ok(header) = HeaderValue::from_str(&format!("Basic {encoded}")) else {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("cannot parse http credentials {}", arg),
+                format!("cannot parse http credentials {arg}"),
             ));
         };
 
@@ -733,7 +733,7 @@ mod parsers {
         let Ok(url) = Url::parse(arg) else {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("cannot parse server url {}", arg),
+                format!("cannot parse server url {arg}"),
             ));
         };
 
@@ -745,7 +745,7 @@ mod parsers {
         }
 
         if url.host().is_none() {
-            return Err(io::Error::new(ErrorKind::InvalidInput, format!("invalid server host {}", arg)));
+            return Err(io::Error::new(ErrorKind::InvalidInput, format!("invalid server host {arg}")));
         }
 
         Ok(url)

@@ -97,14 +97,14 @@ async fn main() -> anyhow::Result<()> {
             run_client(*args, DefaultTokioExecutor::default())
                 .await
                 .unwrap_or_else(|err| {
-                    panic!("Cannot start wstunnel client: {:?}", err);
+                    panic!("Cannot start wstunnel client: {err:?}");
                 });
         }
         Commands::Server(args) => {
             run_server(*args, DefaultTokioExecutor::default())
                 .await
                 .unwrap_or_else(|err| {
-                    panic!("Cannot start wstunnel server: {:?}", err);
+                    panic!("Cannot start wstunnel server: {err:?}");
                 });
         }
     }
