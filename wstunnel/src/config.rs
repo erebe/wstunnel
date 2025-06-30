@@ -539,10 +539,7 @@ mod parsers {
         let get_proxy_protocol = |options: &BTreeMap<String, String>| options.contains_key("proxy_protocol");
 
         let Some((proto, tunnel_info)) = arg.split_once("://") else {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                format!("cannot parse protocol from {arg}"),
-            ));
+            return Err(Error::new(ErrorKind::InvalidInput, format!("cannot parse protocol from {arg}")));
         };
 
         match proto {
@@ -689,10 +686,7 @@ mod parsers {
     pub fn parse_sni_override(arg: &str) -> Result<DnsName<'static>, io::Error> {
         match DnsName::try_from(arg.to_string()) {
             Ok(val) => Ok(val),
-            Err(err) => Err(io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("Invalid sni override: {err}"),
-            )),
+            Err(err) => Err(io::Error::new(ErrorKind::InvalidInput, format!("Invalid sni override: {err}"))),
         }
     }
 

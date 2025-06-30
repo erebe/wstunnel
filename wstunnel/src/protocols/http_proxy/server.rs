@@ -3,7 +3,7 @@ use std::future::Future;
 
 use bytes::Bytes;
 use log::{debug, error};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::task::JoinSet;
 use tracing::log::info;
-use url::Host;
+use url::{Host, Url};
 
 #[allow(clippy::type_complexity)]
 pub struct HttpProxyListener {
@@ -36,7 +36,7 @@ impl Stream for HttpProxyListener {
     }
 }
 
-fn handle_request(
+fn handle_http_connect_request(
     credentials: &Option<String>,
     dest: &Mutex<Option<(Host, u16)>>,
     req: Request<Incoming>,
@@ -81,9 +81,7 @@ pub async fn run_server(
     timeout: Option<Duration>,
     credentials: Option<(String, String)>,
 ) -> Result<HttpProxyListener, anyhow::Error> {
-    info!(
-        "Starting http proxy server listening cnx on {bind} with credentials {credentials:?}"
-    );
+    info!("Starting http proxy server listening cnx on {bind} with credentials {credentials:?}");
 
     let listener = TcpListener::bind(bind)
         .await
@@ -140,21 +138,47 @@ pub async fn run_server(
             let handle_new_cnx = {
                 let proxy_cfg = proxy_cfg.clone();
                 async move {
-                    let http1 = &proxy_cfg.1;
-                    let auth_header = &proxy_cfg.0;
-                    let forward_to = Mutex::new(None);
-                    let conn_fut = http1.serve_connection(
-                        hyper_util::rt::TokioIo::new(&mut stream),
-                        service_fn(|req| handle_request(auth_header, &forward_to, req)),
-                    );
+                    // We need to know if the http request if a CONNECT method or a regular one.
+                    // HTTP CONNECT requires doing a handshake with client (which is easier)
+                    // While for regular method, we need to replay the request as if it was done by the client.
+                    // Non HTTP CONNECT method only works for non TLS connection/request.
+                    let forward_to = {
+                        let mut buf = [0; 512];
+                        let buf_size = stream.peek(&mut buf).await.ok()?;
+                        let mut http_parser = httparse::Request::new(&mut []);
 
-                    match conn_fut.await {
-                        Ok(_) => Some((stream, forward_to.into_inner())),
-                        Err(err) => {
-                            info!("Error while serving connection: {err}");
+                        let _ = http_parser.parse(&buf[..buf_size]);
+                        if http_parser.method == Some(hyper::Method::CONNECT.as_str()) {
                             None
+                        } else {
+                            let url = Url::parse(http_parser.path.unwrap_or("")).ok()?;
+                            let host = url.host().unwrap_or(Host::Ipv4(Ipv4Addr::UNSPECIFIED)).to_owned();
+                            let port = url.port_or_known_default().unwrap_or(80);
+                            Some((host, port))
                         }
-                    }
+                    };
+
+                    // Handle regular http request. Meaning we need to forward it directly as is
+                    return if forward_to.is_some() {
+                        Some((stream, forward_to))
+                    } else {
+                        // Handle HTTP CONNECT request
+                        let http1 = &proxy_cfg.1;
+                        let auth_header = &proxy_cfg.0;
+                        let forward_to = Mutex::new(None);
+                        let conn_fut = http1.serve_connection(
+                            hyper_util::rt::TokioIo::new(&mut stream),
+                            service_fn(|req| handle_http_connect_request(auth_header, &forward_to, req)),
+                        );
+
+                        match conn_fut.await {
+                            Ok(_) => Some((stream, forward_to.into_inner())),
+                            Err(err) => {
+                                info!("Error while serving connection: {err}");
+                                None
+                            }
+                        }
+                    };
                 }
             };
             tasks.spawn(handle_new_cnx);

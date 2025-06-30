@@ -129,9 +129,7 @@ where
         .map(|port_mapping| {
             let port_mapping_parts: Vec<&str> = port_mapping.split(':').collect();
             if port_mapping_parts.len() != 2 {
-                Err(serde::de::Error::custom(format!(
-                    "Invalid port_mapping entry: {port_mapping}"
-                )))
+                Err(serde::de::Error::custom(format!("Invalid port_mapping entry: {port_mapping}")))
             } else {
                 let orig_port = port_mapping_parts[0].parse::<u16>().map_err(serde::de::Error::custom)?;
                 let target_port = port_mapping_parts[1].parse::<u16>().map_err(serde::de::Error::custom)?;

@@ -3943,6 +3943,7 @@ dependencies = [
  "get_if_addrs",
  "hickory-resolver",
  "http-body-util",
+ "httparse",
  "hyper",
  "hyper-util",
  "ipnet",
