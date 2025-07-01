@@ -1,8 +1,7 @@
 use anyhow::Context;
-use std::future::Future;
-
 use bytes::Bytes;
 use log::{debug, error};
+use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -41,14 +40,13 @@ fn handle_http_connect_request(
     dest: &Mutex<Option<(Host, u16)>>,
     req: Request<Incoming>,
 ) -> impl Future<Output = Result<Response<Empty<Bytes>>, &'static str>> {
-    const PROXY_AUTHORIZATION_PREFIX: &str = "Basic ";
     let ok_response = |forward_to: Option<(Host, u16)>| -> Result<Response<Empty<Bytes>>, _> {
         *dest.lock() = forward_to;
         Ok(Response::builder().status(200).body(Empty::new()).unwrap())
     };
     fn err_response() -> Result<Response<Empty<Bytes>>, &'static str> {
         info!("Un-authorized connection to http proxy");
-        Err("Un-authorized")
+        Ok(Response::builder().status(401).body(Empty::new()).unwrap())
     }
 
     if req.method() != hyper::Method::CONNECT {
@@ -60,20 +58,33 @@ fn handle_http_connect_request(
         .ok()
         .map(|h| (h, req.uri().port_u16().unwrap_or(443)));
 
-    let Some(token) = credentials else {
-        return future::ready(ok_response(forward_to));
-    };
+    let header = req
+        .headers()
+        .get(hyper::header::PROXY_AUTHORIZATION)
+        .and_then(|h| h.to_str().ok());
 
-    let Some(auth) = req.headers().get(hyper::header::PROXY_AUTHORIZATION) else {
+    if !verify_credentials(credentials, &header) {
         return future::ready(err_response());
-    };
-
-    let auth = auth.to_str().unwrap_or_default().trim();
-    if auth.starts_with(PROXY_AUTHORIZATION_PREFIX) && &auth[PROXY_AUTHORIZATION_PREFIX.len()..] == token {
-        return future::ready(ok_response(forward_to));
     }
 
-    future::ready(err_response())
+    future::ready(ok_response(forward_to))
+}
+
+fn verify_credentials(credentials: &Option<String>, header_value: &Option<&str>) -> bool {
+    const PROXY_AUTHORIZATION_PREFIX: &str = "Basic ";
+
+    // no creds set, that's ok
+    let Some(token) = credentials else {
+        return true;
+    };
+
+    // creds set, and no auth provided, that's forbidden
+    let Some(header_value) = header_value else {
+        return false;
+    };
+
+    let auth = header_value.trim();
+    auth.starts_with(PROXY_AUTHORIZATION_PREFIX) && &auth[PROXY_AUTHORIZATION_PREFIX.len()..] == token
 }
 
 pub async fn run_server(
@@ -108,8 +119,8 @@ pub async fn run_server(
                 cnx = tasks.join_next(), if !tasks.is_empty() => {
                     match cnx {
                         Some(Ok(Some((stream, Some(f))))) => (stream, Some(f)),
-                        Some(Ok(Some((_, None)))) =>{
-                            error!("Error while trying to parse connect request");
+                        Some(Ok(Some((_, None)))) => {
+                            // Bad request or UnAuthorized request
                             continue
                         },
                         None | Some(Ok(None)) => continue,
@@ -143,18 +154,21 @@ pub async fn run_server(
                     // While for regular method, we need to replay the request as if it was done by the client.
                     // Non HTTP CONNECT method only works for non TLS connection/request.
                     let forward_to = {
-                        let mut buf = [0; 512];
-                        let buf_size = stream.peek(&mut buf).await.ok()?;
-                        let mut http_parser = httparse::Request::new(&mut []);
+                        // Get a pick at data to analyze http request
+                        let mut request_buf = [0; 512];
+                        let buf_size = stream.peek(&mut request_buf).await.ok()?;
 
-                        let _ = http_parser.parse(&buf[..buf_size]);
+                        // Parse http request. If no creds/auth is expected don't bother with headers
+                        let mut headers = {
+                            let headers_len = if proxy_cfg.0.is_some() { 32 } else { 0 };
+                            vec![httparse::EMPTY_HEADER; headers_len]
+                        };
+                        let mut http_parser = httparse::Request::new(&mut headers);
+                        let _ = http_parser.parse(&request_buf[..buf_size]);
                         if http_parser.method == Some(hyper::Method::CONNECT.as_str()) {
                             None
                         } else {
-                            let url = Url::parse(http_parser.path.unwrap_or("")).ok()?;
-                            let host = url.host().unwrap_or(Host::Ipv4(Ipv4Addr::UNSPECIFIED)).to_owned();
-                            let port = url.port_or_known_default().unwrap_or(80);
-                            Some((host, port))
+                            handle_regular_http_request(&http_parser, &proxy_cfg.0)
                         }
                     };
 
@@ -188,6 +202,28 @@ pub async fn run_server(
     Ok(HttpProxyListener {
         listener: Box::pin(listener),
     })
+}
+
+fn handle_regular_http_request(http_parser: &httparse::Request, auth_header: &Option<String>) -> Option<(Host, u16)> {
+    const DEFAULT_HTTP_PORT: u16 = 80;
+
+    let header = http_parser.headers.iter().find_map(|h| {
+        if h.name == hyper::header::PROXY_AUTHORIZATION {
+            Some(String::from_utf8_lossy(h.value))
+        } else {
+            None
+        }
+    });
+
+    if !verify_credentials(auth_header, &header.as_deref()) {
+        return None;
+    }
+
+    let url = Url::parse(http_parser.path.unwrap_or("")).ok()?;
+    let host = url.host().unwrap_or(Host::Ipv4(Ipv4Addr::UNSPECIFIED)).to_owned();
+    let port = url.port_or_known_default().unwrap_or(DEFAULT_HTTP_PORT);
+
+    Some((host, port))
 }
 
 //#[cfg(test)]
