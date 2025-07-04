@@ -12,6 +12,7 @@ use hyper::body::{Body, Incoming};
 use hyper::header::{AUTHORIZATION, COOKIE, HeaderValue, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{Request, Response, StatusCode, http};
 use jsonwebtoken::TokenData;
+use mlua::prelude::{Lua, LuaFunction};
 use std::net::IpAddr;
 use tracing::{error, info, warn};
 use url::Host;
@@ -116,7 +117,44 @@ impl RestrictionConfig {
             MatchConfig::Any => true,
             MatchConfig::PathPrefix(path) => path.is_match(path_prefix),
             MatchConfig::Authorization(auth) => authorization_header_val.is_some_and(|val| auth.is_match(val)),
+            MatchConfig::AuthorizationScript(script_name) => {
+                authorization_header_val.is_some_and(|val| auth_header_matcher(script_name, val))
+            }
         })
+    }
+}
+
+fn auth_header_matcher(script_name: &String, auth_val: &str) -> bool {
+    let validate_fn_name = "auth_validate";
+    let lua = Lua::new();
+
+    let script = match std::fs::read_to_string(script_name) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Failed to read {}: {}", script_name, e);
+            return false;
+        }
+    };
+
+    if let Err(e) = lua.load(&script).exec() {
+        error!("Failed to load lua script {}: {}", script_name, e);
+        return false;
+    }
+
+    let validate_fn: LuaFunction = match lua.globals().get(validate_fn_name) {
+        Ok(func) => func,
+        Err(e) => {
+            error!("Failed to find '{}' lua function: {}", validate_fn_name, e);
+            return false;
+        }
+    };
+
+    match validate_fn.call(auth_val) {
+        Ok(result) => result,
+        Err(e) => {
+            error!("Failed calling '{}' lua function: {}", validate_fn_name, e);
+            false
+        }
     }
 }
 
