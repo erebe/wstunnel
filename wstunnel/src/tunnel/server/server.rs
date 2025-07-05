@@ -203,7 +203,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                 let ((local_rx, local_tx), remote) = SERVERS
                     .run_listening_server(
                         &self.executor,
-                        bind,
+                        bind.to_string(),
                         self.config.remote_server_idle_timeout,
                         listening_server,
                     )
@@ -222,7 +222,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                 let ((local_rx, local_tx), remote) = SERVERS
                     .run_listening_server(
                         &self.executor,
-                        bind,
+                        bind.to_string(),
                         self.config.remote_server_idle_timeout,
                         listening_server,
                     )
@@ -240,7 +240,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                 let ((local_rx, local_tx), remote) = SERVERS
                     .run_listening_server(
                         &self.executor,
-                        bind,
+                        bind.to_string(),
                         self.config.remote_server_idle_timeout,
                         listening_server,
                     )
@@ -259,7 +259,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                 let ((local_rx, local_tx), remote) = SERVERS
                     .run_listening_server(
                         &self.executor,
-                        bind,
+                        bind.to_string(),
                         self.config.remote_server_idle_timeout,
                         listening_server,
                     )
@@ -275,12 +275,11 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
 
                 let remote_port = find_mapped_port(remote.port, restriction);
                 let local_srv = (remote.host, remote_port);
-                let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { UnixTunnelListener::new(path, local_srv, false).await };
                 let ((local_rx, local_tx), remote) = SERVERS
                     .run_listening_server(
                         &self.executor,
-                        bind,
+                        path.to_string_lossy().to_string(),
                         self.config.remote_server_idle_timeout,
                         listening_server,
                     )

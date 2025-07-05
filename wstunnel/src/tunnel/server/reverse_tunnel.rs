@@ -7,7 +7,6 @@ use futures_util::{StreamExt, pin_mut};
 use log::warn;
 use parking_lot::Mutex;
 use std::future::Future;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -39,7 +38,7 @@ impl<T: TunnelListener> Drop for ReverseTunnelItem<T> {
 }
 
 pub struct ReverseTunnelServer<T: TunnelListener> {
-    servers: Arc<Mutex<AHashMap<SocketAddr, ReverseTunnelItem<T>>>>,
+    servers: Arc<Mutex<AHashMap<String, ReverseTunnelItem<T>>>>,
 }
 
 impl<T: TunnelListener> ReverseTunnelServer<T> {
@@ -52,7 +51,7 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
     pub async fn run_listening_server(
         &self,
         executor: &impl TokioExecutorRef,
-        bind_addr: SocketAddr,
+        bind_addr: String,
         idle_timeout: Duration,
         gen_listening_server: impl Future<Output = anyhow::Result<T>>,
     ) -> anyhow::Result<((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr)>
@@ -72,7 +71,7 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
             let nb_seen_clients = Arc::new(AtomicUsize::new(0));
             let seen_clients = nb_seen_clients.clone();
             let server = self.servers.clone();
-            let local_srv2 = bind_addr;
+            let local_srv2 = bind_addr.clone();
 
             let fut = async move {
                 scopeguard::defer!({
