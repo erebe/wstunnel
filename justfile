@@ -29,3 +29,12 @@ docker_release $TAG:
     --push .
   docker buildx rm builder
 
+test:
+   cargo nextest run --all-features
+
+bump_deps:
+  cargo upgrade  --recursive true --incompatible allow
+  cargo update --recursive
+
+linter_fix:
+   cargo clippy --fix  --all-features --locked --allow-dirty
