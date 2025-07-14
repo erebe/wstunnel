@@ -21,7 +21,7 @@ use url::{Host, Url};
 
 pub fn configure_socket(socket: SockRef, so_mark: SoMark) -> Result<(), anyhow::Error> {
     socket
-        .set_nodelay(true)
+        .set_tcp_nodelay(true)
         .with_context(|| format!("cannot set no_delay on socket: {:?}", io::Error::last_os_error()))?;
 
     #[cfg(not(any(target_os = "windows", target_os = "openbsd")))]
@@ -219,7 +219,7 @@ pub async fn run_server(bind: SocketAddr, ip_transparent: bool) -> Result<TcpLis
     #[cfg(target_os = "linux")]
     if ip_transparent {
         info!("TCP server listening in TProxy mode");
-        socket2::SockRef::from(&listener).set_ip_transparent(ip_transparent)?;
+        socket2::SockRef::from(&listener).set_ip_transparent_v4(ip_transparent)?;
     }
 
     Ok(TcpListenerStream::new(listener))

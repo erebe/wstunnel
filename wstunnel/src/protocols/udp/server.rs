@@ -434,7 +434,7 @@ pub fn configure_tproxy(listener: &UdpSocket) -> anyhow::Result<()> {
     use std::net::IpAddr;
     use std::os::fd::AsFd;
 
-    socket2::SockRef::from(&listener).set_ip_transparent(true)?;
+    socket2::SockRef::from(&listener).set_ip_transparent_v4(true)?;
     match listener.local_addr().unwrap().ip() {
         IpAddr::V4(_) => {
             nix::sys::socket::setsockopt(&listener.as_fd(), nix::sys::socket::sockopt::Ipv4OrigDstAddr, &true)?;
@@ -488,7 +488,7 @@ pub fn mk_send_socket_tproxy(listener: &Arc<UdpSocket>) -> anyhow::Result<Arc<Ud
     }
 
     let socket = Socket::new(Domain::for_address(remote_addr), Type::DGRAM, Some(Protocol::UDP))?;
-    socket.set_ip_transparent(true)?;
+    socket.set_ip_transparent_v4(true)?;
     socket.set_reuse_address(true)?;
     socket.set_reuse_port(true)?;
     socket.bind(&SockAddr::from(remote_addr))?;
