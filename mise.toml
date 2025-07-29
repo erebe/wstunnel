@@ -1,0 +1,66 @@
+[tools]
+docker-cli = "latest"
+rust = "1.88"
+
+[tasks.test]
+description = "Run all the tests with features. Requires docker"
+run = "cargo nextest run --all-features"
+
+
+[tasks.bump-deps]
+description = "Upgrade all libs versions for all packages"
+run = """
+  cargo upgrade --recursive true --incompatible allow
+  cargo update --recursive
+"""
+
+
+[tasks.linter-fix]
+description = "Fix linter issues when possible and format code"
+run = """
+   cargo clippy --fix --all-features --locked --allow-dirty
+   cargo fmt --all
+"""
+
+[tasks.docker-release]
+description = "Build and push wstunnel docker image"
+usage = '''
+arg "image_tag" "tag of the image"
+'''
+run = """
+ docker buildx create  --name builder  --driver=kubernetes --platform=linux/arm64   '--driver-opt="nodeselector=kubernetes.io/arch=arm64","tolerations=key=kubernetes.io/hostname,value=server","requests.cpu=16","requests.memory=16G"' --node=build-arm64
+  docker buildx create --append --name builder  --driver=kubernetes --platform=linux/amd64   '--driver-opt="nodeselector=kubernetes.io/arch=amd64","tolerations=key=kubernetes.io/hostname,value=toybox","requests.cpu=16","requests.memory=16G"' --node=build-amd64
+  docker buildx use builder
+  docker buildx build \
+    --platform linux/arm/v7,linux/arm64,linux/amd64 \
+    --cache-from type=registry,ref=ghcr.io/erebe/wstunnel:cache \
+    --cache-to type=registry,mode=max,image-manifest=true,oci-mediatypes=true,ref=ghcr.io/erebe/wstunnel:cache \
+    -t ghcr.io/erebe/wstunnel:{{arg(name="image_tag")}} \
+    -t ghcr.io/erebe/wstunnel:latest \
+    --push .
+  docker buildx rm builder
+"""
+
+
+[tasks.publish-release]
+description = "Push a new release of wstunnel"
+usage = '''
+arg "version" "version of wstunnel to release"
+flag "-f --force" default=""
+'''
+run = """
+if [ '{{flag(name="force")}}' = 'true' ]; then
+  export FORCE="-f"
+fi
+
+sed -i 's/^version = .*/version = "'$usage_version'"/g' wstunnel-cli/Cargo.toml wstunnel/Cargo.toml
+cargo fmt --all -- --check --color=always || (echo "Use cargo fmt to format your code"; exit 1)
+#cargo clippy --all --all-features -- -D warnings || (echo "Solve your clippy warnings to succeed"; exit 1)
+
+git add wstunnel/Cargo.* wstunnel-cli/Cargo.* Cargo.*
+git commit -m 'Bump version v'$usage_version
+git tag ${{FORCE}} v$usage_version -m 'version v'$usage_version
+git push ${{FORCE}}
+git push ${{FORCE}} origin v$usage_version
+"""
+
