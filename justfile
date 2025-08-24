@@ -6,6 +6,7 @@ _default:
 make_release $VERSION $FORCE="":
    sed -i 's/^version = .*/version = "'$VERSION'"/g' wstunnel-cli/Cargo.toml wstunnel/Cargo.toml
    cargo fmt --all -- --check --color=always || (echo "Use cargo fmt to format your code"; exit 1)
+   taplo fmt --check --colors always || (echo "Use taplo fmt to format your TOML files"; exit 1)
    #cargo clippy --all --all-features -- -D warnings || (echo "Solve your clippy warnings to succeed"; exit 1)
    git add wstunnel/Cargo.* wstunnel-cli/Cargo.* Cargo.*
    git commit -m 'Bump version v'$VERSION
@@ -38,3 +39,7 @@ bump_deps:
 
 linter_fix:
    cargo clippy --fix  --all-features --locked --allow-dirty
+
+fmt:
+   cargo fmt --all
+   taplo fmt
