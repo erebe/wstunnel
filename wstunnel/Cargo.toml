@@ -54,7 +54,11 @@ derive_more = { version = "2.0.1", features = ["display", "error"] }
 
 tokio-rustls = { version = "0.26.2", default-features = false, features = ["logging", "tls12"] }
 rcgen = { version = "0.14.2", default-features = false, features = [] }
-hickory-resolver = { version = "0.25.2", default-features = false, features = ["system-config", "tokio", "rustls-platform-verifier"] }
+hickory-resolver = { version = "0.25.2", default-features = false, features = [
+  "system-config",
+  "tokio",
+  "rustls-platform-verifier",
+] }
 aws-lc-rs = { version = "*", optional = true }
 
 [target.'cfg(not(target_family = "unix"))'.dependencies]
@@ -76,7 +80,11 @@ get_if_addrs = "0.5.3"
 [features]
 default = ["aws-lc-rs"]
 clap = ["dep:clap"]
-aws-lc-rs = ["tokio-rustls/aws-lc-rs", "rcgen/aws_lc_rs", "hickory-resolver/tls-aws-lc-rs", "hickory-resolver/https-aws-lc-rs"]
+aws-lc-rs = [
+  "tokio-rustls/aws-lc-rs",
+  "rcgen/aws_lc_rs",
+  "hickory-resolver/tls-aws-lc-rs",
+  "hickory-resolver/https-aws-lc-rs",
+]
 aws-lc-rs-bindgen = ["dep:aws-lc-rs", "aws-lc-rs/bindgen"]
 ring = ["tokio-rustls/ring", "rcgen/ring", "hickory-resolver/tls-ring", "hickory-resolver/https-ring"]
-

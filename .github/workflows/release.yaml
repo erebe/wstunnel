@@ -135,6 +135,9 @@ jobs:
       - name: Install bindgen-cli
         run: cargo install bindgen-cli
 
+      - name: Install taplo-cli
+        run: cargo install taplo-cli --locked
+
       - name: Show command used for Cargo
         run: |
           echo "cargo command is: ${{ env.CARGO }}"
