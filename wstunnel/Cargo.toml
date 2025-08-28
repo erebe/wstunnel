@@ -61,6 +61,8 @@ hickory-resolver = { version = "0.25.2", default-features = false, features = [
 ] }
 aws-lc-rs = { version = "*", optional = true }
 
+mlua = { version = "0.10.5", features = ["lua54", "vendored"] }
+
 [target.'cfg(not(target_family = "unix"))'.dependencies]
 crossterm = { version = "0.29.0" }
 tokio-util = { version = "0.7.15", features = ["io"] }
