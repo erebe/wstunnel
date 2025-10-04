@@ -4,12 +4,12 @@ version = "10.4.4"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.98"
-clap = { version = "4.5.41", features = ["derive", "env"] }
+anyhow = "1.0.100"
+clap = { version = "4.5.48", features = ["derive", "env"] }
 fdlimit = "0.3.0"
-tokio = { version = "1.46.1", features = ["full"] }
+tokio = { version = "1.47.1", features = ["full"] }
 tracing = { version = "0.1.41", features = ["log"] }
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "local-time"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "local-time"] }
 wstunnel = { path = "../wstunnel", default-features = false, features = ["clap"] }
 
 tikv-jemallocator = { version = "0.6", optional = true }
