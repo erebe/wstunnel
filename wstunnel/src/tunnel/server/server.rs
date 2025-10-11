@@ -1,9 +1,3 @@
-use anyhow::{Context, anyhow};
-use futures_util::FutureExt;
-use http_body_util::Either;
-use std::fmt;
-use std::fmt::{Debug, Formatter};
-
 use crate::executor::DefaultTokioExecutor;
 use crate::protocols;
 use crate::protocols::dns::DnsResolver;
@@ -22,7 +16,11 @@ use crate::tunnel::server::utils::{
 };
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::{LocalProtocol, RemoteAddr, try_to_sock_addr};
+use ahash::AHasher;
+use anyhow::{Context, anyhow};
 use arc_swap::ArcSwap;
+use futures_util::FutureExt;
+use http_body_util::Either;
 use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
@@ -30,7 +28,10 @@ use hyper::{Request, StatusCode, Version, http};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use parking_lot::Mutex;
 use socket2::SockRef;
-use std::net::SocketAddr;
+use std::fmt;
+use std::fmt::{Debug, Formatter};
+use std::hash::{Hash, Hasher};
+use std::net::{Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
@@ -40,7 +41,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tracing::{Instrument, Level, Span, error, info, span, warn};
-use url::Url;
+use url::{Host, Url};
 
 #[derive(Debug)]
 pub struct TlsServerConfig {
@@ -273,8 +274,14 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                 static SERVERS: LazyLock<ReverseTunnelServer<UnixTunnelListener>> =
                     LazyLock::new(ReverseTunnelServer::new);
 
-                let remote_port = find_mapped_port(remote.port, restriction);
-                let local_srv = (remote.host, remote_port);
+                // we hash the unix socket path to generate a unique host
+                let host = {
+                    let mut hasher = AHasher::default();
+                    path.hash(&mut hasher);
+                    Host::Ipv6(Ipv6Addr::from(hasher.finish() as u128))
+                };
+
+                let local_srv = (host, 0);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { UnixTunnelListener::new(path, local_srv, false).await };
                 let ((local_rx, local_tx), remote) = SERVERS

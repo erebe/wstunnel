@@ -291,6 +291,7 @@ async fn create_client_tunnels(
             }
             LocalProtocol::ReverseUnix { path } => {
                 let path = path.clone();
+                info!("Connecting to unix socket {:?}", tunnel);
                 spawn_tunnel! {
                     let cfg = client.config.clone();
                     let tcp_connector = TcpTunnelConnector::new(
