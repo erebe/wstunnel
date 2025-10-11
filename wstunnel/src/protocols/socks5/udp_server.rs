@@ -181,18 +181,18 @@ impl AsyncRead for Socks5UdpStream {
     ) -> Poll<io::Result<()>> {
         let mut project = self.project();
         // Look that the timeout for client has not elapsed
-        if let Some(mut deadline) = project.watchdog_deadline.as_pin_mut() {
-            if deadline.poll_tick(cx).is_ready() {
-                if !*project.data_read_before_deadline {
-                    return Poll::Ready(Err(Error::new(
-                        ErrorKind::TimedOut,
-                        format!("UDP stream timeout with {}", project.peer),
-                    )));
-                };
+        if let Some(mut deadline) = project.watchdog_deadline.as_pin_mut()
+            && deadline.poll_tick(cx).is_ready()
+        {
+            if !*project.data_read_before_deadline {
+                return Poll::Ready(Err(Error::new(
+                    ErrorKind::TimedOut,
+                    format!("UDP stream timeout with {}", project.peer),
+                )));
+            };
 
-                *project.data_read_before_deadline = false;
-                while deadline.poll_tick(cx).is_ready() {}
-            }
+            *project.data_read_before_deadline = false;
+            while deadline.poll_tick(cx).is_ready() {}
         }
 
         let Some(data) = ready!(project.recv_data.poll_recv(cx)) else {

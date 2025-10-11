@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 env:
-  RUST_VERSION: 1.86.0
+  RUST_VERSION: 1.90.0
   BIN_NAME: "wstunnel"
 
 jobs:

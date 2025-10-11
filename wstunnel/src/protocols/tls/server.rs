@@ -166,7 +166,7 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
 
         WebPkiClientVerifier::builder(Arc::new(root_store))
             .build()
-            .map_err(|err| anyhow!("Failed to build mTLS client verifier: {:?}", err))?
+            .map_err(|err| anyhow!("Failed to build mTLS client verifier: {err:?}"))?
     } else {
         WebPkiClientVerifier::no_client_auth()
     };

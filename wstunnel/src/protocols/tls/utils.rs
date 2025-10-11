@@ -6,10 +6,10 @@ use x509_parser::prelude::X509Certificate;
 /// is present in the vector. The other certificates should be (intermediate) CA certificates.
 pub fn find_leaf_certificate<'a>(tls_certificates: &'a [CertificateDer<'static>]) -> Option<X509Certificate<'a>> {
     for tls_certificate in tls_certificates {
-        if let Ok((_, tls_certificate_x509)) = parse_x509_certificate(tls_certificate) {
-            if !tls_certificate_x509.is_ca() {
-                return Some(tls_certificate_x509);
-            }
+        if let Ok((_, tls_certificate_x509)) = parse_x509_certificate(tls_certificate)
+            && !tls_certificate_x509.is_ca()
+        {
+            return Some(tls_certificate_x509);
         }
     }
     None

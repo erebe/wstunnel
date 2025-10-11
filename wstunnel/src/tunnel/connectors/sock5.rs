@@ -23,7 +23,7 @@ pub struct Socks5TunnelConnector<'a> {
 }
 
 impl Socks5TunnelConnector<'_> {
-    pub fn new(so_mark: SoMark, connect_timeout: Duration, dns_resolver: &DnsResolver) -> Socks5TunnelConnector {
+    pub fn new(so_mark: SoMark, connect_timeout: Duration, dns_resolver: &DnsResolver) -> Socks5TunnelConnector<'_> {
         Socks5TunnelConnector {
             so_mark,
             connect_timeout,

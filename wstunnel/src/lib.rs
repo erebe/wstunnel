@@ -137,10 +137,10 @@ pub async fn create_client(
         };
         HeaderValue::from_str(&host)?
     };
-    if let Some(path) = &args.http_headers_file {
-        if !path.exists() {
-            panic!("http headers file does not exists: {}", path.display());
-        }
+    if let Some(path) = &args.http_headers_file
+        && !path.exists()
+    {
+        panic!("http headers file does not exists: {}", path.display());
     }
 
     let client_config = WsClientConfig {

@@ -21,7 +21,7 @@ impl TproxyTcpTunnelListener {
     pub async fn new(bind_addr: SocketAddr, proxy_protocol: bool) -> anyhow::Result<Self> {
         let listener = protocols::tcp::run_server(bind_addr, true)
             .await
-            .with_context(|| anyhow!("Cannot start TProxy TCP server on {}", bind_addr))?;
+            .with_context(|| anyhow!("Cannot start TProxy TCP server on {bind_addr}"))?;
 
         Ok(Self {
             listener,
@@ -72,7 +72,7 @@ pub async fn new_tproxy_udp(
 ) -> anyhow::Result<TProxyUdpTunnelListener<impl Stream<Item = io::Result<UdpStream>>>> {
     let listener = udp::run_server(bind_addr, timeout, udp::configure_tproxy, udp::mk_send_socket_tproxy)
         .await
-        .with_context(|| anyhow!("Cannot start TProxy UDP server on {}", bind_addr))?;
+        .with_context(|| anyhow!("Cannot start TProxy UDP server on {bind_addr}"))?;
 
     Ok(TProxyUdpTunnelListener { listener, timeout })
 }

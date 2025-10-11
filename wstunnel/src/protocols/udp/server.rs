@@ -183,18 +183,18 @@ impl AsyncRead for UdpStream {
     fn poll_read(self: Pin<&mut Self>, cx: &mut task::Context<'_>, obuf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         let mut project = self.project();
         // Look that the timeout for client has not elapsed
-        if let Some(mut deadline) = project.watchdog_deadline.as_pin_mut() {
-            if deadline.poll_tick(cx).is_ready() {
-                if !*project.data_read_before_deadline {
-                    return Poll::Ready(Err(Error::new(
-                        ErrorKind::TimedOut,
-                        format!("UDP stream timeout with {}", project.peer),
-                    )));
-                };
+        if let Some(mut deadline) = project.watchdog_deadline.as_pin_mut()
+            && deadline.poll_tick(cx).is_ready()
+        {
+            if !*project.data_read_before_deadline {
+                return Poll::Ready(Err(Error::new(
+                    ErrorKind::TimedOut,
+                    format!("UDP stream timeout with {}", project.peer),
+                )));
+            };
 
-                *project.data_read_before_deadline = false;
-                while deadline.poll_tick(cx).is_ready() {}
-            }
+            *project.data_read_before_deadline = false;
+            while deadline.poll_tick(cx).is_ready() {}
         }
 
         if let Some(notified) = project.pending_notification.as_mut().as_pin_mut() {
@@ -259,10 +259,10 @@ pub async fn run_server(
         (udp_server, None, mk_send_socket),
         |(mut server, peer_with_data, mk_send_socket)| async move {
             // New returned peer hasn't read its data yet, await for it.
-            if let Some(await_peer) = peer_with_data {
-                if let Some(peer) = server.peers.get(&await_peer) {
-                    peer.has_read_data.notified().await;
-                }
+            if let Some(await_peer) = peer_with_data
+                && let Some(peer) = server.peers.get(&await_peer)
+            {
+                peer.has_read_data.notified().await;
             };
 
             loop {
@@ -425,7 +425,7 @@ pub async fn connect(
     if let Some(cnx) = cnx {
         Ok(WsUdpSocket::new(Arc::new(cnx)))
     } else {
-        Err(anyhow!("Cannot connect to udp peer {}:{} reason {:?}", host, port, last_err))
+        Err(anyhow!("Cannot connect to udp peer {host}:{port} reason {last_err:?}"))
     }
 }
 

@@ -231,30 +231,28 @@ impl TlsReloader {
             }
         }
 
-        if let Some(client_ca_path) = &this.client_ca_path {
-            if let Some(path) = event.paths.iter().find(|p| p.ends_with(client_ca_path)) {
-                match event.kind {
-                    EventKind::Create(_) | EventKind::Modify(_) => {
-                        match tls::load_certificates_from_pem(client_ca_path) {
-                            Ok(tls_certs) => {
-                                if let Some(client_certs) = &tls.tls_client_ca_certificates {
-                                    *client_certs.lock() = tls_certs;
-                                    this.tls_reload_certificate.store(true, Ordering::Relaxed);
-                                }
-                            }
-                            Err(err) => {
-                                warn!("Error while loading TLS client certificate {:?}", err);
-                                Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
-                            }
+        if let Some(client_ca_path) = &this.client_ca_path
+            && let Some(path) = event.paths.iter().find(|p| p.ends_with(client_ca_path))
+        {
+            match event.kind {
+                EventKind::Create(_) | EventKind::Modify(_) => match tls::load_certificates_from_pem(client_ca_path) {
+                    Ok(tls_certs) => {
+                        if let Some(client_certs) = &tls.tls_client_ca_certificates {
+                            *client_certs.lock() = tls_certs;
+                            this.tls_reload_certificate.store(true, Ordering::Relaxed);
                         }
                     }
-                    EventKind::Remove(_) => {
-                        warn!("TLS client certificate has been removed, trying to re-set a watch for it");
+                    Err(err) => {
+                        warn!("Error while loading TLS client certificate {:?}", err);
                         Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
                     }
-                    EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                        trace!("Ignoring event {event:?}");
-                    }
+                },
+                EventKind::Remove(_) => {
+                    warn!("TLS client certificate has been removed, trying to re-set a watch for it");
+                    Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
+                }
+                EventKind::Access(_) | EventKind::Other | EventKind::Any => {
+                    trace!("Ignoring event {event:?}");
                 }
             }
         }

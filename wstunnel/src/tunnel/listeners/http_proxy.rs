@@ -23,7 +23,7 @@ impl HttpProxyTunnelListener {
     ) -> anyhow::Result<Self> {
         let listener = http_proxy::run_server(bind_addr, timeout, credentials)
             .await
-            .with_context(|| anyhow!("Cannot start http proxy server on {}", bind_addr))?;
+            .with_context(|| anyhow!("Cannot start http proxy server on {bind_addr}"))?;
 
         Ok(Self {
             listener,

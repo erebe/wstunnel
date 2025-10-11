@@ -39,11 +39,12 @@ fn sort_socket_addrs(socket_addrs: &[SocketAddr], prefer_ipv6: bool) -> impl Ite
     })
 }
 
+#[allow(clippy::large_enum_variant)] // System variant never used mostly
 #[derive(Clone, Debug)]
 pub enum DnsResolver {
     System,
     TrustDns {
-        resolver: Resolver<GenericConnector<TokioRuntimeProviderWithSoMark>>,
+        resolver: Box<Resolver<GenericConnector<TokioRuntimeProviderWithSoMark>>>,
         prefer_ipv6: bool,
     },
 }
@@ -162,13 +163,13 @@ impl DnsResolver {
             };
             let host = resolver
                 .host()
-                .ok_or_else(|| anyhow!("Invalid dns resolver host: {}", resolver))?;
+                .ok_or_else(|| anyhow!("Invalid dns resolver host: {resolver}"))?;
             let sock = match host {
                 Host::Domain(host) => match Host::parse(host) {
                     Ok(Host::Ipv4(ip)) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
                     Ok(Host::Ipv6(ip)) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
                     Ok(Host::Domain(_)) | Err(_) => {
-                        return Err(anyhow!("Dns resolver must be an ip address, got {}", host));
+                        return Err(anyhow!("Dns resolver must be an ip address, got {host}"));
                     }
                 },
                 Host::Ipv4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
@@ -191,7 +192,7 @@ impl DnsResolver {
             };
 
             return Ok(Self::TrustDns {
-                resolver: mk_resolver(cfg, opts, proxy, so_mark),
+                resolver: Box::new(mk_resolver(cfg, opts, proxy, so_mark)),
                 prefer_ipv6,
             });
         };
@@ -208,7 +209,7 @@ impl DnsResolver {
         }
 
         Ok(Self::TrustDns {
-            resolver: mk_resolver(cfg, ResolverOpts::default(), proxy, so_mark),
+            resolver: Box::new(mk_resolver(cfg, ResolverOpts::default(), proxy, so_mark)),
             prefer_ipv6,
         })
     }

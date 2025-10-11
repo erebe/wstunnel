@@ -1,6 +1,6 @@
 [tools]
 docker-cli = "latest"
-rust = "1.88"
+rust = "1.90"
 
 [tasks.test]
 description = "Run all the tests with features. Requires docker"

@@ -106,16 +106,19 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
             bad_request()
         })?;
 
-        if let Some(restrict_path) = restrict_path_prefix {
-            if path_prefix != restrict_path {
-                warn!(
-                    "Client requested upgrade path '{path_prefix}' does not match upgrade path restriction '{restrict_path}' (mTLS, etc.)"
-                );
-                return Err(bad_request());
-            }
+        if let Some(restrict_path) = restrict_path_prefix
+            && path_prefix != restrict_path
+        {
+            warn!(
+                "Client requested upgrade path '{path_prefix}' does not match upgrade path restriction '{restrict_path}' (mTLS, etc.)"
+            );
+            return Err(bad_request());
         }
 
-        let jwt = extract_tunnel_info(req)?;
+        let jwt = extract_tunnel_info(req).map_err(|err| {
+            warn!("{}", err);
+            bad_request()
+        })?;
 
         Span::current().record("id", &jwt.claims.id);
         Span::current().record("remote", format!("{}:{}", jwt.claims.r, jwt.claims.rp));

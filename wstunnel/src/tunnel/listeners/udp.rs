@@ -24,7 +24,7 @@ impl UdpTunnelListener {
     ) -> anyhow::Result<UdpTunnelListener> {
         let listener = udp::run_server(bind_addr, timeout, |_| Ok(()), |s| Ok(s.clone()))
             .await
-            .with_context(|| anyhow!("Cannot start UDP server on {}", bind_addr))?;
+            .with_context(|| anyhow!("Cannot start UDP server on {bind_addr}"))?;
 
         Ok(UdpTunnelListener {
             listener: Box::pin(listener),

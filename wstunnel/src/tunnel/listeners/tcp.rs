@@ -19,7 +19,7 @@ impl TcpTunnelListener {
     pub async fn new(bind_addr: SocketAddr, dest: (Host, u16), proxy_protocol: bool) -> anyhow::Result<Self> {
         let listener = protocols::tcp::run_server(bind_addr, false)
             .await
-            .with_context(|| anyhow!("Cannot start TCP server on {}", bind_addr))?;
+            .with_context(|| anyhow!("Cannot start TCP server on {bind_addr}"))?;
 
         Ok(Self {
             listener,

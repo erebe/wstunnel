@@ -130,7 +130,7 @@ pub async fn connect(
         }
     }
 
-    cnx.ok_or_else(|| anyhow!("Cannot connect to tcp endpoint {}:{} reason {:?}", host, port, last_err))
+    cnx.ok_or_else(|| anyhow!("Cannot connect to tcp endpoint {host}:{port} reason {last_err:?}"))
 }
 
 #[instrument(level = "info", name = "http_proxy", skip_all)]

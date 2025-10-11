@@ -20,7 +20,7 @@ impl Socks5TunnelListener {
     ) -> anyhow::Result<Self> {
         let listener = socks5::run_server(bind_addr, timeout, credentials)
             .await
-            .with_context(|| anyhow!("Cannot start Socks5 server on {}", bind_addr))?;
+            .with_context(|| anyhow!("Cannot start Socks5 server on {bind_addr}"))?;
 
         Ok(Self { listener })
     }

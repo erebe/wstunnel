@@ -4,6 +4,7 @@ use crate::restrictions::types::{
 };
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::transport::{JWT_HEADER_PREFIX, JwtTunnelConfig, jwt_token_to_tunnel, tunnel_to_jwt_token};
+use anyhow::Context;
 use bytes::Bytes;
 use derive_more::{Display, Error};
 use http_body_util::Either;
@@ -13,7 +14,7 @@ use hyper::header::{AUTHORIZATION, COOKIE, HeaderValue, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{Request, Response, StatusCode, http};
 use jsonwebtoken::TokenData;
 use std::net::IpAddr;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use url::Host;
 use uuid::Uuid;
 
@@ -89,7 +90,7 @@ pub(super) enum PathPrefixErr {
 }
 
 #[inline]
-pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> anyhow::Result<TokenData<JwtTunnelConfig>, HttpResponse> {
+pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> anyhow::Result<TokenData<JwtTunnelConfig>> {
     let jwt = req
         .headers()
         .get(SEC_WEBSOCKET_PROTOCOL)
@@ -99,12 +100,12 @@ pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> anyhow::Result<Tok
         .or_else(|| req.headers().get(COOKIE).and_then(|header| header.to_str().ok()))
         .unwrap_or_default();
 
-    jwt_token_to_tunnel(jwt).map_err(|err| {
-        warn!(
-            "error while decoding jwt for tunnel info {err:?} header {:?}",
+    jwt_token_to_tunnel(jwt).with_context(|| {
+        let msg = format!(
+            "error while decoding jwt for tunnel info header {:?}",
             req.headers().get(SEC_WEBSOCKET_PROTOCOL)
         );
-        bad_request()
+        msg
     })
 }
 
