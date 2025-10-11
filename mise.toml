@@ -50,13 +50,13 @@ if [ '{{flag(name="force")}}' = 'true' ]; then
   export FORCE="-f"
 fi
 
-sed -i 's/^version = .*/version = "'$usage_version'"/g' wstunnel-cli/Cargo.toml wstunnel/Cargo.toml
+sed -i 's/^version = .*/version = "{{arg(name="version")}}"/g' wstunnel-cli/Cargo.toml wstunnel/Cargo.toml
 cargo fmt --all -- --check --color=always || (echo "Use cargo fmt to format your code"; exit 1)
-#cargo clippy --all --all-features -- -D warnings || (echo "Solve your clippy warnings to succeed"; exit 1)
+cargo clippy --all -- -D warnings || (echo "Solve your clippy warnings to succeed"; exit 1)
 
 git add wstunnel/Cargo.* wstunnel-cli/Cargo.* Cargo.*
 git commit -m 'Bump version v'$usage_version
-git tag ${{FORCE}} v$usage_version -m 'version v'$usage_version
-git push ${{FORCE}}
-git push ${{FORCE}} origin v$usage_version
+git tag $FORCE v$usage_version -m 'version v'$usage_version
+git push $FORCE
+git push $FORCE origin v$usage_version
 """
