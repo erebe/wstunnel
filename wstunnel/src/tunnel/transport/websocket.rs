@@ -85,14 +85,13 @@ impl TunnelWrite for WebsocketTunnelWrite {
         const _32_MB: usize = 32 * 1024 * 1024;
         buf.clear();
         if buf.capacity() == read_len && buf.capacity() < _32_MB {
-            let new_size = buf.capacity() + (buf.capacity() / 4); // grow buffer by 1.25 %
-            buf.reserve(new_size);
+            // Grow buffer by 25% (capacity / 4 additional bytes)
+            let additional_capacity = buf.capacity() / 4;
+            buf.reserve(additional_capacity);
             trace!(
-                "Buffer {} Mb {} {} {}",
+                "Buffer grown to {} Mb (added {} bytes)",
                 buf.capacity() as f64 / 1024.0 / 1024.0,
-                new_size,
-                buf.len(),
-                buf.capacity()
+                additional_capacity
             )
         }
 
