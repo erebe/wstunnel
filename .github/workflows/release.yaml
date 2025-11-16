@@ -32,6 +32,8 @@ jobs:
           - name: Linux aarch64
             target: aarch64-unknown-linux-musl
             build-args: "--release --features=jemalloc"
+            env:
+              JEMALLOC_SYS_WITH_LG_PAGE: "16"
 
           - name: Linux armv7hf
             target: armv7-unknown-linux-musleabihf
@@ -145,6 +147,7 @@ jobs:
 
       - name: Build ${{ matrix.platform.name }} binary
         uses: actions-rs/cargo@v1
+        env: ${{matrix.platform.env}}
         # We use cross-rs if not running on x86_64 architecture on Linux
         with:
           command: build
