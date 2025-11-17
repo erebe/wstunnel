@@ -24,19 +24,32 @@ use tokio_rustls::rustls::client::EchConfig;
 
 // Interleave v4 and v6 addresses as per RFC8305.
 // The first address is v6 if we have any v6 addresses.
+// Optimized to use a single-pass partition instead of multiple iterator chains.
 #[inline]
-fn sort_socket_addrs(socket_addrs: &[SocketAddr], prefer_ipv6: bool) -> impl Iterator<Item = &'_ SocketAddr> {
+fn sort_socket_addrs(socket_addrs: &[SocketAddr], prefer_ipv6: bool) -> Vec<SocketAddr> {
+    let (v6_addrs, v4_addrs): (Vec<SocketAddr>, Vec<SocketAddr>) = socket_addrs.iter()
+        .partition(|s| matches!(s, SocketAddr::V6(_)));
+    
+    let mut result = Vec::with_capacity(socket_addrs.len());
+    let mut v6_iter = v6_addrs.into_iter();
+    let mut v4_iter = v4_addrs.into_iter();
     let mut pick_v6 = !prefer_ipv6;
-    let mut v6 = socket_addrs.iter().filter(|s| matches!(s, SocketAddr::V6(_)));
-    let mut v4 = socket_addrs.iter().filter(|s| matches!(s, SocketAddr::V4(_)));
-    std::iter::from_fn(move || {
+    
+    loop {
         pick_v6 = !pick_v6;
-        if pick_v6 {
-            v6.next().or_else(|| v4.next())
+        let addr = if pick_v6 {
+            v6_iter.next().or_else(|| v4_iter.next())
         } else {
-            v4.next().or_else(|| v6.next())
+            v4_iter.next().or_else(|| v6_iter.next())
+        };
+        
+        match addr {
+            Some(addr) => result.push(addr),
+            None => break,
         }
-    })
+    }
+    
+    result
 }
 
 #[allow(clippy::large_enum_variant)] // System variant never used mostly
@@ -63,7 +76,7 @@ impl DnsResolver {
                         IpAddr::V6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
                     })
                     .collect();
-                sort_socket_addrs(&addrs, *prefer_ipv6).copied().collect()
+                sort_socket_addrs(&addrs, *prefer_ipv6)
             }
         };
 
@@ -332,7 +345,7 @@ mod tests {
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 1)),
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 3), 1)),
         ];
-        let actual: Vec<_> = sort_socket_addrs(&addrs, true).copied().collect();
-        assert_eq!(expected, *actual);
+        let actual = sort_socket_addrs(&addrs, true);
+        assert_eq!(expected.to_vec(), actual);
     }
 }
