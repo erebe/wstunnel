@@ -33,6 +33,7 @@ impl RestrictionsRules {
                 port: vec![],
                 port_mapping: Default::default(),
                 cidr: default_cidr(),
+                unix_path: default_host(),
             });
 
             vec![r, reverse_tunnel]

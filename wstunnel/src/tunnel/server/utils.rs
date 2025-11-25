@@ -1,3 +1,4 @@
+use crate::LocalProtocol;
 use crate::restrictions::types::{
     AllowConfig, AllowReverseTunnelConfig, AllowTunnelConfig, MatchConfig, RestrictionConfig, RestrictionsRules,
     ReverseTunnelConfigProtocol, TunnelConfigProtocol,
@@ -128,6 +129,13 @@ impl AllowReverseTunnelConfig {
             return false;
         }
 
+        // For ReverseUnix tunnels there is no port or cidr to check
+        if let LocalProtocol::ReverseUnix { path } = &remote.protocol {
+            return self
+                .unix_path
+                .is_match(path.to_str().unwrap_or("####INVALID_UNIX_PATH####"));
+        }
+
         if !self.port.is_empty() && !self.port.iter().any(|range| range.contains(&remote.port)) {
             return false;
         }
@@ -221,6 +229,7 @@ mod tests {
     use ipnet::{IpNet, Ipv4Net};
     use regex::Regex;
     use std::net::Ipv6Addr;
+    use std::path::PathBuf;
 
     #[test]
     fn test_validate_tunnel() {
@@ -246,6 +255,7 @@ mod tests {
                         port: vec![80..=80],
                         cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
                         port_mapping: Default::default(),
+                        unix_path: default_host(),
                     })],
                 },
             ],
@@ -355,6 +365,7 @@ mod tests {
             port: vec![80..=80],
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 8).unwrap())],
             port_mapping: Default::default(),
+            unix_path: default_host(),
         };
 
         let remote = RemoteAddr {
@@ -382,6 +393,7 @@ mod tests {
             port: vec![80..=80],
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
             port_mapping: Default::default(),
+            unix_path: default_host(),
         };
 
         // wrong IP
@@ -437,6 +449,45 @@ mod tests {
         };
         assert!(!config.is_allowed(&remote));
         assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+    }
+
+    #[test]
+    fn test_reverse_unix_tunnel_is_allowed() {
+        let config = AllowReverseTunnelConfig {
+            protocol: vec![ReverseTunnelConfigProtocol::Unix],
+            port: vec![],
+            cidr: vec![],
+            port_mapping: Default::default(),
+            unix_path: Regex::new("^/tmp/tutu$").unwrap(),
+        };
+
+        // wrong protocol
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: Host::Ipv4([127, 0, 1, 1].into()),
+            port: 80,
+        };
+        assert!(!config.is_allowed(&remote));
+
+        // ReverseUnix is not allowed because wrong path
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseUnix {
+                path: PathBuf::from("/tmp/toto"),
+            },
+            host: Host::Domain("test.com".to_string()),
+            port: 12,
+        };
+        assert!(!config.is_allowed(&remote));
+
+        // ReverseUnix is allowed
+        let remote = RemoteAddr {
+            protocol: LocalProtocol::ReverseUnix {
+                path: PathBuf::from("/tmp/tutu"),
+            },
+            host: Host::Domain("test.com".to_string()),
+            port: 12,
+        };
+        assert!(config.is_allowed(&remote));
     }
 
     #[test]

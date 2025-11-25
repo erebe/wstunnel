@@ -66,6 +66,10 @@ pub struct AllowReverseTunnelConfig {
 
     #[serde(default = "default_cidr")]
     pub cidr: Vec<IpNet>,
+
+    #[serde(with = "serde_regex")]
+    #[serde(default = "default_host")]
+    pub unix_path: Regex,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
