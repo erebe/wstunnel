@@ -59,6 +59,7 @@ restrictions:
         cidr:
           - 0.0.0.0/0
           - ::/0
+        unix_path: "^.*$"
 
 ---
 # Examples
@@ -116,3 +117,12 @@ restrictions:
     match:
       - !Any
     allow: []
+---
+restrictions:
+  - name: "example 6"
+    description: "Allow reverse tunnel for Unix socket on /tmp/xxxx "
+    match:
+      - !Any
+    allow:
+      - !ReverseTunnel
+        unix_path: "^/tmp/"
