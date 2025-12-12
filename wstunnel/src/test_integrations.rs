@@ -42,7 +42,7 @@ fn server_no_tls(dns_resolver: DnsResolver) -> WsServer {
         http_proxy: None,
         remote_server_idle_timeout: Duration::from_secs(30),
     };
-    WsServer::new(server_config, DefaultTokioExecutor::default())
+    WsServer::new(server_config, false, DefaultTokioExecutor::default())
 }
 
 #[fixture]
