@@ -4,12 +4,20 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use opentelemetry::global;
 use tracing::warn;
-use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
-use wstunnel::config::{Client, Server};
+use tracing_subscriber::filter::Directive;
 use wstunnel::LocalProtocol;
+use wstunnel::config::{Client, Server};
+use wstunnel::executor::DefaultTokioExecutor;
 use wstunnel::{run_client, run_server};
 use wstunnel::metrics;
+
+#[cfg(feature = "jemalloc")]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 /// Use Websocket or HTTP2 protocol to tunnel {TCP,UDP} traffic
 /// wsTunnelClient <---> wsTunnelServer <---> RemoteHost
@@ -118,10 +126,18 @@ async fn main() -> anyhow::Result<()> {
 
     match args.commands {
         Commands::Client(args) => {
-            run_client(*args).await?;
+            run_client(*args, DefaultTokioExecutor::default())
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("Cannot start wstunnel client: {err:?}");
+                });
         }
-        Commands::Server(server_args) => {
-            run_server(*server_args, args.metrics_unbounded).await?;
+        Commands::Server(sargs) => {
+            run_server(*sargs, args.metrics_unbounded, DefaultTokioExecutor::default())
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("Cannot start wstunnel server: {err:?}");
+                });
         }
     }
 

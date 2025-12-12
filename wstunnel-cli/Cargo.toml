@@ -1,22 +1,26 @@
 [package]
 name = "wstunnel-cli"
-version = "10.1.8"
-edition = "2021"
+version = "10.5.1"
+edition = "2024"
 
 [dependencies]
-anyhow = "1.0.95"
-
-clap = { version = "4.5.23", features = ["derive", "env"] }
-
+anyhow = "1.0.100"
+clap = { version = "4.5.53", features = ["derive", "env"] }
 fdlimit = "0.3.0"
 opentelemetry = "0.27.1"
-
-tokio = { version = "1.42.0", features = ["full"] }
-
+tokio = { version = "1.48.0", features = ["full"] }
 tracing = { version = "0.1.41", features = ["log"] }
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "local-time"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "local-time"] }
+wstunnel = { path = "../wstunnel", default-features = false, features = ["clap"] }
 
-wstunnel = { path = ".." , features = ["clap"] }
+tikv-jemallocator = { version = "0.6", optional = true }
+
+[features]
+default = ["aws-lc-rs"]
+jemalloc = ["dep:tikv-jemallocator"]
+aws-lc-rs = ["wstunnel/aws-lc-rs"]
+ring = ["wstunnel/ring"]
+aws-lc-rs-bindgen = ["wstunnel/aws-lc-rs-bindgen"]
 
 [[bin]]
 name = "wstunnel"

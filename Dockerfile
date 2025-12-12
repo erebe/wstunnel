@@ -2,22 +2,22 @@ ARG BUILDER_IMAGE=builder_cache
 
 ############################################################
 # Cache image with all the deps
-FROM rust:1.83-bookworm AS builder_cache
+FROM rust:1.90-trixie AS builder_cache
 
-RUN rustup component add rustfmt clippy
+RUN rustup component add rustfmt clippy && apt-get update && apt-get install cmake libclang-dev -y
 
 WORKDIR /build
 COPY . ./
 
 
 RUN cargo fmt --all -- --check --color=always || (echo "Use cargo fmt to format your code"; exit 1)
-RUN cargo clippy --all --all-features -- -D warnings || (echo "Solve your clippy warnings to succeed"; exit 1)
+RUN cargo clippy --all -- -D warnings || (echo "Solve your clippy warnings to succeed"; exit 1)
 
 #RUN cargo test --all --all-features
 #RUN just test "tcp://localhost:2375" || (echo "Test are failing"; exit 1)
 
 #ENV RUSTFLAGS="-C link-arg=-Wl,--compress-debug-sections=zlib -C force-frame-pointers=yes"
-RUN cargo build --tests --all-features
+RUN cargo build --tests
 #RUN cargo build --release --all-features
 
 
@@ -32,12 +32,12 @@ ARG BIN_TARGET=--bins
 ARG PROFILE=release
 
 #ENV RUSTFLAGS="-C link-arg=-Wl,--compress-debug-sections=zlib -C force-frame-pointers=yes"
-RUN cargo build --profile=${PROFILE} ${BIN_TARGET}
+RUN cargo build --features=jemalloc --profile=${PROFILE} ${BIN_TARGET}
 
 
 ############################################################
 # Final image
-FROM debian:bookworm-slim as final-image
+FROM debian:trixie-slim AS final-image
 
 RUN useradd -ms /bin/bash app && \
         apt-get update && \

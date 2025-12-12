@@ -7,50 +7,56 @@ on:
     branches: [ "main" ]
 
 env:
-  RUST_VERSION: 1.83.0
+  RUST_VERSION: 1.90.0
   BIN_NAME: "wstunnel"
 
 jobs:
   build:
     name: Build - ${{ matrix.platform.name }}
     # By default, runs on Ubuntu, otherwise, override with the desired os
-    runs-on: ${{ matrix.platform.os || 'ubuntu-22.04' }}
+    runs-on: ${{ matrix.platform.os || 'ubuntu-24.04' }}
     strategy:
+      fail-fast: false
       matrix:
         # Set platforms you want to build your binaries on
         platform:
           # Linux
           - name: Linux x86_64
             target: x86_64-unknown-linux-musl
-            build-args: "--release"
+            build-args: "--release --features=jemalloc"
 
           - name: Linux x86
             target: i686-unknown-linux-musl
-            build-args: "--release"
+            build-args: "--release --features aws-lc-rs-bindgen"
 
           - name: Linux aarch64
             target: aarch64-unknown-linux-musl
-            build-args: "--release"
+            build-args: "--release --features=jemalloc"
+            JEMALLOC_SYS_WITH_LG_PAGE: "16"
 
           - name: Linux armv7hf
             target: armv7-unknown-linux-musleabihf
-            build-args: "--release"
+            build-args: "--release --no-default-features --features ring"
+
+          - name: Linux armv6
+            target: arm-unknown-linux-musleabihf
+            build-args: "--release --no-default-features --features ring"
 
           - name: Freebsd x86_64
             target: x86_64-unknown-freebsd
-            build-args: "--release"
+            build-args: "--release --no-default-features --features ring --features=jemalloc"
 
           - name: Freebsd x86
             target: i686-unknown-freebsd
-            build-args: "--release"
+            build-args: "--release --no-default-features --features ring"
 
           - name: Android aarch64
             target: aarch64-linux-android
-            build-args: "--release"
+            build-args: "--release --features=jemalloc"
 
           - name: Android armv7
             target: armv7-linux-androideabi
-            build-args: "--release"
+            build-args: "--release --no-default-features --features ring"
 
           #- name: Linux mips
           #  target: mips-unknown-linux-musl
@@ -62,12 +68,12 @@ jobs:
           - name: MacOS x86_64
             os: macos-latest
             target: x86_64-apple-darwin
-            build-args: "--release"
+            build-args: "--release --features=jemalloc"
 
           - name: MacOS aarch64
             os: macos-latest
             target: aarch64-apple-darwin
-            build-args: "--release"
+            build-args: "--release --features=jemalloc"
 
           # - name: iOS x86_64
           #   target: x86_64-apple-ios
@@ -86,16 +92,17 @@ jobs:
           - name: Windows x86
             os: windows-latest
             target: i686-pc-windows-msvc
-            build-args: "--profile release-with-symbols"
+            build-args: "--profile release-with-symbols --no-default-features --features ring"
 
     steps:
+
       - name: Install package for linux
         if: contains(matrix.platform.target, 'linux')
         run: sudo apt install musl-tools
 
       - name: Install package for Android
         if: contains(matrix.platform.target, 'android')
-        run: sudo apt install android-libunwind android-libunwind-dev  libunwind-dev
+        run: sudo apt install android-libunwind android-libunwind-dev libunwind-dev
 
       - name: Set up JDK 17
         if: contains(matrix.platform.target, 'android')
@@ -126,6 +133,12 @@ jobs:
         if: contains(matrix.platform.target, 'android')
         run: cargo install cross --git https://github.com/cross-rs/cross
 
+      - name: Install bindgen-cli
+        run: cargo install bindgen-cli
+
+      - name: Install taplo-cli
+        run: cargo install taplo-cli --locked
+
       - name: Show command used for Cargo
         run: |
           echo "cargo command is: ${{ env.CARGO }}"
@@ -133,11 +146,13 @@ jobs:
 
       - name: Build ${{ matrix.platform.name }} binary
         uses: actions-rs/cargo@v1
+        env: 
+          JEMALLOC_SYS_WITH_LG_PAGE: '16'
         # We use cross-rs if not running on x86_64 architecture on Linux
         with:
           command: build
           use-cross: ${{ !contains(matrix.platform.target, 'x86_64') || contains(matrix.platform.target, 'freebsd') }}
-          args: ${{ matrix.platform.build-args }} --package wstunnel-cli --target ${{ matrix.platform.target }}
+          args: ${{ matrix.platform.build-args }} --bin wstunnel --target ${{ matrix.platform.target }}
 
       - name: Store artifact
         uses: actions/upload-artifact@v4
@@ -174,7 +189,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v5
         with:
           distribution: goreleaser
-          version: latest
+          version: '~> v1'
           args: release --clean --skip=validate
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}

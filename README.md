@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/erebe/wstunnel/raw/main/docs/logo_wstunnel.png" alt="wstunnel logo"/>
+  <img src="https://github.com/erebe/wstunnel/raw/main/docs/logo_wstunnel.png" alt="wstunnel logo" height="400"/>
 </p>
 
 <p align="right">
@@ -178,6 +178,10 @@ Options:
       --tls-sni-disable
           Disable sending SNI during TLS handshake
           Warning: Most reverse proxies rely on it
+
+      --tls-ech-enable
+          Enable ECH (encrypted sni) during TLS handshake to wstunnel server.
+          Warning: Ech DNS config is not refreshed over time. It is retrieved only once at startup of the program
 
       --tls-verify-certificate
           Enable TLS certificate verification.
