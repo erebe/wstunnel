@@ -1,6 +1,7 @@
 pub mod config;
 mod embedded_certificate;
 pub mod executor;
+pub mod metrics;
 mod protocols;
 mod restrictions;
 mod somark;
@@ -434,18 +435,18 @@ async fn create_client_tunnels(
     Ok(tunnels)
 }
 
-pub async fn run_server(args: Server, executor: impl TokioExecutor) -> anyhow::Result<()> {
+pub async fn run_server(args: Server, unbounded_metrics: bool, executor: impl TokioExecutor) -> anyhow::Result<()> {
     let (tx, rx) = oneshot::channel();
     let exec = executor.ref_clone();
     executor.spawn(async move {
-        let ret = run_server_impl(args, exec).await;
+        let ret = run_server_impl(args, unbounded_metrics, exec).await;
         let _ = tx.send(ret);
     });
 
     rx.await?
 }
 
-async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyhow::Result<()> {
+async fn run_server_impl(args: Server, unbounded_metrics: bool, executor: impl TokioExecutorRef) -> anyhow::Result<()> {
     let tls_config = if args.remote_addr.scheme() == "wss" {
         let tls_certificate = if let Some(cert_path) = &args.tls_certificate {
             tls::load_certificates_from_pem(cert_path).expect("Cannot load tls certificate")
@@ -523,7 +524,7 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyho
         http_proxy,
         remote_server_idle_timeout: args.remote_to_local_server_idle_timeout,
     };
-    let server = WsServer::new(server_config, executor);
+    let server = WsServer::new(server_config, unbounded_metrics, executor);
 
     info!(
         "Starting wstunnel server v{} with config {:?}",

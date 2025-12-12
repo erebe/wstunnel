@@ -11,6 +11,11 @@ anyhow = "1.0.100"
 base64 = "0.22.1"
 scopeguard = "1.2.0"
 
+prometheus = "0.13.4"
+opentelemetry = "0.27.1"
+opentelemetry_sdk = "0.27.1"
+opentelemetry-prometheus = "0.27.0"
+
 bb8 = { version = "0.9.1", features = [] }
 bytes = { version = "1.11.0", features = [] }
 clap = { version = "4.5.53", features = ["derive", "env"], optional = true }

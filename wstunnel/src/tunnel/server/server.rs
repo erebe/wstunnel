@@ -26,6 +26,8 @@ use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper::{Request, StatusCode, Version, http};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
+use opentelemetry::metrics::Counter;
+use opentelemetry::{global, KeyValue};
 use parking_lot::Mutex;
 use socket2::SockRef;
 use std::fmt;
@@ -66,16 +68,30 @@ pub struct WsServerConfig {
     pub remote_server_idle_timeout: Duration,
 }
 
+pub struct WsServerMetrics {
+    pub unbounded: bool,
+    pub connections: Counter<u64>,
+}
+
 #[derive(Clone)]
 pub struct WsServer<E: crate::TokioExecutorRef = DefaultTokioExecutor> {
     pub config: Arc<WsServerConfig>,
+    pub metrics: Arc<WsServerMetrics>,
     pub executor: E,
 }
 
 impl<E: crate::TokioExecutorRef> WsServer<E> {
-    pub fn new(config: WsServerConfig, executor: E) -> Self {
+    pub fn new(config: WsServerConfig, unbounded_metrics: bool, executor: E) -> Self {
+        let meter = global::meter_provider().meter("wstunnel");
         Self {
             config: Arc::new(config),
+            metrics: Arc::new(WsServerMetrics {
+                unbounded: unbounded_metrics,
+                connections: meter
+                    .u64_counter("connections_created")
+                    .with_description("Counts the connections created. Attributes allow to split by remote host")
+                    .build(),
+            }),
             executor,
         }
     }
@@ -134,6 +150,15 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         })?;
         info!("Tunnel accepted due to matched restriction: {}", restriction.name);
 
+        let attributes: &[KeyValue] = if self.metrics.unbounded {
+            &[
+                KeyValue::new("remote_host", format!("{}", remote.host)),
+                KeyValue::new("remote_port", i64::from(remote.port)),
+            ]
+        } else {
+            &[]
+        };
+        self.metrics.connections.add(1, attributes);
         let req_protocol = remote.protocol.clone();
         let inject_cookie = req_protocol.is_dynamic_reverse_tunnel();
         let tunnel = self

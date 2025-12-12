@@ -1,6 +1,8 @@
 use clap::Parser;
 use std::io;
+use std::net::SocketAddr;
 use std::str::FromStr;
+use opentelemetry::global;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::Directive;
@@ -8,6 +10,7 @@ use wstunnel::LocalProtocol;
 use wstunnel::config::{Client, Server};
 use wstunnel::executor::DefaultTokioExecutor;
 use wstunnel::{run_client, run_server};
+use wstunnel::metrics;
 
 #[cfg(feature = "jemalloc")]
 use tikv_jemallocator::Jemalloc;
@@ -51,6 +54,24 @@ pub struct Wstunnel {
         default_value = "INFO"
     )]
     log_lvl: String,
+
+    /// Set the listen address for the prometheus metrics exporter.
+    #[arg(
+        long,
+        global = true,
+        verbatim_doc_comment,
+        default_value = None,
+    )]
+    metrics_provider_address: Option<SocketAddr>,
+
+    /// Allow metrics to take up unbounded space (OOM risk!).
+    #[arg(
+        long,
+        global = true,
+        verbatim_doc_comment,
+        default_value = "false",
+    )]
+    metrics_unbounded: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -92,6 +113,17 @@ async fn main() -> anyhow::Result<()> {
         warn!("Failed to set soft filelimit to hard file limit: {}", err)
     }
 
+    if let Some(addr) = args.metrics_provider_address {
+        match metrics::setup_metrics_provider(&addr).await {
+            Ok(provider) => {
+                let _ = global::set_meter_provider(provider);
+            }
+            Err(err) => {
+                panic!("Failed to setup metrics server: {err:?}")
+            }
+        }
+    }
+
     match args.commands {
         Commands::Client(args) => {
             run_client(*args, DefaultTokioExecutor::default())
@@ -100,8 +132,8 @@ async fn main() -> anyhow::Result<()> {
                     panic!("Cannot start wstunnel client: {err:?}");
                 });
         }
-        Commands::Server(args) => {
-            run_server(*args, DefaultTokioExecutor::default())
+        Commands::Server(sargs) => {
+            run_server(*sargs, args.metrics_unbounded, DefaultTokioExecutor::default())
                 .await
                 .unwrap_or_else(|err| {
                     panic!("Cannot start wstunnel server: {err:?}");
