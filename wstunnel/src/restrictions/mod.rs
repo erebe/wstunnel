@@ -1,5 +1,4 @@
 use ipnet::IpNet;
-use regex::Regex;
 use std::fs::File;
 use std::io::BufReader;
 use std::net::IpAddr;
@@ -45,14 +44,14 @@ impl RestrictionsRules {
                         vec![types::AllowConfig::Tunnel(types::AllowTunnelConfig {
                             protocol: vec![],
                             port: vec![RangeInclusive::new(*port, *port)],
-                            host: Regex::new("^$")?,
+                            host: "^$".to_string(),
                             cidr: vec![IpNet::new(ip, if ip.is_ipv4() { 32 } else { 128 })?],
                         })]
                     } else {
                         vec![types::AllowConfig::Tunnel(types::AllowTunnelConfig {
                             protocol: vec![],
                             port: vec![RangeInclusive::new(*port, *port)],
-                            host: Regex::new(&format!("^{}$", regex::escape(host)))?,
+                            host: format!("^{}$", regex::escape(host)),
                             cidr: vec![],
                         })]
                     };
@@ -77,10 +76,10 @@ impl RestrictionsRules {
             path_prefixes
                 .iter()
                 .map(|path_prefix| {
-                    let reg = Regex::new(&format!("^{}$", regex::escape(path_prefix)))?;
+                    let pattern = format!("^{}$", regex::escape(path_prefix));
                     Ok(types::RestrictionConfig {
                         name: format!("Allow path prefix {path_prefix}"),
-                        r#match: vec![types::MatchConfig::PathPrefix(reg)],
+                        r#match: vec![types::MatchConfig::PathPrefix(pattern)],
                         allow: tunnels_restrictions.clone(),
                     })
                 })

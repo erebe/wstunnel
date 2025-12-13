@@ -2,6 +2,7 @@ use crate::executor::DefaultTokioExecutor;
 use crate::protocols;
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
+use crate::protocols::tls::CertificateVars;
 use crate::restrictions::config_reloader::RestrictionsRulesReloader;
 use crate::restrictions::types::{RestrictionConfig, RestrictionsRules};
 use crate::somark::SoMark;
@@ -19,7 +20,6 @@ use crate::tunnel::{LocalProtocol, RemoteAddr, try_to_sock_addr};
 use ahash::AHasher;
 use anyhow::{Context, anyhow};
 use arc_swap::ArcSwap;
-use futures_util::FutureExt;
 use http_body_util::Either;
 use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
@@ -84,6 +84,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         &self,
         restrictions: Arc<RestrictionsRules>,
         restrict_path_prefix: Option<String>,
+        cert_vars: &CertificateVars,
         mut client_addr: SocketAddr,
         req: &Request<Incoming>,
     ) -> Result<
@@ -128,10 +129,11 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         })?;
 
         let authorization = extract_authorization(req);
-        let restriction = validate_tunnel(&remote, path_prefix, authorization, &restrictions).ok_or_else(|| {
-            warn!("Rejecting connection with not allowed destination: {remote:?}");
-            bad_request()
-        })?;
+        let restriction =
+            validate_tunnel(&remote, path_prefix, authorization, &restrictions, cert_vars).ok_or_else(|| {
+                warn!("Rejecting connection with not allowed destination: {remote:?}");
+                bad_request()
+            })?;
         info!("Tunnel accepted due to matched restriction: {}", restriction.name);
 
         let req_protocol = remote.protocol.clone();
@@ -321,70 +323,94 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         // setup upgrade request handler
         let mk_websocket_upgrade_fn = |server: WsServer<_>,
                                        restrictions: Arc<ArcSwap<RestrictionsRules>>,
-                                       restrict_path: Option<String>,
+                                       cert_vars: CertificateVars,
                                        client_addr: SocketAddr| {
             move |req: Request<Incoming>| {
-                ws_server_upgrade(
-                    server.clone(),
-                    restrictions.load().clone(),
-                    restrict_path.clone(),
-                    client_addr,
-                    req,
-                )
-                .map::<anyhow::Result<_>, _>(Ok)
+                let server = server.clone();
+                let restrictions = restrictions.clone();
+                let cert_vars = cert_vars.clone();
+                async move {
+                    let response = ws_server_upgrade(
+                        server,
+                        restrictions.load().clone(),
+                        None, // restrict_path_prefix is None for TLS
+                        &cert_vars,
+                        client_addr,
+                        req,
+                    )
+                    .await;
+                    Ok::<_, std::convert::Infallible>(response)
+                }
                 .instrument(mk_span())
             }
         };
 
         let mk_http_upgrade_fn = |server: WsServer<_>,
                                   restrictions: Arc<ArcSwap<RestrictionsRules>>,
-                                  restrict_path: Option<String>,
+                                  cert_vars: CertificateVars,
                                   client_addr: SocketAddr| {
             move |req: Request<Incoming>| {
-                http_server_upgrade(
-                    server.clone(),
-                    restrictions.load().clone(),
-                    restrict_path.clone(),
-                    client_addr,
-                    req,
-                )
-                .map::<anyhow::Result<_>, _>(Ok)
+                let server = server.clone();
+                let restrictions = restrictions.clone();
+                let cert_vars = cert_vars.clone();
+                async move {
+                    let response = http_server_upgrade(
+                        server,
+                        restrictions.load().clone(),
+                        None, // restrict_path_prefix is None for TLS
+                        &cert_vars,
+                        client_addr,
+                        req,
+                    )
+                    .await;
+                    Ok::<_, std::convert::Infallible>(response)
+                }
                 .instrument(mk_span())
             }
         };
 
         let mk_auto_upgrade_fn = |server: WsServer<_>,
                                   restrictions: Arc<ArcSwap<RestrictionsRules>>,
-                                  restrict_path: Option<String>,
+                                  cert_vars: CertificateVars,
                                   client_addr: SocketAddr| {
             move |req: Request<Incoming>| {
                 let server = server.clone();
                 let restrictions = restrictions.clone();
-                let restrict_path = restrict_path.clone();
+                let cert_vars = cert_vars.clone();
                 async move {
+                    let cert_vars = cert_vars;
                     if fastwebsockets::upgrade::is_upgrade_request(&req) {
-                        ws_server_upgrade(server.clone(), restrictions.load().clone(), restrict_path, client_addr, req)
-                            .map::<anyhow::Result<_>, _>(Ok)
-                            .await
-                    } else if req.version() == Version::HTTP_2 {
-                        http_server_upgrade(
+                        let response = ws_server_upgrade(
                             server.clone(),
                             restrictions.load().clone(),
-                            restrict_path.clone(),
+                            None,
+                            &cert_vars,
                             client_addr,
                             req,
                         )
-                        .map::<anyhow::Result<_>, _>(Ok)
-                        .await
+                        .await;
+                        Ok::<_, std::convert::Infallible>(response)
+                    } else if req.version() == Version::HTTP_2 {
+                        let response = http_server_upgrade(
+                            server.clone(),
+                            restrictions.load().clone(),
+                            None,
+                            &cert_vars,
+                            client_addr,
+                            req,
+                        )
+                        .await;
+                        Ok::<_, std::convert::Infallible>(response)
                     } else {
-                        error!("Invalid protocol version request, got {:?} while expecting either websocket http1 upgrade or http2", req.version());
-                        Ok(http::Response::builder()
-                            .status(StatusCode::BAD_REQUEST)
-                            .body(Either::Left("Invalid protocol request".to_string()))
-                            .unwrap())
+                        Ok::<_, std::convert::Infallible>(
+                            http::Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Either::Left("Invalid protocol request".to_string()))
+                                .unwrap(),
+                        )
                     }
                 }
-                    .instrument(mk_span())
+                .instrument(mk_span())
             }
         };
 
@@ -443,11 +469,11 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                         };
 
                         let tls_ctx = tls_stream.inner().get_ref().1;
-                        // extract client certificate common name if any
-                        let restrict_path = tls_ctx
-                            .peer_certificates()
-                            .and_then(tls::find_leaf_certificate)
-                            .and_then(|c| tls::cn_from_certificate(&c));
+                        // extract client certificate variables
+                        let peer_certs = tls_ctx.peer_certificates();
+                        info!("TLS peer certificates present: {}", peer_certs.is_some());
+                        let cert_vars = peer_certs.map(CertificateVars::from_certificate).unwrap_or_default();
+                        info!("Extracted certificate CN: {:?}", cert_vars.cn);
                         match tls_ctx.alpn_protocol() {
                             // http2
                             Some(b"h2") => {
@@ -458,7 +484,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                                 }
 
                                 let http_upgrade_fn =
-                                    mk_http_upgrade_fn(server, restrictions, restrict_path, peer_addr);
+                                    mk_http_upgrade_fn(server, restrictions, cert_vars.clone(), peer_addr);
                                 let con_fut = conn_builder.serve_connection(tls_stream, service_fn(http_upgrade_fn));
                                 if let Err(e) = con_fut.await {
                                     error!("Error while upgrading cnx to http: {:?}", e);
@@ -467,7 +493,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                             // websocket
                             _ => {
                                 let websocket_upgrade_fn =
-                                    mk_websocket_upgrade_fn(server, restrictions, restrict_path, peer_addr);
+                                    mk_websocket_upgrade_fn(server, restrictions, cert_vars.clone(), peer_addr);
                                 let conn_fut = http1::Builder::new()
                                     .timer(TokioTimer::new())
                                     // https://github.com/erebe/wstunnel/issues/358
@@ -495,7 +521,8 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                             conn_fut.http2().keep_alive_interval(ping);
                         }
 
-                        let websocket_upgrade_fn = mk_auto_upgrade_fn(server, restrictions, None, peer_addr);
+                        let websocket_upgrade_fn =
+                            mk_auto_upgrade_fn(server, restrictions, CertificateVars::default(), peer_addr);
                         let upgradable =
                             conn_fut.serve_connection_with_upgrades(stream, service_fn(websocket_upgrade_fn));
 

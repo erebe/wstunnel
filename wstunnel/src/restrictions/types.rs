@@ -1,6 +1,5 @@
 use crate::tunnel::LocalProtocol;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
-use regex::Regex;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
@@ -21,10 +20,8 @@ pub struct RestrictionConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub enum MatchConfig {
     Any,
-    #[serde(with = "serde_regex")]
-    PathPrefix(Regex),
-    #[serde(with = "serde_regex")]
-    Authorization(Regex),
+    PathPrefix(String),
+    Authorization(String),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,9 +40,8 @@ pub struct AllowTunnelConfig {
     #[serde(default)]
     pub port: Vec<RangeInclusive<u16>>,
 
-    #[serde(with = "serde_regex")]
     #[serde(default = "default_host")]
-    pub host: Regex,
+    pub host: String,
 
     #[serde(default = "default_cidr")]
     pub cidr: Vec<IpNet>,
@@ -67,9 +63,8 @@ pub struct AllowReverseTunnelConfig {
     #[serde(default = "default_cidr")]
     pub cidr: Vec<IpNet>,
 
-    #[serde(with = "serde_regex")]
     #[serde(default = "default_host")]
-    pub unix_path: Regex,
+    pub unix_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
@@ -89,8 +84,8 @@ pub enum ReverseTunnelConfigProtocol {
     Unknown,
 }
 
-pub fn default_host() -> Regex {
-    Regex::new("^.*$").unwrap()
+pub fn default_host() -> String {
+    ".*".to_string()
 }
 
 pub fn default_cidr() -> Vec<IpNet> {

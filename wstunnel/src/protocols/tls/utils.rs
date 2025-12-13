@@ -2,6 +2,20 @@ use tokio_rustls::rustls::pki_types::CertificateDer;
 use x509_parser::parse_x509_certificate;
 use x509_parser::prelude::X509Certificate;
 
+/// Certificate variables extracted from client certificate for variable substitution in restrictions
+#[derive(Debug, Clone, Default)]
+pub struct CertificateVars {
+    pub cn: Option<String>,
+    // TODO: Add more fields like ou, o, serial, etc.
+}
+
+impl CertificateVars {
+    pub fn from_certificate(tls_certificates: &[CertificateDer<'static>]) -> Self {
+        let cn = find_leaf_certificate(tls_certificates).and_then(|cert| cn_from_certificate(&cert));
+        Self { cn }
+    }
+}
+
 /// Find a leaf certificate in a vector of certificates. It is assumed only a single leaf certificate
 /// is present in the vector. The other certificates should be (intermediate) CA certificates.
 pub fn find_leaf_certificate<'a>(tls_certificates: &'a [CertificateDer<'static>]) -> Option<X509Certificate<'a>> {
