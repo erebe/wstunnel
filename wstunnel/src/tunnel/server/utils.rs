@@ -1,4 +1,5 @@
 use crate::LocalProtocol;
+use crate::protocols::tls::CertificateVars;
 use crate::restrictions::types::{
     AllowConfig, AllowReverseTunnelConfig, AllowTunnelConfig, MatchConfig, RestrictionConfig, RestrictionsRules,
     ReverseTunnelConfigProtocol, TunnelConfigProtocol,
@@ -14,6 +15,7 @@ use hyper::body::{Body, Incoming};
 use hyper::header::{AUTHORIZATION, COOKIE, HeaderValue, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{Request, Response, StatusCode, http};
 use jsonwebtoken::TokenData;
+use regex::Regex;
 use std::net::IpAddr;
 use tracing::{error, info};
 use url::Host;
@@ -110,30 +112,55 @@ pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> anyhow::Result<Tok
     })
 }
 
+fn substitute_vars(pattern: &str, cert_vars: &CertificateVars) -> String {
+    let result = pattern
+        .replace("${cn}", cert_vars.cn.as_deref().unwrap_or(""))
+        .replace("${cert.cn}", cert_vars.cn.as_deref().unwrap_or(""));
+    tracing::debug!(
+        "Variable substitution: pattern='{}', cn={:?}, result='{}'",
+        pattern,
+        cert_vars.cn,
+        result
+    );
+    result
+    // TODO: Add more variables like ${cert.subject.ou}, etc.
+}
+
 impl RestrictionConfig {
     /// Returns true if the parameters match the restriction config
     #[inline]
-    fn filter(self: &RestrictionConfig, path_prefix: &str, authorization_header_val: Option<&str>) -> bool {
+    fn filter(
+        self: &RestrictionConfig,
+        path_prefix: &str,
+        authorization_header_val: Option<&str>,
+        cert_vars: &CertificateVars,
+    ) -> bool {
         self.r#match.iter().all(|m| match m {
             MatchConfig::Any => true,
-            MatchConfig::PathPrefix(path) => path.is_match(path_prefix),
-            MatchConfig::Authorization(auth) => authorization_header_val.is_some_and(|val| auth.is_match(val)),
+            MatchConfig::PathPrefix(pattern) => {
+                let substituted = substitute_vars(pattern, cert_vars);
+                Regex::new(&substituted).is_ok_and(|re| re.is_match(path_prefix))
+            }
+            MatchConfig::Authorization(pattern) => authorization_header_val.is_some_and(|val| {
+                let substituted = substitute_vars(pattern, cert_vars);
+                Regex::new(&substituted).is_ok_and(|re| re.is_match(val))
+            }),
         })
     }
 }
 
 impl AllowReverseTunnelConfig {
     #[inline]
-    fn is_allowed(&self, remote: &RemoteAddr) -> bool {
+    fn is_allowed(&self, remote: &RemoteAddr, cert_vars: &CertificateVars) -> bool {
         if !remote.protocol.is_reverse_tunnel() {
             return false;
         }
 
         // For ReverseUnix tunnels there is no port or cidr to check
         if let LocalProtocol::ReverseUnix { path } = &remote.protocol {
-            return self
-                .unix_path
-                .is_match(path.to_str().unwrap_or("####INVALID_UNIX_PATH####"));
+            let substituted = substitute_vars(&self.unix_path, cert_vars);
+            return Regex::new(&substituted)
+                .is_ok_and(|re| re.is_match(path.to_str().unwrap_or("####INVALID_UNIX_PATH####")));
         }
 
         if !self.port.is_empty() && !self.port.iter().any(|range| range.contains(&remote.port)) {
@@ -158,7 +185,7 @@ impl AllowReverseTunnelConfig {
 
 impl AllowTunnelConfig {
     #[inline]
-    fn is_allowed(&self, remote: &RemoteAddr) -> bool {
+    fn is_allowed(&self, remote: &RemoteAddr, cert_vars: &CertificateVars) -> bool {
         if remote.protocol.is_reverse_tunnel() {
             return false;
         }
@@ -172,7 +199,10 @@ impl AllowTunnelConfig {
         }
 
         match &remote.host {
-            Host::Domain(host) => self.host.is_match(host),
+            Host::Domain(host) => {
+                let substituted = substitute_vars(&self.host, cert_vars);
+                Regex::new(&substituted).is_ok_and(|re| re.is_match(host))
+            }
             Host::Ipv4(ip) => self.cidr.iter().any(|cidr| cidr.contains(&IpAddr::from(*ip))),
             Host::Ipv6(ip) => self.cidr.iter().any(|cidr| cidr.contains(&IpAddr::from(*ip))),
         }
@@ -181,10 +211,10 @@ impl AllowTunnelConfig {
 
 impl AllowConfig {
     #[inline]
-    fn is_allowed(&self, remote: &RemoteAddr) -> bool {
+    fn is_allowed(&self, remote: &RemoteAddr, cert_vars: &CertificateVars) -> bool {
         match self {
-            AllowConfig::ReverseTunnel(config) => config.is_allowed(remote),
-            AllowConfig::Tunnel(config) => config.is_allowed(remote),
+            AllowConfig::ReverseTunnel(config) => config.is_allowed(remote, cert_vars),
+            AllowConfig::Tunnel(config) => config.is_allowed(remote, cert_vars),
         }
     }
 }
@@ -203,12 +233,31 @@ pub(super) fn validate_tunnel<'a>(
     path_prefix: &str,
     authorization: Option<&str>,
     restrictions: &'a RestrictionsRules,
+    cert_vars: &CertificateVars,
 ) -> Option<&'a RestrictionConfig> {
+    tracing::debug!(
+        "validate_tunnel: remote={:?}, path_prefix='{}', cert_cn={:?}",
+        remote,
+        path_prefix,
+        cert_vars.cn
+    );
+
     restrictions
         .restrictions
         .iter()
-        .filter(|restriction| restriction.filter(path_prefix, authorization))
-        .find(|restriction| restriction.allow.iter().any(|allow| allow.is_allowed(remote)))
+        .filter(|restriction| {
+            let matches = restriction.filter(path_prefix, authorization, cert_vars);
+            tracing::debug!("Restriction '{}': filter_match={}", restriction.name, matches);
+            matches
+        })
+        .find(|restriction| {
+            let allowed = restriction
+                .allow
+                .iter()
+                .any(|allow| allow.is_allowed(remote, cert_vars));
+            tracing::debug!("Restriction '{}': allow_check={}", restriction.name, allowed);
+            allowed
+        })
 }
 
 pub(super) fn inject_cookie(response: &mut http::Response<impl Body>, remote_addr: &RemoteAddr) -> Result<(), ()> {
@@ -227,7 +276,6 @@ mod tests {
     use crate::restrictions::types::{AllowReverseTunnelConfig, AllowTunnelConfig, default_cidr, default_host};
     use crate::tunnel::LocalProtocol;
     use ipnet::{IpNet, Ipv4Net};
-    use regex::Regex;
     use std::net::Ipv6Addr;
     use std::path::PathBuf;
 
@@ -243,7 +291,7 @@ mod tests {
                         protocol: vec![TunnelConfigProtocol::Tcp],
                         port: vec![80..=80],
                         cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
-                        host: Regex::new("example.com").unwrap(),
+                        host: "example.com".to_string(),
                     })],
                 },
                 // reverse tunnel
@@ -267,7 +315,7 @@ mod tests {
             port: 80,
         };
         assert_eq!(
-            validate_tunnel(&remote, "/doesnt/matter", None, &restrictions)
+            validate_tunnel(&remote, "/doesnt/matter", None, &restrictions, &CertificateVars::default())
                 .unwrap()
                 .name,
             restrictions.restrictions[0].name
@@ -279,7 +327,7 @@ mod tests {
             port: 80,
         };
         assert_eq!(
-            validate_tunnel(&remote, "/doesnt/matter", None, &restrictions)
+            validate_tunnel(&remote, "/doesnt/matter", None, &restrictions, &CertificateVars::default())
                 .unwrap()
                 .name,
             restrictions.restrictions[1].name
@@ -290,14 +338,14 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 81,
         };
-        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
+        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions, &CertificateVars::default()).is_none());
 
         let remote = RemoteAddr {
             protocol: LocalProtocol::Tcp { proxy_protocol: false },
             host: Host::Ipv4([127, 0, 1, 1].into()),
             port: 80,
         };
-        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
+        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions, &CertificateVars::default()).is_none());
 
         let remote = RemoteAddr {
             protocol: LocalProtocol::Tcp { proxy_protocol: false },
@@ -305,7 +353,7 @@ mod tests {
             port: 80,
         };
         assert_eq!(
-            validate_tunnel(&remote, "/doesnt/matter", None, &restrictions)
+            validate_tunnel(&remote, "/doesnt/matter", None, &restrictions, &CertificateVars::default())
                 .unwrap()
                 .name,
             restrictions.restrictions[0].name
@@ -316,14 +364,14 @@ mod tests {
             host: Host::Domain("not.com".into()),
             port: 80,
         };
-        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
+        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions, &CertificateVars::default()).is_none());
 
         let remote = RemoteAddr {
             protocol: LocalProtocol::Tcp { proxy_protocol: false },
             host: Host::Ipv6(Ipv6Addr::LOCALHOST),
             port: 80,
         };
-        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
+        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions, &CertificateVars::default()).is_none());
     }
 
     #[test]
@@ -331,9 +379,7 @@ mod tests {
         let restrictions = RestrictionsRules {
             restrictions: vec![RestrictionConfig {
                 name: "restrict1".into(),
-                r#match: vec![MatchConfig::Authorization(
-                    Regex::new("^[Bb]earer +the-bearer-token$").unwrap(),
-                )],
+                r#match: vec![MatchConfig::Authorization("^[Bb]earer +the-bearer-token$".to_string())],
                 allow: vec![AllowConfig::Tunnel(AllowTunnelConfig {
                     protocol: vec![],
                     port: vec![],
@@ -349,13 +395,28 @@ mod tests {
             port: 80,
         };
         assert_eq!(
-            validate_tunnel(&remote, "/doesnt/matter", Some("Bearer the-bearer-token"), &restrictions)
-                .unwrap()
-                .name,
+            validate_tunnel(
+                &remote,
+                "/doesnt/matter",
+                Some("Bearer the-bearer-token"),
+                &restrictions,
+                &CertificateVars::default()
+            )
+            .unwrap()
+            .name,
             restrictions.restrictions[0].name
         );
-        assert!(validate_tunnel(&remote, "/doesnt/matter", Some("Bearer other-bearer-token"), &restrictions).is_none());
-        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions).is_none());
+        assert!(
+            validate_tunnel(
+                &remote,
+                "/doesnt/matter",
+                Some("Bearer other-bearer-token"),
+                &restrictions,
+                &CertificateVars::default()
+            )
+            .is_none()
+        );
+        assert!(validate_tunnel(&remote, "/doesnt/matter", None, &restrictions, &CertificateVars::default()).is_none());
     }
 
     #[test]
@@ -373,8 +434,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 80,
         };
-        assert!(config.is_allowed(&remote));
-        assert!(AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // another ip on the same subnet
         let remote = RemoteAddr {
@@ -382,8 +443,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 1, 1].into()),
             port: 80,
         };
-        assert!(config.is_allowed(&remote));
-        assert!(AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
     }
 
     #[test]
@@ -402,8 +463,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 1, 1].into()),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // ipv6
         let remote = RemoteAddr {
@@ -411,8 +472,8 @@ mod tests {
             host: Host::Ipv6(Ipv6Addr::LOCALHOST),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // wrong port
         let remote = RemoteAddr {
@@ -420,8 +481,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 81,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // wrong protocol - remote
         let remote = RemoteAddr {
@@ -429,8 +490,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // wrong protocol - local
         let remote = RemoteAddr {
@@ -438,8 +499,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // host is domain
         let remote = RemoteAddr {
@@ -447,8 +508,8 @@ mod tests {
             host: Host::Domain("example.com".into()),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
     }
 
     #[test]
@@ -458,7 +519,7 @@ mod tests {
             port: vec![],
             cidr: vec![],
             port_mapping: Default::default(),
-            unix_path: Regex::new("^/tmp/tutu$").unwrap(),
+            unix_path: "^/tmp/tutu$".to_string(),
         };
 
         // wrong protocol
@@ -467,7 +528,7 @@ mod tests {
             host: Host::Ipv4([127, 0, 1, 1].into()),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
 
         // ReverseUnix is not allowed because wrong path
         let remote = RemoteAddr {
@@ -477,7 +538,7 @@ mod tests {
             host: Host::Domain("test.com".to_string()),
             port: 12,
         };
-        assert!(!config.is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
 
         // ReverseUnix is allowed
         let remote = RemoteAddr {
@@ -487,7 +548,7 @@ mod tests {
             host: Host::Domain("test.com".to_string()),
             port: 12,
         };
-        assert!(config.is_allowed(&remote));
+        assert!(config.is_allowed(&remote, &CertificateVars::default()));
     }
 
     #[test]
@@ -496,7 +557,7 @@ mod tests {
             protocol: vec![TunnelConfigProtocol::Tcp],
             port: vec![80..=80],
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 8).unwrap())],
-            host: Regex::new(".*").unwrap(),
+            host: ".*".to_string(),
         };
 
         let remote = RemoteAddr {
@@ -504,8 +565,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 80,
         };
-        assert!(config.is_allowed(&remote));
-        assert!(AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // another ip on the same subnet
         let remote = RemoteAddr {
@@ -513,8 +574,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 1, 1].into()),
             port: 80,
         };
-        assert!(config.is_allowed(&remote));
-        assert!(AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // host is domain
         let remote = RemoteAddr {
@@ -522,8 +583,8 @@ mod tests {
             host: Host::Domain("example.com".into()),
             port: 80,
         };
-        assert!(config.is_allowed(&remote));
-        assert!(AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
     }
 
     #[test]
@@ -532,7 +593,7 @@ mod tests {
             protocol: vec![TunnelConfigProtocol::Tcp],
             port: vec![80..=80],
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
-            host: Regex::new("example.com").unwrap(),
+            host: "example.com".to_string(),
         };
 
         // wrong IP
@@ -541,8 +602,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 1, 1].into()),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // ipv6
         let remote = RemoteAddr {
@@ -550,8 +611,8 @@ mod tests {
             host: Host::Ipv6(Ipv6Addr::LOCALHOST),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // wrong port
         let remote = RemoteAddr {
@@ -559,8 +620,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 81,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // wrong protocol - remote
         let remote = RemoteAddr {
@@ -568,8 +629,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // wrong protocol - local
         let remote = RemoteAddr {
@@ -577,8 +638,8 @@ mod tests {
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
 
         // wrong host
         let remote = RemoteAddr {
@@ -586,8 +647,8 @@ mod tests {
             host: Host::Domain("not.com".into()),
             port: 80,
         };
-        assert!(!config.is_allowed(&remote));
-        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote));
+        assert!(!config.is_allowed(&remote, &CertificateVars::default()));
+        assert!(!AllowConfig::from(config.clone()).is_allowed(&remote, &CertificateVars::default()));
     }
 
     #[test]
@@ -615,5 +676,17 @@ mod tests {
         assert_eq!(extract_path_prefix("prefix/events"), Err(PathPrefixErr::BadPathPrefix));
         assert_eq!(extract_path_prefix("prefix/a/events"), Err(PathPrefixErr::BadPathPrefix));
         assert_eq!(extract_path_prefix("prefix/a/b/events"), Err(PathPrefixErr::BadPathPrefix));
+    }
+
+    #[test]
+    fn test_substitute_vars() {
+        let cert_vars = CertificateVars {
+            cn: Some("test-cn".to_string()),
+        };
+        assert_eq!(substitute_vars("${cn}", &cert_vars), "test-cn");
+        assert_eq!(substitute_vars("${cert.cn}", &cert_vars), "test-cn");
+        assert_eq!(substitute_vars("prefix-${cn}-suffix", &cert_vars), "prefix-test-cn-suffix");
+        assert_eq!(substitute_vars("no-vars", &cert_vars), "no-vars");
+        assert_eq!(substitute_vars("${cn}", &CertificateVars::default()), "");
     }
 }

@@ -126,3 +126,109 @@ restrictions:
     allow:
       - !ReverseTunnel
         unix_path: "^/tmp/"
+
+---
+# Certificate-based variable substitution examples (NEW FEATURE)
+# Requires mTLS authentication with client certificates
+restrictions:
+  # Dynamic certificate-based access control
+  # Single rule handles unlimited devices based on their certificate CN
+  - name: "Certificate CN-based device isolation"
+    description: "Devices can only access Unix sockets matching their certificate Common Name"
+    match:
+      - !Any  # Match all mTLS connections
+    allow:
+      - !ReverseTunnel
+        protocol:
+          - Unix
+        port:
+          - 1..65535
+        # Variable substitution: ${cn} is replaced with the certificate's Common Name
+        # Example: Certificate CN "device001" → matches "/tmp/sockets/device001.sock"
+        # Example: Certificate CN "iot-sensor-42" → matches "/tmp/sockets/iot-sensor-42.sock"
+        unix_path: "^/tmp/sockets/${cn}\\.sock$"
+
+---
+restrictions:
+  # Path prefix + certificate validation
+  - name: "CN-based path prefix and socket access"
+    description: "Require upgrade path to match CN and restrict socket access to CN-specific directory"
+    match:
+      # Path prefix must match the certificate CN exactly
+      - !PathPrefix "^${cn}$"
+    allow:
+      - !ReverseTunnel
+        protocol:
+          - Unix
+          - Tcp
+        port:
+          - 8000..9000
+        cidr:
+          - "127.0.0.0/8"
+          - "::1/128"
+        # Sockets must be in a directory named after the device CN
+        # Example: CN "device001" → /tmp/device001/app.sock, /tmp/device001/service.sock
+        unix_path: "^/tmp/${cn}/.*\\.sock$"
+
+---
+restrictions:
+  # Multi-tenant isolation
+  - name: "Tenant-specific tunnel isolation"
+    description: "Each tenant (identified by certificate CN) gets isolated tunnel access"
+    match:
+      - !Any
+    allow:
+      - !ReverseTunnel
+        protocol:
+          - Unix
+          - Tcp
+          - Udp
+        port:
+          - 10000..20000
+        cidr:
+          - "10.0.0.0/8"  # Private network only
+        # Tenant-specific Unix socket path
+        # Example: CN "tenant-acme" → /var/run/tenants/tenant-acme/service.sock
+        unix_path: "^/var/run/tenants/${cn}/.*\\.sock$"
+      - !Tunnel
+        # Allow outbound tunnels matching tenant pattern
+        host: "^${cn}-.*\\.internal\\.example\\.com$"
+        port:
+          - 443
+          - 8443
+        cidr:
+          - "10.0.0.0/8"
+
+---
+restrictions:
+  # IoT device fleet management
+  - name: "IoT sensor fleet with CN-based routing"
+    description: "Each IoT sensor device connects to its own dedicated Unix socket"
+    match:
+      # Optional: Could require specific authorization token
+      # - !Authorization "^Bearer [A-Za-z0-9-_\\.]+$"
+      - !Any
+    allow:
+      - !ReverseTunnel
+        protocol:
+          - Unix
+        # Each sensor gets isolated access to its own socket
+        # Example: CN "sensor-temperature-01" → /opt/iot/sensors/sensor-temperature-01.sock
+        # Example: CN "sensor-motion-05" → /opt/iot/sensors/sensor-motion-05.sock
+        unix_path: "^/opt/iot/sensors/${cn}\\.sock$"
+
+---
+# Certificate Variables Reference:
+# Currently supported:
+#   ${cn} or ${cert.cn} - Common Name from certificate subject
+#
+# Planned for future releases:
+#   ${cert.subject.ou} - Organizational Unit
+#   ${cert.subject.o}  - Organization
+#   ${cert.serial}     - Certificate serial number
+#
+# Benefits:
+# - Zero-touch provisioning: New devices automatically get appropriate access
+# - Scalability: One rule handles unlimited devices
+# - Security: Directly ties mTLS authentication to authorization
+# - Maintainability: Clean, simple configuration

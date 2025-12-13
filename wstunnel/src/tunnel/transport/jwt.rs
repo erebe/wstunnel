@@ -21,6 +21,7 @@ static JWT_KEY: LazyLock<(Header, EncodingKey)> = LazyLock::new(|| {
 static JWT_DECODE: LazyLock<(Validation, DecodingKey)> = LazyLock::new(|| {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.required_spec_claims = HashSet::with_capacity(0);
+    #[allow(deprecated)]
     validation.insecure_disable_signature_validation();
     (validation, DecodingKey::from_secret(b"champignonfrais"))
 });

@@ -12,7 +12,7 @@ use tokio::task::JoinSet;
 
 use log::warn;
 use socket2::SockRef;
-use std::pin::{Pin, pin};
+use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{Poll, ready};
 use std::time::Duration;

@@ -12,7 +12,6 @@ use bytes::BytesMut;
 use futures_util::StreamExt;
 use hyper::http::HeaderValue;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
-use regex::Regex;
 use rstest::{fixture, rstest};
 use scopeguard::defer;
 use serial_test::serial;
@@ -76,8 +75,8 @@ async fn client_ws(dns_resolver: DnsResolver) -> WsClient {
 
 #[fixture]
 fn no_restrictions() -> RestrictionsRules {
-    pub fn default_host() -> Regex {
-        Regex::new("^.*$").unwrap()
+    pub fn default_host() -> String {
+        ".*".to_string()
     }
 
     pub fn default_cidr() -> Vec<IpNet> {

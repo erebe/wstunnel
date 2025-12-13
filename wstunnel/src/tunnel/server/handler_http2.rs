@@ -1,4 +1,5 @@
 use crate::executor::TokioExecutorRef;
+use crate::protocols::tls::CertificateVars;
 use crate::restrictions::types::RestrictionsRules;
 use crate::tunnel::server::WsServer;
 use crate::tunnel::server::utils::{HttpResponse, bad_request, inject_cookie};
@@ -21,11 +22,12 @@ pub(super) async fn http_server_upgrade(
     server: WsServer<impl TokioExecutorRef>,
     restrictions: Arc<RestrictionsRules>,
     restrict_path_prefix: Option<String>,
+    cert_vars: &CertificateVars,
     client_addr: SocketAddr,
     mut req: Request<Incoming>,
 ) -> HttpResponse {
     let (remote_addr, local_rx, local_tx, need_cookie) = match server
-        .handle_tunnel_request(restrictions, restrict_path_prefix, client_addr, &req)
+        .handle_tunnel_request(restrictions, restrict_path_prefix, cert_vars, client_addr, &req)
         .await
     {
         Ok(ret) => ret,
