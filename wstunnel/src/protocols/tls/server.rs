@@ -103,14 +103,14 @@ pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKeyDer<'
     Ok(private_key)
 }
 
-pub fn tls_connector(
+pub fn rustls_client_config(
     tls_verify_certificate: bool,
     alpn_protocols: Vec<Vec<u8>>,
     enable_sni: bool,
     ech_config: Option<EchConfig>,
     tls_client_certificate: Option<Vec<CertificateDer<'static>>>,
     tls_client_key: Option<PrivateKeyDer<'static>>,
-) -> anyhow::Result<TlsConnector> {
+) -> anyhow::Result<ClientConfig> {
     let mut root_store = RootCertStore::empty();
 
     // Load system certificates and add them to the root store
@@ -151,11 +151,33 @@ pub fn tls_connector(
     }
 
     config.alpn_protocols = alpn_protocols;
+    Ok(config)
+}
+
+pub fn tls_connector(
+    tls_verify_certificate: bool,
+    alpn_protocols: Vec<Vec<u8>>,
+    enable_sni: bool,
+    ech_config: Option<EchConfig>,
+    tls_client_certificate: Option<Vec<CertificateDer<'static>>>,
+    tls_client_key: Option<PrivateKeyDer<'static>>,
+) -> anyhow::Result<TlsConnector> {
+    let config = rustls_client_config(
+        tls_verify_certificate,
+        alpn_protocols,
+        enable_sni,
+        ech_config,
+        tls_client_certificate,
+        tls_client_key,
+    )?;
     let tls_connector = TlsConnector::from(Arc::new(config));
     Ok(tls_connector)
 }
 
-pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsAcceptor> {
+pub fn rustls_server_config(
+    tls_cfg: &TlsServerConfig,
+    alpn_protocols: Option<Vec<Vec<u8>>>,
+) -> anyhow::Result<rustls::ServerConfig> {
     let client_cert_verifier = if let Some(tls_client_ca_certificates) = &tls_cfg.tls_client_ca_certificates {
         let mut root_store = RootCertStore::empty();
         for tls_client_ca_certificate in tls_client_ca_certificates.lock().iter() {
@@ -180,6 +202,11 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
     if let Some(alpn_protocols) = alpn_protocols {
         config.alpn_protocols = alpn_protocols;
     }
+    Ok(config)
+}
+
+pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsAcceptor> {
+    let config = rustls_server_config(tls_cfg, alpn_protocols)?;
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
@@ -188,6 +215,8 @@ pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyh
     let tls_config = match &client_cfg.remote_addr {
         TransportAddr::Wss { tls, .. } => tls,
         TransportAddr::Https { tls, .. } => tls,
+        // Quic variant handles both Quic and Quics schemes
+        TransportAddr::Quic { tls, .. } => tls,
         TransportAddr::Http { .. } | TransportAddr::Ws { .. } => {
             return Err(anyhow!("Transport does not support TLS: {}", client_cfg.remote_addr.scheme()));
         }

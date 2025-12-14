@@ -654,6 +654,36 @@ like normal traffic to bypass your firewall/proxy.
 Some firewall may not like to see request with content-length not set, or with content-type set to
 application/octet-stream
 
+### Use QUIC instead of websocket for the transport protocol <a name="quic"></a>
+
+Use this if TCP is blocked by your firewall/proxy, but UDP is allowed. It provides better performance on lossy networks.
+
+Start your wstunnel server as usual (it listens on both TCP and UDP if configured):
+
+```bash
+wstunnel server wss://[::]:8080
+```
+
+On the client the only difference is to specify quic:// instead of wss://
+
+```bash
+wstunnel client -L socks5://127.0.0.1:8888 quic://myRemoteHost:8080
+```
+
+**Note**: QUIC always uses TLS. A TLS certificate configuration is required on the server side, similar to WSS and HTTPS. The client will validate the certificate by default.
+
+#### Server Scheme Selection
+
+When TLS is enabled (by using `wss://`, `https://`, or `quic[s]://`), the server automatically binds to **both** TCP and UDP on the specified port.
+
+| Server Command Scheme | TLS Enabled? | Listeners Started | Clients that can connect |
+| :--- | :--- | :--- | :--- |
+| `wss://0.0.0.0:443` | **YES** | TCP:443 **AND** UDP:443 | `wss://`, `https://`, `quic://` |
+| `https://0.0.0.0:443` | **YES** | TCP:443 **AND** UDP:443 | `wss://`, `https://`, `quic://` |
+| `quic://0.0.0.0:443` | **YES** | TCP:443 **AND** UDP:443 | `wss://`, `https://`, `quic://` |
+| `wss://0.0.0.0:443 --quic-listen 0.0.0.0:4433` | **YES** | TCP:443 **AND** UDP:4433 | `wss://`, `https://` (on 443); `quic://` (on 4433) |
+| `ws://0.0.0.0:80` | NO | TCP:80 only | `ws://`, `http://` |
+
 ### Maximize your stealthiness/Make your traffic discrete <a name="stealth"></a>
 
 * Use wstunnel with TLS activated (wss://) and use your own certificate

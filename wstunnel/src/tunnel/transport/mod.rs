@@ -9,6 +9,7 @@ use tracing::error;
 pub mod http2;
 pub mod io;
 mod jwt;
+pub mod quic;
 mod types;
 pub mod websocket;
 

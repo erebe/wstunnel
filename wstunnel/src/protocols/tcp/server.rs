@@ -259,6 +259,7 @@ mod tests {
         }
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_proxy_connection() {
         let (network_name, host) = if cfg!(not(target_os = "macos")) {

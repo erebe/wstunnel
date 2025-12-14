@@ -26,6 +26,11 @@ pub struct WsClientConfig {
     pub websocket_mask_frame: bool,
     pub http_proxy: Option<Url>,
     pub dns_resolver: DnsResolver,
+    pub quic_max_idle_timeout: Option<Duration>,
+    pub quic_keep_alive_interval: Duration,
+    pub quic_max_concurrent_bi_streams: u64,
+    pub quic_initial_max_data: u64,
+    pub quic_initial_max_stream_data: u64,
 }
 
 impl WsClientConfig {

@@ -1,6 +1,6 @@
 [package]
 name = "wstunnel"
-version = "10.5.2"
+version = "10.6.0"
 edition = "2024"
 repository = "https://github.com/erebe/wstunnel.git"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -53,6 +53,7 @@ uuid = { version = "1.18.1", features = ["v7", "serde"] }
 derive_more = { version = "2.0.1", features = ["display", "error"] }
 
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["logging", "tls12"] }
+quinn = { version = "0.11", default-features = false, features = ["rustls", "runtime-tokio"] }
 rcgen = { version = "0.14.5", default-features = false, features = [] }
 hickory-resolver = { version = "0.25.2", default-features = false, features = [
   "system-config",

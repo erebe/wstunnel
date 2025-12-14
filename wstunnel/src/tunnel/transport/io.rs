@@ -1,4 +1,5 @@
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
+use crate::tunnel::transport::quic::{QuicTunnelRead, QuicTunnelWrite};
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
 use bytes::{BufMut, BytesMut};
 use futures_util::{FutureExt, pin_mut};
@@ -35,6 +36,7 @@ pub trait TunnelRead: Send + 'static {
 pub enum TunnelReader {
     Websocket(WebsocketTunnelRead),
     Http2(Http2TunnelRead),
+    Quic(QuicTunnelRead),
 }
 
 impl TunnelRead for TunnelReader {
@@ -42,6 +44,7 @@ impl TunnelRead for TunnelReader {
         match self {
             Self::Websocket(s) => s.copy(writer).await,
             Self::Http2(s) => s.copy(writer).await,
+            Self::Quic(s) => s.copy(writer).await,
         }
     }
 }
@@ -49,6 +52,7 @@ impl TunnelRead for TunnelReader {
 pub enum TunnelWriter {
     Websocket(WebsocketTunnelWrite),
     Http2(Http2TunnelWrite),
+    Quic(QuicTunnelWrite),
 }
 
 impl TunnelWrite for TunnelWriter {
@@ -56,6 +60,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.buf_mut(),
             Self::Http2(s) => s.buf_mut(),
+            Self::Quic(s) => s.buf_mut(),
         }
     }
 
@@ -63,6 +68,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.write().await,
             Self::Http2(s) => s.write().await,
+            Self::Quic(s) => s.write().await,
         }
     }
 
@@ -70,6 +76,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.ping().await,
             Self::Http2(s) => s.ping().await,
+            Self::Quic(s) => s.ping().await,
         }
     }
 
@@ -77,6 +84,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.close().await,
             Self::Http2(s) => s.close().await,
+            Self::Quic(s) => s.close().await,
         }
     }
 
@@ -84,6 +92,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.pending_operations_notify(),
             Self::Http2(s) => s.pending_operations_notify(),
+            Self::Quic(s) => s.pending_operations_notify(),
         }
     }
 
@@ -91,6 +100,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.handle_pending_operations().await,
             Self::Http2(s) => s.handle_pending_operations().await,
+            Self::Quic(s) => s.handle_pending_operations().await,
         }
     }
 }
@@ -174,16 +184,22 @@ pub async fn propagate_local_to_remote(
     Ok(())
 }
 
-pub async fn propagate_remote_to_local(
+pub async fn propagate_remote_to_local<F>(
     local_tx: impl AsyncWrite + Send,
     mut ws_rx: impl TunnelRead,
     mut close_rx: oneshot::Receiver<()>,
-) -> anyhow::Result<()> {
+    graceful_shutdown: F,
+) -> anyhow::Result<()>
+where
+    F: Future<Output = ()> + Send,
+{
     let _guard = scopeguard::guard((), |_| {
         info!("Closing local <= remote tunnel");
     });
 
     pin_mut!(local_tx);
+    pin_mut!(graceful_shutdown);
+
     loop {
         let msg = select! {
             biased;
@@ -200,6 +216,11 @@ pub async fn propagate_remote_to_local(
             break;
         }
     }
+
+    // Before we close the tunnel, we wait for the graceful shutdown to complete
+    // This is important to ensure that we don't close the tunnel while there are still
+    // pending operations
+    graceful_shutdown.await;
 
     Ok(())
 }

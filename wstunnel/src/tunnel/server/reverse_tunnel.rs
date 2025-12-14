@@ -11,6 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use tokio::sync::Notify;
 use tokio::task::AbortHandle;
 use tokio::{select, time};
 use tracing::{Instrument, Span, info};
@@ -20,6 +21,18 @@ struct ReverseTunnelItem<T: TunnelListener> {
     receiver: async_channel::Receiver<((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr)>,
     nb_seen_clients: Arc<AtomicUsize>,
     server_task: AbortHandle,
+    sessions: Arc<Mutex<AHashMap<usize, Arc<Notify>>>>,
+}
+
+impl<T: TunnelListener> Clone for ReverseTunnelItem<T> {
+    fn clone(&self) -> Self {
+        Self {
+            receiver: self.receiver.clone(),
+            nb_seen_clients: self.nb_seen_clients.clone(),
+            server_task: self.server_task.clone(),
+            sessions: self.sessions.clone(),
+        }
+    }
 }
 
 impl<T: TunnelListener> ReverseTunnelItem<T> {
@@ -32,20 +45,16 @@ impl<T: TunnelListener> ReverseTunnelItem<T> {
     }
 }
 
-impl<T: TunnelListener> Drop for ReverseTunnelItem<T> {
-    fn drop(&mut self) {
-        self.server_task.abort();
-    }
-}
-
 pub struct ReverseTunnelServer<T: TunnelListener> {
     servers: Arc<Mutex<AHashMap<SocketAddr, ReverseTunnelItem<T>>>>,
+    binding_locks: Arc<Mutex<AHashMap<SocketAddr, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl<T: TunnelListener> ReverseTunnelServer<T> {
     pub fn new() -> Self {
         Self {
             servers: Arc::new(Mutex::new(AHashMap::with_capacity(1))),
+            binding_locks: Arc::new(Mutex::new(AHashMap::new())),
         }
     }
 
@@ -55,17 +64,44 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
         bind_addr: SocketAddr,
         idle_timeout: Duration,
         gen_listening_server: impl Future<Output = anyhow::Result<T>>,
-    ) -> anyhow::Result<((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr)>
+        conn_id: usize,
+    ) -> anyhow::Result<(
+        ((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr),
+        Arc<Notify>,
+    )>
     where
         T: TunnelListener + Send + 'static,
     {
-        let listening_server = self
-            .servers
-            .lock()
-            .get(&bind_addr)
-            .map(|server| server.get_cnx_awaiter());
-        let cnx = if let Some(listening_server) = listening_server {
-            listening_server
+        let bind_lock = {
+            let mut locks = self.binding_locks.lock();
+            locks
+                .entry(bind_addr)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        let _guard = bind_lock.lock().await;
+
+        let item = self.servers.lock().get(&bind_addr).cloned();
+        let (cnx_awaiter, session_notify) = if let Some(item) = item {
+            {
+                let mut sessions = item.sessions.lock();
+                let keys: Vec<_> = sessions.keys().cloned().collect();
+                for id in keys {
+                    if id != conn_id {
+                        if let Some(notify) = sessions.remove(&id) {
+                            notify.notify_waiters();
+                        }
+                    }
+                }
+                let notify = sessions
+                    .entry(conn_id)
+                    .or_insert_with(|| Arc::new(Notify::new()))
+                    .clone();
+
+                let cnx_awaiter = item.get_cnx_awaiter();
+                while cnx_awaiter.try_recv().is_ok() {}
+                (cnx_awaiter, notify)
+            }
         } else {
             let listening_server = gen_listening_server.await?;
             let (tx, rx) = async_channel::bounded(10);
@@ -92,9 +128,19 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
                                     continue;
                                 }
                                 Some(Ok(cnx)) => {
-                                    if time::timeout(idle_timeout, tx.send(cnx)).await.is_err() {
-                                        info!("New reverse connection failed to be picked by client after {}s. Closing reverse tunnel server", idle_timeout.as_secs());
-                                        break;
+                                    match time::timeout(idle_timeout, tx.send(cnx)).await {
+                                        Ok(Ok(())) => {}
+                                        Ok(Err(_)) => {
+                                            info!("All clients disconnected. Closing reverse tunnel server");
+                                            break;
+                                        }
+                                        Err(_) => {
+                                            info!(
+                                                "New reverse connection failed to be picked by client after {}s. Closing reverse tunnel server",
+                                                idle_timeout.as_secs()
+                                            );
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -111,22 +157,28 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
                     }
                 }
                 info!("Stopping listening reverse server");
-            }.instrument(Span::current());
+            }
+            .instrument(Span::current());
+
+            let sessions = Arc::new(Mutex::new(AHashMap::new()));
+            let notify = Arc::new(Notify::new());
+            sessions.lock().insert(conn_id, notify.clone());
 
             let item = ReverseTunnelItem {
                 receiver: rx,
                 nb_seen_clients,
                 server_task: executor.spawn(fut),
+                sessions,
             };
             let cnx_awaiter = item.get_cnx_awaiter();
             self.servers.lock().insert(bind_addr, item);
-            cnx_awaiter
+            (cnx_awaiter, notify)
         };
 
-        let cnx = cnx
+        let cnx = cnx_awaiter
             .recv()
             .await
             .map_err(|_| anyhow!("listening reverse server stopped"))?;
-        Ok(cnx)
+        Ok((cnx, session_notify))
     }
 }

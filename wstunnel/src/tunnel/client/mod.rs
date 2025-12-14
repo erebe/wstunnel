@@ -3,6 +3,7 @@ mod client;
 mod cnx_pool;
 mod config;
 pub mod l4_transport_stream;
+mod quic_cnx_pool;
 
 pub use client::WsClient;
 pub use config::TlsClientConfig;

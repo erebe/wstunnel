@@ -86,6 +86,10 @@ pub struct Client {
     ))]
     pub reverse_tunnel_connection_retry_max_backoff: Duration,
 
+    /// Max concurrent reverse tunnel connections
+    #[arg(long, value_name = "INT", verbatim_doc_comment, default_value = "10")]
+    pub reverse_tunnel_concurrency: usize,
+
     /// Domain name that will be used as SNI during TLS handshake
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
     ///          or it will be flagged as fishy and your request rejected
@@ -106,7 +110,7 @@ pub struct Client {
     pub tls_sni_disable: bool,
 
     /// Enable ECH (encrypted sni) during TLS handshake to wstunnel server.
-    /// Warning: Ech DNS config is not refreshed over time. It is retrieved only once at startup of the program  
+    /// Warning: Ech DNS config is not refreshed over time. It is retrieved only once at startup of the program
     #[cfg_attr(feature = "clap", arg(long, verbatim_doc_comment))]
     pub tls_ech_enable: bool,
 
@@ -177,6 +181,17 @@ pub struct Client {
     ))]
     pub websocket_ping_frequency: Option<Duration>,
 
+    /// [QUIC] Frequency at which the client will send QUIC PING frames to keep the connection alive.
+    /// This is crucial for NAT traversal when the tunnel is idle.
+    #[cfg_attr(feature = "clap", arg(
+            long,
+            value_name = "DURATION(s|m|h)",
+            default_value = "10s",
+            value_parser = parsers::parse_duration_sec,
+            verbatim_doc_comment
+        ))]
+    pub quic_keep_alive_interval: Duration,
+
     /// Enable the masking of websocket frames. Default is false
     /// Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
     #[cfg_attr(feature = "clap", arg(long, default_value = "false", verbatim_doc_comment))]
@@ -204,7 +219,7 @@ pub struct Client {
     ///   - if you have wstunnel behind a reverse proxy, most of them (i.e: nginx) are going to turn http2 request into http1
     ///     This is not going to work, because http1 does not support streaming naturally
     ///   - The only way to make it works with http2 is to have wstunnel directly exposed to the internet without any reverse proxy in front of it
-    #[cfg_attr(feature = "clap", arg(value_name = "ws[s]|http[s]://wstunnel.server.com[:port]", value_parser = parsers::parse_server_url, verbatim_doc_comment))]
+    #[cfg_attr(feature = "clap", arg(value_name = "ws[s]|http[s]|quic[s]://wstunnel.server.com[:port]", value_parser = parsers::parse_server_url, verbatim_doc_comment))]
     pub remote_addr: Url,
 
     /// [Optional] Certificate (pem) to present to the server when connecting over TLS (HTTPS).
@@ -245,6 +260,41 @@ pub struct Client {
         )
     )]
     pub dns_resolver_prefer_ipv4: bool,
+
+    /// [QUIC] Maximum idle timeout for QUIC connections. The connection will be closed if no activity is detected within this duration.
+    /// This helps to free up resources when connections are no longer needed.
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "30s",
+        value_parser = parsers::parse_duration_sec,
+        verbatim_doc_comment
+    ))]
+    pub quic_max_idle_timeout: Option<Duration>,
+
+    /// [QUIC] Maximum number of concurrent bidirectional streams that can be open on a single QUIC connection.
+    /// Increasing this allows more tunnels to share a single connection, but uses more memory.
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, value_name = "INT", default_value = "100", verbatim_doc_comment)
+    )]
+    pub quic_max_concurrent_bi_streams: u64,
+
+    /// [QUIC] Initial maximum data that can be sent on the connection before waiting for acknowledgment.
+    /// Higher values can improve throughput on high-latency connections.
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, value_name = "BYTES", default_value = "10485760", verbatim_doc_comment)
+    )]
+    pub quic_initial_max_data: u64,
+
+    /// [QUIC] Initial maximum data that can be sent on a single stream before waiting for acknowledgment.
+    /// Higher values can improve throughput for large transfers.
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, value_name = "BYTES", default_value = "1048576", verbatim_doc_comment)
+    )]
+    pub quic_initial_max_stream_data: u64,
 }
 
 #[derive(Debug)]
@@ -254,8 +304,14 @@ pub struct Server {
     /// Example: With TLS wss://0.0.0.0:8080 or without ws://[::]:8080
     ///
     /// The server is capable of detecting by itself if the request is websocket or http2. So you don't need to specify it.
-    #[cfg_attr(feature = "clap", arg(value_name = "ws[s]://0.0.0.0[:port]", value_parser = parsers::parse_server_url, verbatim_doc_comment))]
+    #[cfg_attr(feature = "clap", arg(value_name = "ws[s]|http[s]|quic[s]://0.0.0.0[:port]", value_parser = parsers::parse_server_url, verbatim_doc_comment))]
     pub remote_addr: Url,
+
+    /// [Optional] Address for the QUIC (UDP) listener to bind to.
+    /// If not provided, it defaults to the same address as the main TCP listener.
+    /// Use this to expose QUIC on a different port (e.g., direct UDP mapping) while TCP is behind a reverse proxy.
+    #[cfg_attr(feature = "clap", arg(long, value_name = "IP:PORT", verbatim_doc_comment))]
+    pub quic_listen: Option<SocketAddr>,
 
     /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
     /// You need to use {root, sudo, capabilities} to run wstunnel when using this option
@@ -273,6 +329,17 @@ pub struct Server {
         verbatim_doc_comment
     ))]
     pub websocket_ping_frequency: Option<Duration>,
+
+    /// [QUIC] Frequency at which the server will send QUIC PING frames to keep the connection alive.
+    /// This is crucial for NAT traversal when the tunnel is idle.
+    #[cfg_attr(feature = "clap", arg(
+            long,
+            value_name = "DURATION(s|m|h)",
+            default_value = "60s",
+            value_parser = parsers::parse_duration_sec,
+            verbatim_doc_comment
+        ))]
+    pub quic_keep_alive_interval: Duration,
 
     /// Enable the masking of websocket frames. Default is false
     /// Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
@@ -399,6 +466,37 @@ pub struct Server {
         verbatim_doc_comment,
     ))]
     pub remote_to_local_server_idle_timeout: Duration,
+
+    /// [QUIC] Maximum idle timeout for QUIC connections. The connection will be closed if no activity is detected within this duration.
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "150s",
+        value_parser = parsers::parse_duration_sec,
+        verbatim_doc_comment
+    ))]
+    pub quic_max_idle_timeout: Option<Duration>,
+
+    /// [QUIC] Maximum number of concurrent bidirectional streams per connection.
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, value_name = "INT", default_value = "100", verbatim_doc_comment)
+    )]
+    pub quic_max_concurrent_bi_streams: u64,
+
+    /// [QUIC] Initial maximum data that can be sent on the connection.
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, value_name = "BYTES", default_value = "10485760", verbatim_doc_comment)
+    )]
+    pub quic_initial_max_data: u64,
+
+    /// [QUIC] Initial maximum data that can be sent on a single stream.
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, value_name = "BYTES", default_value = "1048576", verbatim_doc_comment)
+    )]
+    pub quic_initial_max_stream_data: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]

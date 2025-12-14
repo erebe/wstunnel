@@ -64,8 +64,10 @@ pub(super) async fn ws_server_upgrade(
             };
             let (close_tx, close_rx) = oneshot::channel::<()>();
 
-            executor
-                .spawn(transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).instrument(Span::current()));
+            executor.spawn(
+                transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx, async {})
+                    .instrument(Span::current()),
+            );
 
             let _ = transport::io::propagate_local_to_remote(
                 local_rx,

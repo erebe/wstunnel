@@ -9,12 +9,14 @@ pub enum TransportScheme {
     Wss,
     Http,
     Https,
+    Quic,
+    Quics,
 }
 
 impl TransportScheme {
     #[cfg(feature = "clap")] // this is only used inside a clap value parser
     pub const fn values() -> &'static [Self] {
-        &[Self::Ws, Self::Wss, Self::Http, Self::Https]
+        &[Self::Ws, Self::Wss, Self::Http, Self::Https, Self::Quic, Self::Quics]
     }
     pub const fn to_str(self) -> &'static str {
         match self {
@@ -22,6 +24,8 @@ impl TransportScheme {
             Self::Wss => "wss",
             Self::Http => "http",
             Self::Https => "https",
+            Self::Quic => "quic",
+            Self::Quics => "quics",
         }
     }
 
@@ -31,6 +35,7 @@ impl TransportScheme {
             Self::Wss => vec![b"http/1.1".to_vec()],
             Self::Http => vec![],
             Self::Https => vec![b"h2".to_vec()],
+            Self::Quic | Self::Quics => vec![b"h3".to_vec()],
         }
     }
 }
@@ -43,6 +48,8 @@ impl FromStr for TransportScheme {
             "http" => Ok(Self::Http),
             "wss" => Ok(Self::Wss),
             "ws" => Ok(Self::Ws),
+            "quic" => Ok(Self::Quic),
+            "quics" => Ok(Self::Quics),
             _ => Err(()),
         }
     }
@@ -75,6 +82,12 @@ pub enum TransportAddr {
     },
     Http {
         scheme: TransportScheme,
+        host: Host,
+        port: u16,
+    },
+    Quic {
+        scheme: TransportScheme,
+        tls: TlsClientConfig,
         host: Host,
         port: u16,
     },
@@ -111,6 +124,12 @@ impl TransportAddr {
                 host,
                 port,
             }),
+            TransportScheme::Quic | TransportScheme::Quics => Some(Self::Quic {
+                scheme,
+                tls: tls?,
+                host,
+                port,
+            }),
         }
     }
 
@@ -118,6 +137,7 @@ impl TransportAddr {
         match self {
             Self::Wss { tls, .. } => Some(tls),
             Self::Https { tls, .. } => Some(tls),
+            Self::Quic { tls, .. } => Some(tls),
             Self::Ws { .. } => None,
             Self::Http { .. } => None,
         }
@@ -129,6 +149,7 @@ impl TransportAddr {
             Self::Ws { host, .. } => host,
             Self::Https { host, .. } => host,
             Self::Http { host, .. } => host,
+            Self::Quic { host, .. } => host,
         }
     }
 
@@ -138,6 +159,7 @@ impl TransportAddr {
             Self::Ws { port, .. } => *port,
             Self::Https { port, .. } => *port,
             Self::Http { port, .. } => *port,
+            Self::Quic { port, .. } => *port,
         }
     }
 
@@ -147,6 +169,7 @@ impl TransportAddr {
             Self::Ws { scheme, .. } => scheme,
             Self::Https { scheme, .. } => scheme,
             Self::Http { scheme, .. } => scheme,
+            Self::Quic { scheme, .. } => scheme,
         }
     }
 }

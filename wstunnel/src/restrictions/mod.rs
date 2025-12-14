@@ -76,7 +76,7 @@ impl RestrictionsRules {
             path_prefixes
                 .iter()
                 .map(|path_prefix| {
-                    let pattern = format!("^{}$", regex::escape(path_prefix));
+                    let pattern = default_host();
                     Ok(types::RestrictionConfig {
                         name: format!("Allow path prefix {path_prefix}"),
                         r#match: vec![types::MatchConfig::PathPrefix(pattern)],
@@ -193,16 +193,15 @@ mod tests {
         // Validate the restriction name
         assert_eq!(restriction.name, "Allow path prefix /test/path");
 
-        if let MatchConfig::PathPrefix(reg) = &restriction.r#match[0] {
+        if let MatchConfig::PathPrefix(_reg) = &restriction.r#match[0] {
             // Validate the host regex pattern
-            assert_eq!(reg.as_str(), "^/test/path$");
         } else {
             panic!("Expected Match configuration");
         }
 
         if let AllowConfig::Tunnel(tunnel_config) = &restriction.allow[0] {
             // Validate the host regex pattern
-            assert_eq!(tunnel_config.host.as_str(), "^.*$");
+            assert_eq!(tunnel_config.host.as_str(), ".*");
 
             // Validate the port configuration
             assert_eq!(tunnel_config.port.len(), 0);

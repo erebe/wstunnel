@@ -11,7 +11,7 @@ use bytes::Bytes;
 use derive_more::{Display, Error};
 use http_body_util::Either;
 use http_body_util::combinators::BoxBody;
-use hyper::body::{Body, Incoming};
+use hyper::body::Body;
 use hyper::header::{AUTHORIZATION, COOKIE, HeaderValue, SEC_WEBSOCKET_PROTOCOL};
 use hyper::{Request, Response, StatusCode, http};
 use jsonwebtoken::TokenData;
@@ -54,12 +54,12 @@ pub(super) fn find_mapped_port(req_port: u16, restriction: &RestrictionConfig) -
 }
 
 #[inline]
-pub(super) fn extract_authorization(req: &Request<Incoming>) -> Option<&str> {
+pub(super) fn extract_authorization<B>(req: &Request<B>) -> Option<&str> {
     req.headers().get(AUTHORIZATION)?.to_str().ok()
 }
 
 #[inline]
-pub(super) fn extract_x_forwarded_for(req: &Request<Incoming>) -> Option<(IpAddr, &str)> {
+pub(super) fn extract_x_forwarded_for<B>(req: &Request<B>) -> Option<(IpAddr, &str)> {
     let x_forward_for = req.headers().get("X-Forwarded-For")?;
 
     // X-Forwarded-For: <client>, <proxy1>, <proxy2>
@@ -93,7 +93,7 @@ pub(super) enum PathPrefixErr {
 }
 
 #[inline]
-pub(super) fn extract_tunnel_info(req: &Request<Incoming>) -> anyhow::Result<TokenData<JwtTunnelConfig>> {
+pub(super) fn extract_tunnel_info<B>(req: &Request<B>) -> anyhow::Result<TokenData<JwtTunnelConfig>> {
     let jwt = req
         .headers()
         .get(SEC_WEBSOCKET_PROTOCOL)

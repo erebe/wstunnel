@@ -3,6 +3,7 @@ use crate::tunnel;
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::client::cnx_pool::WsConnection;
+use crate::tunnel::client::quic_cnx_pool::QuicConnection;
 use crate::tunnel::connectors::TunnelConnector;
 use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::tls_reloader::TlsReloader;
@@ -16,7 +17,7 @@ use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::oneshot;
+use tokio::sync::{Semaphore, oneshot};
 use tokio_stream::StreamExt;
 use tracing::{Instrument, Level, Span, error, event, span};
 use url::Host;
@@ -26,7 +27,9 @@ use uuid::Uuid;
 pub struct WsClient<E: TokioExecutorRef = DefaultTokioExecutor> {
     pub config: Arc<WsClientConfig>,
     pub cnx_pool: bb8::Pool<WsConnection>,
+    pub quic_cnx_pool: Option<bb8::Pool<QuicConnection>>,
     reverse_tunnel_connection_retry_max_backoff: Duration,
+    reverse_tunnel_concurrency: usize,
     _tls_reloader: Arc<TlsReloader>,
     pub(crate) executor: E,
 }
@@ -37,6 +40,7 @@ impl<E: TokioExecutorRef> WsClient<E> {
         connection_min_idle: u32,
         connection_retry_max_backoff: Duration,
         reverse_tunnel_connection_retry_max_backoff: Duration,
+        reverse_tunnel_concurrency: usize,
         executor: E,
     ) -> anyhow::Result<Self> {
         let config = Arc::new(config);
@@ -51,10 +55,30 @@ impl<E: TokioExecutorRef> WsClient<E> {
             .build(cnx)
             .await?;
 
+        // Create QUIC connection pool if using QUIC transport
+        let quic_cnx_pool = match config.remote_addr.scheme() {
+            TransportScheme::Quic | TransportScheme::Quics => {
+                let quic_cnx = QuicConnection::new(config.clone());
+                let pool = bb8::Pool::builder()
+                    .max_size(1000)
+                    .min_idle(Some(connection_min_idle))
+                    // No max_lifetime for QUIC - connections can have long-lived streams
+                    // (reverse tunnels, long file transfers, etc.)
+                    .connection_timeout(connection_retry_max_backoff)
+                    .retry_connection(true)
+                    .build(quic_cnx)
+                    .await?;
+                Some(pool)
+            }
+            _ => None,
+        };
+
         Ok(Self {
             config,
             cnx_pool,
+            quic_cnx_pool,
             reverse_tunnel_connection_retry_max_backoff,
+            reverse_tunnel_concurrency,
             _tls_reloader: Arc::new(tls_reloader),
             executor,
         })
@@ -82,6 +106,11 @@ impl<E: TokioExecutorRef> WsClient<E> {
                     .await
                     .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
             }
+            TransportScheme::Quic | TransportScheme::Quics => {
+                tunnel::transport::quic::connect(request_id, self, remote_cfg)
+                    .await
+                    .map(|(r, w, response)| (TunnelReader::Quic(r), TunnelWriter::Quic(w), response))?
+            }
         };
 
         debug!("Server response: {response:?}");
@@ -96,7 +125,7 @@ impl<E: TokioExecutorRef> WsClient<E> {
         );
 
         // Forward websocket rx to local rx
-        let _ = super::super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).await;
+        let _ = super::super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx, async {}).await;
 
         Ok(())
     }
@@ -151,7 +180,15 @@ impl<E: TokioExecutorRef> WsClient<E> {
         }
 
         let mut reconnect_delay = new_reconnect_delay(self.reverse_tunnel_connection_retry_max_backoff);
+        // Limit the number of concurrent reverse tunnels
+        let semaphore = Arc::new(Semaphore::new(self.reverse_tunnel_concurrency));
+
         loop {
+            let permit = match semaphore.clone().acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => break Ok(()),
+            };
+
             let client = self.clone();
             let request_id = Uuid::now_v7();
             let span = span!(
@@ -160,6 +197,7 @@ impl<E: TokioExecutorRef> WsClient<E> {
                 id = request_id.to_string(),
                 remote = format!("{}:{}", remote_addr.host, remote_addr.port)
             );
+            event!(parent: &span, Level::DEBUG, "Reverse tunnel: Starting connection attempt with scheme {:?}", client.config.remote_addr.scheme());
             // Correctly configure tunnel cfg
             let (ws_rx, ws_tx, response) = match client.config.remote_addr.scheme() {
                 TransportScheme::Ws | TransportScheme::Wss => {
@@ -182,6 +220,24 @@ impl<E: TokioExecutorRef> WsClient<E> {
                         .await
                     {
                         Ok((r, w, response)) => (TunnelReader::Http2(r), TunnelWriter::Http2(w), response),
+                        Err(err) => {
+                            let reconnect_delay = reconnect_delay();
+                            event!(parent: &span, Level::ERROR, "Retrying in {:?}, cannot connect to remote server: {:?}", reconnect_delay, err);
+                            tokio::time::sleep(reconnect_delay).await;
+                            continue;
+                        }
+                    }
+                }
+                TransportScheme::Quic | TransportScheme::Quics => {
+                    event!(parent: &span, Level::DEBUG, "Reverse tunnel: Attempting QUIC connection for request {}", request_id);
+                    match tunnel::transport::quic::connect(request_id, &client, &remote_addr)
+                        .instrument(span.clone())
+                        .await
+                    {
+                        Ok((r, w, response)) => {
+                            event!(parent: &span, Level::DEBUG, "Reverse tunnel: QUIC connection succeeded");
+                            (TunnelReader::Quic(r), TunnelWriter::Quic(w), response)
+                        }
                         Err(err) => {
                             let reconnect_delay = reconnect_delay();
                             event!(parent: &span, Level::ERROR, "Retrying in {:?}, cannot connect to remote server: {:?}", reconnect_delay, err);
@@ -222,10 +278,25 @@ impl<E: TokioExecutorRef> WsClient<E> {
             });
 
             // Forward websocket rx to local rx
-            self.executor.spawn(
-                super::super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx)
-                    .instrument(span.clone()),
-            );
+            let graceful_shutdown = async move {
+                if let TransportScheme::Quic | TransportScheme::Quics = client.config.remote_addr.scheme() {
+                    // For QUIC, we need to wait a bit before closing the tunnel to allow the client to receive the response
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            };
+
+            self.executor.spawn(async move {
+                // Hold onto the permit until the tunnel is closed
+                let _permit = permit;
+                let _ = super::super::transport::io::propagate_remote_to_local(
+                    local_tx,
+                    ws_rx,
+                    close_rx,
+                    graceful_shutdown,
+                )
+                .instrument(span.clone())
+                .await;
+            });
         }
     }
 }

@@ -48,7 +48,7 @@ pub(super) async fn http_server_upgrade(
 
     let (close_tx, close_rx) = oneshot::channel::<()>();
     server.executor.spawn(
-        transport::io::propagate_remote_to_local(local_tx, Http2TunnelRead::new(ws_rx, None), close_rx)
+        transport::io::propagate_remote_to_local(local_tx, Http2TunnelRead::new(ws_rx, None), close_rx, async {})
             .instrument(Span::current()),
     );
 

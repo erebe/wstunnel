@@ -8,6 +8,10 @@ mod somark;
 mod test_integrations;
 pub mod tunnel;
 
+pub fn init_crypto() {
+    protocols::tls::init();
+}
+
 use crate::config::{Client, DEFAULT_CLIENT_UPGRADE_PATH_PREFIX, Server};
 use crate::executor::{TokioExecutor, TokioExecutorRef};
 use crate::protocols::dns::DnsResolver;
@@ -91,7 +95,7 @@ pub async fn create_client(
     let transport_scheme = TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
     let tls = match transport_scheme {
         TransportScheme::Ws | TransportScheme::Http => None,
-        TransportScheme::Wss | TransportScheme::Https => {
+        TransportScheme::Wss | TransportScheme::Https | TransportScheme::Quic | TransportScheme::Quics => {
             let ech_config = if args.tls_ech_enable {
                 #[cfg(not(feature = "aws-lc-rs"))]
                 return Err(anyhow!(
@@ -147,7 +151,7 @@ pub async fn create_client(
         remote_addr: TransportAddr::new(
             TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
             args.remote_addr.host().unwrap().to_owned(),
-            args.remote_addr.port_or_known_default().unwrap(),
+            args.remote_addr.port_or_known_default().unwrap_or(443),
             tls,
         )
         .unwrap(),
@@ -160,11 +164,16 @@ pub async fn create_client(
         timeout_connect: Duration::from_secs(10),
         websocket_ping_frequency: args
             .websocket_ping_frequency
-            .or(Some(Duration::from_secs(30)))
+            .or(Some(Duration::from_secs(10)))
             .filter(|d| d.as_secs() > 0),
         websocket_mask_frame: args.websocket_mask_frame,
         dns_resolver,
         http_proxy,
+        quic_max_idle_timeout: args.quic_max_idle_timeout.filter(|d| d.as_secs() > 0),
+        quic_keep_alive_interval: args.quic_keep_alive_interval,
+        quic_max_concurrent_bi_streams: args.quic_max_concurrent_bi_streams,
+        quic_initial_max_data: args.quic_initial_max_data,
+        quic_initial_max_stream_data: args.quic_initial_max_stream_data,
     };
 
     let client = WsClient::new(
@@ -172,6 +181,7 @@ pub async fn create_client(
         args.connection_min_idle,
         args.connection_retry_max_backoff,
         args.reverse_tunnel_connection_retry_max_backoff,
+        args.reverse_tunnel_concurrency,
         executor,
     )
     .await?;
@@ -446,7 +456,7 @@ pub async fn run_server(args: Server, executor: impl TokioExecutor) -> anyhow::R
 }
 
 async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyhow::Result<()> {
-    let tls_config = if args.remote_addr.scheme() == "wss" {
+    let tls_config = if matches!(args.remote_addr.scheme(), "wss" | "https" | "quic" | "quics") {
         let tls_certificate = if let Some(cert_path) = &args.tls_certificate {
             tls::load_certificates_from_pem(cert_path).expect("Cannot load tls certificate")
         } else {
@@ -522,6 +532,12 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyho
         restriction_config: args.restrict_config,
         http_proxy,
         remote_server_idle_timeout: args.remote_to_local_server_idle_timeout,
+        quic_listen: args.quic_listen,
+        quic_max_idle_timeout: args.quic_max_idle_timeout.filter(|d| d.as_secs() > 0),
+        quic_keep_alive_interval: args.quic_keep_alive_interval,
+        quic_max_concurrent_bi_streams: args.quic_max_concurrent_bi_streams,
+        quic_initial_max_data: args.quic_initial_max_data,
+        quic_initial_max_stream_data: args.quic_initial_max_stream_data,
     };
     let server = WsServer::new(server_config, executor);
 
