@@ -78,6 +78,8 @@ fn server_quic(
         quic_max_concurrent_bi_streams: 100,
         quic_max_idle_timeout: None,
         quic_keep_alive_interval: Duration::from_secs(10),
+        quic_socket_buffer_size: 0,
+        quic_initial_mtu: None,
     };
     WsServer::new(server_config, DefaultTokioExecutor::default())
 }
@@ -101,6 +103,8 @@ fn server_no_tls(dns_resolver: DnsResolver) -> WsServer {
         quic_max_concurrent_bi_streams: 100,
         quic_max_idle_timeout: None,
         quic_keep_alive_interval: Duration::from_secs(10),
+        quic_socket_buffer_size: 0,
+        quic_initial_mtu: None,
     };
     WsServer::new(server_config, DefaultTokioExecutor::default())
 }
@@ -126,6 +130,8 @@ async fn client_ws(dns_resolver: DnsResolver) -> WsClient {
         quic_max_concurrent_bi_streams: 100,
         quic_max_idle_timeout: None,
         quic_keep_alive_interval: Duration::from_secs(10),
+        quic_socket_buffer_size: 0,
+        quic_initial_mtu: None,
     };
 
     WsClient::new(
@@ -186,6 +192,8 @@ async fn client_quic(
         quic_max_concurrent_bi_streams: 100,
         quic_max_idle_timeout: None,
         quic_keep_alive_interval: Duration::from_secs(10),
+        quic_socket_buffer_size: 0,
+        quic_initial_mtu: None,
     };
     WsClient::new(
         client_config,
@@ -610,3 +618,63 @@ async fn test_ws_reverse_tunnel_reconnect(
 //    client.read_buf(&mut buf).await.unwrap();
 //    assert_eq!(&buf[..6], b"world!");
 //}
+
+#[rstest]
+#[timeout(Duration::from_secs(20))]
+#[tokio::test]
+#[serial]
+async fn test_quic_half_close(
+    #[future] client_quic: WsClient,
+    server_quic: WsServer,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let server_h = tokio::spawn(server_quic.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let client_ws = client_quic.await;
+
+    let server = TcpTunnelListener::new(TUNNEL_LISTEN.0, (ENDPOINT_LISTEN.1, ENDPOINT_LISTEN.0.port()), false)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        client_ws.run_tunnel(server).await.unwrap();
+    });
+
+    let mut tcp_listener = protocols::tcp::run_server(ENDPOINT_LISTEN.0, false).await.unwrap();
+    let mut client = protocols::tcp::connect(
+        &TUNNEL_LISTEN.1,
+        TUNNEL_LISTEN.0.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    // Client writes data
+    println!("Client writing Request");
+    client.write_all(b"Request").await.unwrap();
+    // Client shuts down write (Half-Close)
+    println!("Client shutting down write");
+    client.shutdown().await.unwrap();
+
+    let mut dd = tcp_listener.next().await.unwrap().unwrap();
+    let mut buf = vec![0u8; 10];
+    println!("Server reading");
+    let n = dd.read(&mut buf).await.unwrap();
+    println!("Server read {} bytes", n);
+    assert_eq!(&buf[..n], b"Request");
+
+    // Server sends response AFTER Client shutdown
+    println!("Server writing Response");
+    dd.write_all(b"Response").await.unwrap();
+    dd.shutdown().await.unwrap(); // Server finishes
+
+    // Client should read response
+    let mut resp = vec![0u8; 10];
+    println!("Client reading Response");
+    let n = client.read(&mut resp).await.unwrap();
+    println!("Client read {} bytes", n);
+    assert_eq!(&resp[..n], b"Response");
+}

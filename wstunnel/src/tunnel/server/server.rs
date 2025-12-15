@@ -30,10 +30,10 @@ use hyper::{Request, StatusCode, Version, http};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use parking_lot::Mutex;
 use quinn::Endpoint;
-use socket2::SockRef;
+use socket2::{Domain, Protocol, SockRef, Socket, Type};
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
@@ -43,7 +43,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use tracing::{Instrument, Level, Span, debug, error, info, span, warn};
+use tracing::{Instrument, Level, Span, debug, error, info, span, trace, warn};
 use url::{Host, Url};
 
 #[derive(Debug)]
@@ -73,6 +73,8 @@ pub struct WsServerConfig {
     pub quic_max_concurrent_bi_streams: u64,
     pub quic_initial_max_data: u64,
     pub quic_initial_max_stream_data: u64,
+    pub quic_socket_buffer_size: u64,
+    pub quic_initial_mtu: Option<u16>,
 }
 
 #[derive(Clone)]
@@ -483,16 +485,16 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         let restrictions = RestrictionsRulesReloader::new(restrictions, self.config.restriction_config.clone())?;
 
         if let Some(tls_config) = &self.config.tls {
-            info!(
+            debug!(
                 "Configuring QUIC with TLS, client CA certificates: {}",
                 tls_config.tls_client_ca_certificates.is_some()
             );
             let server_config = tls::rustls_server_config(tls_config, Some(vec![b"h3".to_vec()]))?;
-            info!("Created rustls ServerConfig for QUIC, converting to QuicServerConfig");
+            debug!("Created rustls ServerConfig for QUIC, converting to QuicServerConfig");
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
                 quinn::crypto::rustls::QuicServerConfig::try_from(server_config)?,
             ));
-            info!("QuicServerConfig created successfully");
+            debug!("QuicServerConfig created successfully");
             let mut transport = quinn::TransportConfig::default();
 
             // Configure max idle timeout
@@ -531,11 +533,63 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                     .expect("QUIC initial max stream data limit too large"),
             );
 
+            if let Some(mtu) = self.config.quic_initial_mtu {
+                transport.initial_mtu(mtu);
+            }
+
             server_config.transport_config(Arc::new(transport));
 
             let quic_bind_addr = self.config.quic_listen.unwrap_or(self.config.bind);
             info!("Starting QUIC server listening on UDP {}", quic_bind_addr);
-            let endpoint = Endpoint::server(server_config, quic_bind_addr)?;
+
+            let domain = if quic_bind_addr.is_ipv4() {
+                Domain::IPV4
+            } else {
+                Domain::IPV6
+            };
+            let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+
+            if quic_bind_addr.is_ipv6() {
+                socket.set_only_v6(false).ok();
+            }
+
+            // Increase buffer sizes for high throughput
+            let requested_size = if self.config.quic_socket_buffer_size == 0 {
+                25 * 1024 * 1024
+            } else {
+                self.config.quic_socket_buffer_size as usize
+            };
+
+            let _ = socket.set_send_buffer_size(requested_size);
+            let _ = socket.set_recv_buffer_size(requested_size);
+
+            if let Ok(size) = socket.send_buffer_size() {
+                if size < requested_size && self.config.quic_socket_buffer_size > 0 {
+                    warn!(
+                        "QUIC UDP send buffer size is small: {} bytes. This may limit throughput. Consider increasing net.core.wmem_max.",
+                        size
+                    );
+                }
+            }
+            if let Ok(size) = socket.recv_buffer_size() {
+                if size < requested_size && self.config.quic_socket_buffer_size > 0 {
+                    warn!(
+                        "QUIC UDP recv buffer size is small: {} bytes. This may limit throughput. Consider increasing net.core.rmem_max.",
+                        size
+                    );
+                }
+            }
+
+            socket.bind(&quic_bind_addr.into())?;
+            socket.set_nonblocking(true)?;
+            let socket: UdpSocket = socket.into();
+
+            let endpoint = Endpoint::new(
+                quinn::EndpointConfig::default(),
+                Some(server_config),
+                socket,
+                Arc::new(quinn::TokioRuntime),
+            )?;
 
             let server = self.clone();
             let restrictions = restrictions.clone();
@@ -554,7 +608,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                         };
                         let client_addr = connection.remote_address();
                         let conn_id = connection.stable_id();
-                        info!("QUIC connection accepted from {} with stable_id: {}", client_addr, conn_id);
+                        debug!("QUIC connection accepted from {} with stable_id: {}", client_addr, conn_id);
 
                         let span =
                             span!(Level::INFO, "cnx", peer = client_addr.to_string(), cn = tracing::field::Empty);
@@ -571,10 +625,10 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                         async move {
                             // Loop to accept multiple streams on the same QUIC connection
                             loop {
-                                info!("QUIC server: Waiting to accept stream on connection {}", conn_id);
+                                trace!("QUIC server: Waiting to accept stream on connection {}", conn_id);
                                 let (mut send, mut recv) = match connection.accept_bi().await {
                                     Ok(s) => {
-                                        info!("QUIC server: Stream accepted successfully on connection {}", conn_id);
+                                        debug!("QUIC server: Stream accepted successfully on connection {}", conn_id);
                                         s
                                     }
                                     Err(e) => {
@@ -629,7 +683,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
 
                                         match parse_result {
                                             Ok(Some((req, size))) => {
-                                                info!("QUIC server: HTTP request parsed successfully: {} {}", req.method(), req.uri());
+                                                debug!("QUIC server: HTTP request parsed successfully: {} {}", req.method(), req.uri());
 
                                                 // Extract cert vars from QUIC connection if possible
                                                 let cert_vars = if let Some(certs) = connection.peer_identity() {

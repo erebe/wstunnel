@@ -5,7 +5,10 @@ use crate::tunnel::client::l4_transport_stream::TransportStream;
 use bb8::ManageConnection;
 use bytes::Bytes;
 use std::ops::Deref;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::io::AsyncRead;
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -62,8 +65,27 @@ impl ManageConnection for WsConnection {
         }
     }
 
-    async fn is_valid(&self, _conn: &mut Self::Connection) -> Result<(), Self::Error> {
-        Ok(())
+    async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        if let Some(conn) = conn {
+            // Check if connection is closed or has unexpected data
+            let mut buf = [0u8; 1];
+            let mut read_buf = tokio::io::ReadBuf::new(&mut buf);
+            let waker = futures_util::task::noop_waker();
+            let mut cx = Context::from_waker(&waker);
+
+            match Pin::new(conn).poll_read(&mut cx, &mut read_buf) {
+                Poll::Ready(Ok(())) => {
+                    if read_buf.filled().is_empty() {
+                        return Err(anyhow::anyhow!("connection closed"));
+                    } else {
+                        return Err(anyhow::anyhow!("connection has unexpected data"));
+                    }
+                }
+                Poll::Ready(Err(e)) => return Err(e.into()),
+                Poll::Pending => return Ok(()),
+            }
+        }
+        Err(anyhow::anyhow!("connection is None"))
     }
 
     fn has_broken(&self, conn: &mut Self::Connection) -> bool {

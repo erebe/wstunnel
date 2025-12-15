@@ -31,6 +31,9 @@ pub struct WsClientConfig {
     pub quic_max_concurrent_bi_streams: u64,
     pub quic_initial_max_data: u64,
     pub quic_initial_max_stream_data: u64,
+    pub quic_socket_buffer_size: u64,
+    pub quic_initial_mtu: Option<u16>,
+    pub quic_handshake_timeout: Duration,
 }
 
 impl WsClientConfig {

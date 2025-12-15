@@ -1,9 +1,11 @@
 use super::io::{MAX_PACKET_LENGTH, TunnelRead, TunnelWrite};
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::WsClient;
+use crate::tunnel::client::quic_cnx_pool::QuicConnection;
 use crate::tunnel::transport::jwt::tunnel_to_jwt_token;
 use crate::tunnel::transport::{TransportScheme, headers_from_file};
 use anyhow::{Context, anyhow};
+use bb8::ManageConnection;
 use bytes::{Bytes, BytesMut};
 use hyper::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, HOST};
 use hyper::http::response::Parts;
@@ -16,7 +18,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
-use tracing::{debug, info, trace, warn};
+use tokio::time::{Duration, timeout};
+use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
 pub struct QuicTunnelRead {
@@ -43,7 +46,6 @@ impl TunnelRead for QuicTunnelRead {
         }
         match self.inner.read_chunk(MAX_PACKET_LENGTH, true).await {
             Ok(Some(chunk)) => {
-                trace!("QUIC read {} bytes", chunk.bytes.len());
                 writer.write_all(&chunk.bytes).await?;
                 Ok(())
             }
@@ -68,7 +70,7 @@ impl QuicTunnelWrite {
     pub fn new(inner: SendStream) -> Self {
         Self {
             inner,
-            buf: BytesMut::with_capacity(MAX_PACKET_LENGTH),
+            buf: BytesMut::with_capacity(1024 * 1024),
         }
     }
 }
@@ -81,7 +83,12 @@ impl TunnelWrite for QuicTunnelWrite {
     async fn write(&mut self) -> Result<(), io::Error> {
         let data = self.buf.split().freeze();
         match self.inner.write_chunk(data).await {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                if self.buf.capacity() < MAX_PACKET_LENGTH {
+                    self.buf.reserve(MAX_PACKET_LENGTH);
+                }
+                Ok(())
+            }
             Err(e) => Err(io::Error::new(ErrorKind::ConnectionAborted, e)),
         }
     }
@@ -110,38 +117,9 @@ pub async fn connect(
     request_id: Uuid,
     client: &WsClient<impl crate::TokioExecutorRef>,
     dest_addr: &RemoteAddr,
+    allow_pooling: bool,
 ) -> anyhow::Result<(QuicTunnelRead, QuicTunnelWrite, Parts)> {
     debug!("QUIC connect: Starting tunnel connection for request {}", request_id);
-
-    // Get a pooled QUIC connection
-    debug!("QUIC connect: Getting connection from pool");
-    let pooled_cnx = client
-        .quic_cnx_pool
-        .as_ref()
-        .ok_or_else(|| anyhow!("QUIC connection pool not initialized"))?
-        .get()
-        .await
-        .map_err(|err| anyhow!("failed to get a QUIC connection from the pool: {err:?}"))?;
-
-    debug!("QUIC connect: Successfully got pooled connection");
-    let connection = pooled_cnx
-        .as_ref()
-        .ok_or_else(|| anyhow!("pooled connection is None"))?;
-
-    debug!("QUIC connect: Using connection with stable_id: {}", connection.stable_id());
-
-    // Open bi-directional stream on the pooled connection
-    debug!("QUIC connect: Opening bidirectional stream");
-    let (mut send, mut recv) = match connection.open_bi().await {
-        Ok(stream) => {
-            debug!("QUIC connect: Bidirectional stream opened successfully (stream_id likely: TBD)");
-            stream
-        }
-        Err(e) => {
-            warn!("QUIC connect: Failed to open bidirectional stream: {:?}", e);
-            return Err(e).context("failed to open QUIC stream");
-        }
-    };
 
     // 4. Send HTTP handshake
     let (headers_file, authority) =
@@ -221,77 +199,204 @@ pub async fn connect(
     }
     buf.extend_from_slice(b"\r\n");
 
-    debug!("QUIC connect: Sending HTTP request ({} bytes)", buf.len());
-    send.write_all(&buf).await?;
-    debug!("QUIC connect: HTTP request sent successfully");
-
-    // 5. Read response
-    debug!("QUIC connect: Waiting for server response");
-    let mut resp_buf = BytesMut::with_capacity(4096);
-
-    // Read enough for headers
+    let mut attempts = 0;
     loop {
-        let mut header_buf = [httparse::EMPTY_HEADER; 64];
-        debug!("QUIC connect: Reading response chunk");
-        let chunk = recv
-            .read_chunk(4096, true)
-            .await?
-            .ok_or_else(|| anyhow!("Connection closed during handshake"))?;
-        debug!("QUIC connect: Received {} bytes", chunk.bytes.len());
-        resp_buf.extend_from_slice(&chunk.bytes);
+        attempts += 1;
+        let handshake_timeout = if dest_addr.protocol.is_reverse_tunnel() {
+            Duration::from_secs(3600 * 24 * 365) // 1 year
+        } else {
+            client.config.quic_handshake_timeout
+        };
 
-        let (size, parts) = {
-            let mut resp = httparse::Response::new(&mut header_buf);
-            match resp.parse(&resp_buf) {
-                Ok(httparse::Status::Complete(size)) => {
-                    // Parse complete
-                    debug!("QUIC connect: Received complete HTTP response, status: {:?}", resp.code);
-                    if resp.code.unwrap_or(0) != 200 {
-                        warn!("QUIC handshake failed: status {:?}", resp.code);
-                        return Err(anyhow!("QUIC handshake failed: status {:?}", resp.code));
-                    }
+        // Get a QUIC connection
+        // If pooling is allowed, try to get a connection from the pool first.
+        // Otherwise, create a new connection to ensure freshness (e.g. for -L forward tunnels).
+        // We use two Option variables to extend the lifetime of the connection object
+        // so we can borrow it as &quinn::Connection regardless of source.
+        let (pooled_guard, new_connection_guard);
+        let connection: &quinn::Connection = if allow_pooling {
+            debug!("QUIC connect: Getting connection from pool (attempt {})", attempts);
+            pooled_guard = Some(
+                client
+                    .quic_cnx_pool
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("QUIC connection pool not initialized"))?
+                    .get()
+                    .await
+                    .map_err(|err| anyhow!("failed to get a QUIC connection from the pool: {err:?}"))?,
+            );
+            debug!("QUIC connect: Successfully got pooled connection");
+            pooled_guard
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .ok_or_else(|| anyhow!("pooled connection is None"))?
+        } else {
+            debug!("QUIC connect: Creating new connection (attempt {})", attempts);
+            new_connection_guard = Some(
+                QuicConnection::new(client.config.clone())
+                    .connect()
+                    .await
+                    .map_err(|err| anyhow!("failed to connect to QUIC server: {err:?}"))?
+                    .ok_or_else(|| anyhow!("failed to connect to QUIC server"))?,
+            );
+            new_connection_guard.as_ref().unwrap()
+        };
 
-                    let mut parts = Response::builder()
-                        .status(resp.code.unwrap())
-                        .version(hyper::Version::HTTP_11)
-                        .body(())
-                        .unwrap()
-                        .into_parts()
-                        .0;
+        debug!("QUIC connect: Using connection with stable_id: {}", connection.stable_id());
 
-                    for h in resp.headers {
-                        parts.headers.append(
-                            hyper::header::HeaderName::from_str(h.name).unwrap(),
-                            hyper::header::HeaderValue::from_bytes(h.value).unwrap(),
-                        );
-                    }
-                    (size, parts)
-                }
-                Ok(httparse::Status::Partial) => {
-                    debug!("QUIC connect: Partial response, waiting for more data");
+        // Open bi-directional stream on the pooled connection
+        debug!("QUIC connect: Opening bidirectional stream");
+        let (mut send, mut recv): (SendStream, RecvStream) = match connection.open_bi().await {
+            Ok(stream) => {
+                debug!("QUIC connect: Bidirectional stream opened successfully (stream_id likely: TBD)");
+                stream
+            }
+            Err(e) => {
+                warn!("QUIC connect: Failed to open bidirectional stream: {:?}", e);
+                // If we failed to open a stream, the connection might be dead.
+                // Invalidate it and retry if it's the first attempt.
+                if attempts == 1 {
+                    warn!(
+                        "QUIC connect: Connection {} failed to open stream. Closing and retrying.",
+                        connection.stable_id()
+                    );
+                    connection.close(quinn::VarInt::from_u32(0), b"stale connection");
                     continue;
                 }
-                Err(e) => {
-                    warn!("QUIC connect: Failed to parse HTTP response: {:?}", e);
-                    return Err(anyhow!("Failed to parse response: {:?}", e));
-                }
+                return Err(e).context("failed to open QUIC stream");
             }
         };
 
-        let extra_bytes = if resp_buf.len() > size {
-            Some(resp_buf.split_off(size).freeze())
-        } else {
-            None
+        debug!("QUIC connect: Sending HTTP request ({} bytes)", buf.len());
+        match timeout(handshake_timeout, send.write_all(&buf)).await {
+            Ok(Ok(())) => {
+                debug!("QUIC connect: HTTP request sent successfully");
+            }
+            Ok(Err(e)) => {
+                if attempts == 1 {
+                    warn!(
+                        "QUIC connect: Failed to send request on connection {}. Closing and retrying.",
+                        connection.stable_id()
+                    );
+                    connection.close(quinn::VarInt::from_u32(0), b"stale connection");
+                    continue;
+                }
+                return Err(e).context("failed to send HTTP request");
+            }
+            Err(_) => {
+                if attempts == 1 {
+                    warn!(
+                        "QUIC connect: Timed out sending request on connection {}. Closing and retrying.",
+                        connection.stable_id()
+                    );
+                    connection.close(quinn::VarInt::from_u32(0), b"stale connection");
+                    continue;
+                }
+                return Err(anyhow!("QUIC handshake write timed out"));
+            }
+        }
+
+        // 5. Read response
+        debug!("QUIC connect: Waiting for server response with timeout");
+        let mut resp_buf = BytesMut::with_capacity(4096);
+
+        // Read enough for headers
+        let handshake_result = async {
+            loop {
+                let mut header_buf = [httparse::EMPTY_HEADER; 64];
+                debug!("QUIC connect: Reading response chunk");
+                let chunk = recv
+                    .read_chunk(4096, true)
+                    .await?
+                    .ok_or_else(|| anyhow!("Connection closed during handshake"))?;
+                debug!("QUIC connect: Received {} bytes", chunk.bytes.len());
+                resp_buf.extend_from_slice(&chunk.bytes);
+
+                let (size, parts) = {
+                    let mut resp = httparse::Response::new(&mut header_buf);
+                    match resp.parse(&resp_buf) {
+                        Ok(httparse::Status::Complete(size)) => {
+                            // Parse complete
+                            debug!("QUIC connect: Received complete HTTP response, status: {:?}", resp.code);
+                            if resp.code.unwrap_or(0) != 200 {
+                                warn!("QUIC handshake failed: status {:?}", resp.code);
+                                return Err(anyhow!("QUIC handshake failed: status {:?}", resp.code));
+                            }
+
+                            let mut parts = Response::builder()
+                                .status(resp.code.unwrap())
+                                .version(hyper::Version::HTTP_11)
+                                .body(())
+                                .unwrap()
+                                .into_parts()
+                                .0;
+
+                            for h in resp.headers {
+                                parts.headers.append(
+                                    hyper::header::HeaderName::from_str(h.name).unwrap(),
+                                    hyper::header::HeaderValue::from_bytes(h.value).unwrap(),
+                                );
+                            }
+                            (size, parts)
+                        }
+                        Ok(httparse::Status::Partial) => {
+                            debug!("QUIC connect: Partial response, waiting for more data");
+                            continue;
+                        }
+                        Err(e) => {
+                            warn!("QUIC connect: Failed to parse HTTP response: {:?}", e);
+                            return Err(anyhow!("Failed to parse response: {:?}", e));
+                        }
+                    }
+                };
+
+                return Ok((recv, size, parts));
+            }
         };
 
-        info!("QUIC connect: Tunnel established successfully");
-        return Ok((
-            QuicTunnelRead {
-                inner: recv,
-                pre_read: extra_bytes,
-            },
-            QuicTunnelWrite::new(send),
-            parts,
-        ));
+        match timeout(handshake_timeout, handshake_result).await {
+            Ok(Ok((recv, size, parts))) => {
+                let extra_bytes = if resp_buf.len() > size {
+                    Some(resp_buf.split_off(size).freeze())
+                } else {
+                    None
+                };
+
+                debug!("QUIC connect: Tunnel established successfully");
+                return Ok((
+                    QuicTunnelRead {
+                        inner: recv,
+                        pre_read: extra_bytes,
+                    },
+                    QuicTunnelWrite::new(send),
+                    parts,
+                ));
+            }
+            Ok(Err(e)) => {
+                if attempts == 1 {
+                    warn!(
+                        "QUIC connect: Handshake failed on connection {}: {:?}. Closing and retrying.",
+                        connection.stable_id(),
+                        e
+                    );
+                    connection.close(quinn::VarInt::from_u32(0), b"stale connection");
+                    continue;
+                }
+                return Err(e);
+            }
+            Err(_) => {
+                // Timeout
+                if attempts == 1 {
+                    warn!(
+                        "QUIC connect: Handshake timed out on connection {}. Closing and retrying.",
+                        connection.stable_id()
+                    );
+                    connection.close(quinn::VarInt::from_u32(0), b"stale connection");
+                    continue;
+                }
+                return Err(anyhow!("QUIC handshake timed out"));
+            }
+        }
     }
 }

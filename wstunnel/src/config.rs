@@ -75,11 +75,11 @@ pub struct Client {
     /// When using reverse tunnel, the client will try to always keep a connection to the server to await for new tunnels
     /// This delay is the maximum of time the client will wait before trying to reconnect to the server in case of failure.
     /// The client follows an exponential backoff strategy until it reaches this maximum delay
-    /// By default, the client tries to reconnect every 1 second
+    /// By default, the client tries to reconnect every 10 seconds
     #[cfg_attr(feature = "clap", arg(
         long,
         value_name = "DURATION(s|m|h)",
-        default_value = "1s",
+        default_value = "10s",
         value_parser = parsers::parse_duration_sec,
         alias = "reverse-tunnel-connection-retry-max-backoff-sec",
         verbatim_doc_comment
@@ -87,7 +87,10 @@ pub struct Client {
     pub reverse_tunnel_connection_retry_max_backoff: Duration,
 
     /// Max concurrent reverse tunnel connections
-    #[arg(long, value_name = "INT", verbatim_doc_comment, default_value = "10")]
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, value_name = "INT", verbatim_doc_comment, default_value = "10")
+    )]
     pub reverse_tunnel_concurrency: usize,
 
     /// Domain name that will be used as SNI during TLS handshake
@@ -186,7 +189,7 @@ pub struct Client {
     #[cfg_attr(feature = "clap", arg(
             long,
             value_name = "DURATION(s|m|h)",
-            default_value = "10s",
+            default_value = "5s",
             value_parser = parsers::parse_duration_sec,
             verbatim_doc_comment
         ))]
@@ -295,6 +298,38 @@ pub struct Client {
         arg(long, value_name = "BYTES", default_value = "1048576", verbatim_doc_comment)
     )]
     pub quic_initial_max_stream_data: u64,
+
+    /// [QUIC] Set the size of the UDP socket buffer (send and receive).
+    /// If 0 (default), wstunnel tries to set it to 25MB but accepts whatever the OS allows without warning.
+    /// If set explicitly, wstunnel will warn if the OS caps it to a lower value.
+    #[cfg_attr(feature = "clap", arg(long, default_value = "0"))]
+    pub quic_socket_buffer_size: u64,
+
+    /// [QUIC] Initial maximum UDP payload size.
+    /// Default is 1200. On reliable/jumbo frame networks, increasing this can improve throughput.
+    /// Safe range is 1200-65527.
+    #[cfg_attr(feature = "clap", arg(long, value_name = "BYTES", verbatim_doc_comment))]
+    pub quic_initial_mtu: Option<u16>,
+
+    /// Timeout for establishing the connection (TCP/TLS) to the server.
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "10s",
+        value_parser = parsers::parse_duration_sec,
+        verbatim_doc_comment
+    ))]
+    pub timeout_connect: Duration,
+
+    /// [QUIC] Timeout for the HTTP handshake (application level) after the QUIC connection is established.
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "1.5s",
+        value_parser = parsers::parse_duration_sec,
+        verbatim_doc_comment
+    ))]
+    pub quic_handshake_timeout: Duration,
 }
 
 #[derive(Debug)]
@@ -497,6 +532,28 @@ pub struct Server {
         arg(long, value_name = "BYTES", default_value = "1048576", verbatim_doc_comment)
     )]
     pub quic_initial_max_stream_data: u64,
+
+    /// [QUIC] Set the size of the UDP socket buffer (send and receive).
+    /// If 0 (default), wstunnel tries to set it to 25MB but accepts whatever the OS allows without warning.
+    /// If set explicitly, wstunnel will warn if the OS caps it to a lower value.
+    #[cfg_attr(feature = "clap", arg(long, default_value = "0"))]
+    pub quic_socket_buffer_size: u64,
+
+    /// [QUIC] Initial maximum UDP payload size.
+    /// Default is 1200. On reliable/jumbo frame networks, increasing this can improve throughput.
+    /// Safe range is 1200-65527.
+    #[cfg_attr(feature = "clap", arg(long, value_name = "BYTES", verbatim_doc_comment))]
+    pub quic_initial_mtu: Option<u16>,
+
+    /// Timeout for establishing the connection (TCP/TLS) to the target server.
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "10s",
+        value_parser = parsers::parse_duration_sec,
+        verbatim_doc_comment
+    ))]
+    pub timeout_connect: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq)]

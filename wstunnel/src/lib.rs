@@ -161,7 +161,7 @@ pub async fn create_client(
         http_headers: args.http_headers.into_iter().filter(|(k, _)| k != HOST).collect(),
         http_headers_file: args.http_headers_file,
         http_header_host: host_header,
-        timeout_connect: Duration::from_secs(10),
+        timeout_connect: args.timeout_connect,
         websocket_ping_frequency: args
             .websocket_ping_frequency
             .or(Some(Duration::from_secs(10)))
@@ -174,6 +174,9 @@ pub async fn create_client(
         quic_max_concurrent_bi_streams: args.quic_max_concurrent_bi_streams,
         quic_initial_max_data: args.quic_initial_max_data,
         quic_initial_max_stream_data: args.quic_initial_max_stream_data,
+        quic_socket_buffer_size: args.quic_socket_buffer_size,
+        quic_initial_mtu: args.quic_initial_mtu,
+        quic_handshake_timeout: args.quic_handshake_timeout,
     };
 
     let client = WsClient::new(
@@ -519,7 +522,7 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyho
             .websocket_ping_frequency
             .or(Some(Duration::from_secs(30)))
             .filter(|d| d.as_secs() > 0),
-        timeout_connect: Duration::from_secs(10),
+        timeout_connect: args.timeout_connect,
         websocket_mask_frame: args.websocket_mask_frame,
         tls: tls_config,
         dns_resolver: DnsResolver::new_from_urls(
@@ -538,6 +541,8 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyho
         quic_max_concurrent_bi_streams: args.quic_max_concurrent_bi_streams,
         quic_initial_max_data: args.quic_initial_max_data,
         quic_initial_max_stream_data: args.quic_initial_max_stream_data,
+        quic_socket_buffer_size: args.quic_socket_buffer_size,
+        quic_initial_mtu: args.quic_initial_mtu,
     };
     let server = WsServer::new(server_config, executor);
 

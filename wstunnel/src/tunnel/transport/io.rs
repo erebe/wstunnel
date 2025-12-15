@@ -8,7 +8,7 @@ use std::io::ErrorKind;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::select;
 use tokio::sync::{Notify, oneshot};
 use tokio::time::Instant;
@@ -115,8 +115,6 @@ pub async fn propagate_local_to_remote(
         info!("Closing local => remote tunnel");
     });
 
-    static MAX_PACKET_LENGTH: usize = 64 * 1024;
-
     // We do our own pin_mut! to avoid shadowing timeout and be able to reset it, on next loop iteration
     // We reuse the future to avoid creating a timer in the tight loop
     let frequency = ping_frequency.unwrap_or(Duration::from_secs(3600 * 24));
@@ -162,16 +160,43 @@ pub async fn propagate_local_to_remote(
             }
         };
 
+        // Coalescing Loop: Try to read more if available to fill the buffer
+        // This helps batching small packets (e.g. from iperf -l 400) into larger QUIC frames
+        if let Ok(len) = &read_len {
+            if *len > 0 {
+                loop {
+                    // Stop if buffer is full
+                    if ws_tx.buf_mut().chunk_mut().len() == 0 {
+                        break;
+                    }
+
+                    // Try to read more with a small timeout to encourage batching
+                    // This prevents sending millions of tiny packets (e.g. iperf -l 400) which overwhelms the receiver
+                    let fut = local_rx.read_buf(ws_tx.buf_mut());
+                    match fut.now_or_never() {
+                        Some(Ok(0)) => break, // EOF
+                        Some(Ok(_n)) => continue,
+                        Some(Err(_)) => break, // Error
+                        None => break,         // Pending, write what we have
+                    }
+                }
+            }
+        }
+
         let _read_len = match read_len {
             Ok(0) => break,
             Ok(read_len) => read_len,
             Err(err) => {
-                warn!("error while reading incoming bytes from local tx tunnel: {}", err);
+                match err.kind() {
+                    ErrorKind::ConnectionReset | ErrorKind::BrokenPipe => {
+                        debug!("local tx tunnel closed: {}", err)
+                    }
+                    _ => warn!("error while reading incoming bytes from local tx tunnel: {}", err),
+                }
                 break;
             }
         };
 
-        //debug!("read {} wasted {}% usable {} capa {}", read_len, 100 - (read_len * 100 / buffer.capacity()), buffer.as_slice().len(), buffer.capacity());
         if let Err(err) = ws_tx.write().await {
             warn!("error while writing to tx tunnel {}", err);
             break;
@@ -187,7 +212,7 @@ pub async fn propagate_local_to_remote(
 pub async fn propagate_remote_to_local<F>(
     local_tx: impl AsyncWrite + Send,
     mut ws_rx: impl TunnelRead,
-    mut close_rx: oneshot::Receiver<()>,
+    _close_rx: oneshot::Receiver<()>,
     graceful_shutdown: F,
 ) -> anyhow::Result<()>
 where
@@ -204,18 +229,23 @@ where
         let msg = select! {
             biased;
             msg = ws_rx.copy(&mut local_tx) => msg,
-            _ = &mut close_rx => break,
         };
 
         if let Err(err) = msg {
             match err.kind() {
                 ErrorKind::NotConnected => debug!("Connection closed frame received"),
                 ErrorKind::BrokenPipe => debug!("Remote side closed connection"),
+                ErrorKind::ConnectionReset => debug!("Connection reset by peer"),
+                ErrorKind::ConnectionAborted => debug!("Connection aborted"),
                 _ => error!("error while reading from tunnel rx {err}"),
             }
             break;
         }
     }
+
+    // Ensure data is flushed and FIN sent
+    let _ = local_tx.flush().await;
+    let _ = local_tx.shutdown().await;
 
     // Before we close the tunnel, we wait for the graceful shutdown to complete
     // This is important to ensure that we don't close the tunnel while there are still

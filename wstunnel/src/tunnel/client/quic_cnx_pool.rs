@@ -5,26 +5,57 @@ use bb8::ManageConnection;
 use quinn::{Connection, Endpoint};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::ops::Deref;
-use std::sync::{Arc, LazyLock};
-use tracing::{debug, info, instrument, warn};
+use std::sync::Arc;
+use tracing::{debug, instrument, warn};
 use url::Host;
 
-// Global endpoint to reuse the socket
-static ENDPOINT: LazyLock<Endpoint> = LazyLock::new(|| {
-    Endpoint::client(SocketAddr::V4(SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, 0)))
-        .expect("Failed to create QUIC endpoint")
-});
-
-fn get_endpoint() -> Endpoint {
-    ENDPOINT.clone()
-}
-
 #[derive(Clone)]
-pub struct QuicConnection(Arc<WsClientConfig>);
+pub struct QuicConnection {
+    config: Arc<WsClientConfig>,
+    endpoint: Endpoint,
+}
 
 impl QuicConnection {
     pub fn new(config: Arc<WsClientConfig>) -> Self {
-        Self(config)
+        let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP))
+            .expect("Failed to create UDP socket");
+
+        // Increase buffer sizes for high throughput based on config
+        let requested_size = if config.quic_socket_buffer_size == 0 {
+            25 * 1024 * 1024
+        } else {
+            config.quic_socket_buffer_size as usize
+        };
+
+        let _ = socket.set_send_buffer_size(requested_size);
+        let _ = socket.set_recv_buffer_size(requested_size);
+
+        if let Ok(size) = socket.send_buffer_size() {
+            if size < requested_size && config.quic_socket_buffer_size > 0 {
+                warn!(
+                    "QUIC UDP send buffer size is small: {} bytes. This may limit throughput. Consider increasing net.core.wmem_max.",
+                    size
+                );
+            }
+        }
+        if let Ok(size) = socket.recv_buffer_size() {
+            if size < requested_size && config.quic_socket_buffer_size > 0 {
+                warn!(
+                    "QUIC UDP recv buffer size is small: {} bytes. This may limit throughput. Consider increasing net.core.rmem_max.",
+                    size
+                );
+            }
+        }
+
+        let addr = SocketAddr::V4(SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, 0));
+        socket.bind(&addr.into()).expect("Failed to bind UDP socket");
+        socket.set_nonblocking(true).expect("Failed to set non-blocking");
+        let socket: std::net::UdpSocket = socket.into();
+
+        let endpoint = Endpoint::new(quinn::EndpointConfig::default(), None, socket, Arc::new(quinn::TokioRuntime))
+            .expect("Failed to create QUIC endpoint");
+
+        Self { config, endpoint }
     }
 }
 
@@ -32,7 +63,7 @@ impl Deref for QuicConnection {
     type Target = WsClientConfig;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.config
     }
 }
 
@@ -42,8 +73,6 @@ impl ManageConnection for QuicConnection {
 
     #[instrument(level = "trace", name = "quic_cnx_server", skip_all)]
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        let endpoint = get_endpoint();
-
         // 1. Resolve DNS
         let host = self.remote_addr.host();
         let port = self.remote_addr.port();
@@ -79,7 +108,7 @@ impl ManageConnection for QuicConnection {
                 (None, None)
             };
 
-        info!(
+        debug!(
             "Creating QUIC client config for {} (SNI: {:?}), mTLS: {}",
             remote_addr,
             self.tls_server_name(),
@@ -141,20 +170,26 @@ impl ManageConnection for QuicConnection {
                 .expect("QUIC initial max stream data limit too large"),
         );
 
+        if let Some(mtu) = self.quic_initial_mtu {
+            transport_config.initial_mtu(mtu);
+        }
+
         client_config.transport_config(Arc::new(transport_config));
 
         // Connect using the configured client config
-        info!(
+        debug!(
             "Initiating QUIC connection to {} (SNI: {:?})",
             remote_addr,
             self.tls_server_name()
         );
-        let connecting = endpoint.connect_with(client_config, remote_addr, self.tls_server_name().to_str().as_ref())?;
+        let connecting =
+            self.endpoint
+                .connect_with(client_config, remote_addr, self.tls_server_name().to_str().as_ref())?;
 
         debug!("Waiting for QUIC handshake to complete...");
         let connection = match connecting.await {
             Ok(conn) => {
-                info!("QUIC connection established successfully to {}", remote_addr);
+                debug!("QUIC connection established successfully to {}", remote_addr);
                 conn
             }
             Err(e) => {

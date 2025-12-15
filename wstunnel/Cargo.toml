@@ -33,6 +33,7 @@ http-body-util = { version = "0.1.3" }
 jsonwebtoken = { version = "10.2.0", default-features = false }
 log = "0.4.28"
 nix = { version = "0.30.1", features = ["socket", "net", "uio"] }
+rand = "0.8"
 parking_lot = "0.12.5"
 pin-project = "1"
 notify = { version = "8.2.0", features = [] }

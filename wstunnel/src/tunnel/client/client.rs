@@ -13,6 +13,7 @@ use anyhow::Context;
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
 use log::debug;
+use rand::Rng;
 use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
@@ -107,7 +108,7 @@ impl<E: TokioExecutorRef> WsClient<E> {
                     .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
             }
             TransportScheme::Quic | TransportScheme::Quics => {
-                tunnel::transport::quic::connect(request_id, self, remote_cfg)
+                tunnel::transport::quic::connect(request_id, self, remote_cfg, false)
                     .await
                     .map(|(r, w, response)| (TunnelReader::Quic(r), TunnelWriter::Quic(w), response))?
             }
@@ -173,7 +174,11 @@ impl<E: TokioExecutorRef> WsClient<E> {
             let mut reconnect_delay = Duration::from_secs(1);
 
             move || -> Duration {
-                let delay = reconnect_delay;
+                let mut delay = reconnect_delay;
+                // Add jitter of +/- 20% to avoid thundering herd problem
+                let jitter = rand::thread_rng().gen_range(0.8..1.2);
+                delay = delay.mul_f64(jitter);
+
                 reconnect_delay = min(reconnect_delay * 2, max_delay);
                 delay
             }
@@ -230,7 +235,7 @@ impl<E: TokioExecutorRef> WsClient<E> {
                 }
                 TransportScheme::Quic | TransportScheme::Quics => {
                     event!(parent: &span, Level::DEBUG, "Reverse tunnel: Attempting QUIC connection for request {}", request_id);
-                    match tunnel::transport::quic::connect(request_id, &client, &remote_addr)
+                    match tunnel::transport::quic::connect(request_id, &client, &remote_addr, true)
                         .instrument(span.clone())
                         .await
                     {

@@ -672,6 +672,9 @@ wstunnel client -L socks5://127.0.0.1:8888 quic://myRemoteHost:8080
 
 **Note**: QUIC always uses TLS. A TLS certificate configuration is required on the server side, similar to WSS and HTTPS. The client will validate the certificate by default.
 
+You can tune the QUIC transport parameters for high throughput, especially on networks or loopback with high bandwidth:
+* `--quic-socket-buffer-size`: Set the UDP socket buffer size (in bytes). If 0 (default), wstunnel tries to set it to 25MB but accepts whatever the OS allows without warning. If set explicitly, wstunnel will warn if the OS caps it to a lower value. Increasing this helps prevent packet loss at high speeds, but requires OS limits to be raised (e.g. `sysctl -w net.core.rmem_max=26214400`).
+
 #### Server Scheme Selection
 
 When TLS is enabled (by using `wss://`, `https://`, or `quic[s]://`), the server automatically binds to **both** TCP and UDP on the specified port.
