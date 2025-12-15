@@ -162,8 +162,8 @@ pub async fn propagate_local_to_remote(
 
         // Coalescing Loop: Try to read more if available to fill the buffer
         // This helps batching small packets (e.g. from iperf -l 400) into larger QUIC frames
-        if let Ok(len) = &read_len {
-            if *len > 0 {
+        if let Ok(len) = &read_len
+            && *len > 0 {
                 loop {
                     // Stop if buffer is full
                     if ws_tx.buf_mut().chunk_mut().len() == 0 {
@@ -181,7 +181,6 @@ pub async fn propagate_local_to_remote(
                     }
                 }
             }
-        }
 
         let _read_len = match read_len {
             Ok(0) => break,

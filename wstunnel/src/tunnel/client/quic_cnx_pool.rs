@@ -6,13 +6,19 @@ use quinn::{Connection, Endpoint};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::ops::Deref;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::{debug, instrument, warn};
 use url::Host;
 
 #[derive(Clone)]
 pub struct QuicConnection {
+    inner: Arc<QuicConnectionInner>,
+}
+
+pub struct QuicConnectionInner {
     config: Arc<WsClientConfig>,
     endpoint: Endpoint,
+    is_broken: AtomicBool,
 }
 
 impl QuicConnection {
@@ -30,22 +36,20 @@ impl QuicConnection {
         let _ = socket.set_send_buffer_size(requested_size);
         let _ = socket.set_recv_buffer_size(requested_size);
 
-        if let Ok(size) = socket.send_buffer_size() {
-            if size < requested_size && config.quic_socket_buffer_size > 0 {
+        if let Ok(size) = socket.send_buffer_size()
+            && size < requested_size && config.quic_socket_buffer_size > 0 {
                 warn!(
                     "QUIC UDP send buffer size is small: {} bytes. This may limit throughput. Consider increasing net.core.wmem_max.",
                     size
                 );
             }
-        }
-        if let Ok(size) = socket.recv_buffer_size() {
-            if size < requested_size && config.quic_socket_buffer_size > 0 {
+        if let Ok(size) = socket.recv_buffer_size()
+            && size < requested_size && config.quic_socket_buffer_size > 0 {
                 warn!(
                     "QUIC UDP recv buffer size is small: {} bytes. This may limit throughput. Consider increasing net.core.rmem_max.",
                     size
                 );
             }
-        }
 
         let addr = SocketAddr::V4(SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, 0));
         socket.bind(&addr.into()).expect("Failed to bind UDP socket");
@@ -55,15 +59,21 @@ impl QuicConnection {
         let endpoint = Endpoint::new(quinn::EndpointConfig::default(), None, socket, Arc::new(quinn::TokioRuntime))
             .expect("Failed to create QUIC endpoint");
 
-        Self { config, endpoint }
+        Self {
+            inner: Arc::new(QuicConnectionInner {
+                config,
+                endpoint,
+                is_broken: AtomicBool::new(false),
+            }),
+        }
     }
 }
 
 impl Deref for QuicConnection {
-    type Target = WsClientConfig;
+    type Target = QuicConnectionInner;
 
     fn deref(&self) -> &Self::Target {
-        &self.config
+        &self.inner
     }
 }
 
@@ -74,12 +84,15 @@ impl ManageConnection for QuicConnection {
     #[instrument(level = "trace", name = "quic_cnx_server", skip_all)]
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
         // 1. Resolve DNS
-        let host = self.remote_addr.host();
-        let port = self.remote_addr.port();
+        self.inner.is_broken.store(false, Ordering::SeqCst);
+        let host = self.inner.config.remote_addr.host();
+        let port = self.inner.config.remote_addr.port();
 
         let remote_addr = match host {
             Host::Domain(domain) => {
                 let addrs = self
+                    .inner
+                    .config
                     .dns_resolver
                     .lookup_host(domain, port)
                     .await
@@ -95,6 +108,8 @@ impl ManageConnection for QuicConnection {
 
         // 2. Get TLS configuration
         let tls_config = self
+            .inner
+            .config
             .remote_addr
             .tls()
             .ok_or_else(|| anyhow!("QUIC requires TLS configuration"))?;
@@ -111,7 +126,7 @@ impl ManageConnection for QuicConnection {
         debug!(
             "Creating QUIC client config for {} (SNI: {:?}), mTLS: {}",
             remote_addr,
-            self.tls_server_name(),
+            self.inner.config.tls_server_name(),
             tls_client_certificate.is_some()
         );
 
@@ -134,6 +149,8 @@ impl ManageConnection for QuicConnection {
         // Configure max idle timeout
         // Use 10 minutes by default to support long-lived reverse tunnels and file transfers
         let idle_timeout = self
+            .inner
+            .config
             .quic_max_idle_timeout
             .unwrap_or(std::time::Duration::from_secs(600));
         debug!("QUIC idle timeout: {}s", idle_timeout.as_secs());
@@ -142,13 +159,19 @@ impl ManageConnection for QuicConnection {
         )));
 
         // Configure keep-alive interval
-        debug!("QUIC keep-alive interval: {}s", self.quic_keep_alive_interval.as_secs());
-        transport_config.keep_alive_interval(Some(self.quic_keep_alive_interval));
+        debug!(
+            "QUIC keep-alive interval: {}s",
+            self.inner.config.quic_keep_alive_interval.as_secs()
+        );
+        transport_config.keep_alive_interval(Some(self.inner.config.quic_keep_alive_interval));
 
         // Configure stream limits
-        debug!("QUIC concurrent streams: {} bidirectional", self.quic_max_concurrent_bi_streams);
+        debug!(
+            "QUIC concurrent streams: {} bidirectional",
+            self.inner.config.quic_max_concurrent_bi_streams
+        );
         transport_config.max_concurrent_bidi_streams(
-            quinn::VarInt::from_u64(self.quic_max_concurrent_bi_streams)
+            quinn::VarInt::from_u64(self.inner.config.quic_max_concurrent_bi_streams)
                 .expect("QUIC concurrent bidirectional streams limit too large"),
         );
         transport_config.max_concurrent_uni_streams(0u32.into()); // We don't use unidirectional streams
@@ -157,20 +180,21 @@ impl ManageConnection for QuicConnection {
         // Connection-level flow control (total data across all streams)
         debug!(
             "QUIC flow control - connection: {} bytes, stream: {} bytes",
-            self.quic_initial_max_data, self.quic_initial_max_stream_data
+            self.inner.config.quic_initial_max_data, self.inner.config.quic_initial_max_stream_data
         );
         transport_config.receive_window(
-            quinn::VarInt::from_u64(self.quic_initial_max_data).expect("QUIC initial max data limit too large"),
+            quinn::VarInt::from_u64(self.inner.config.quic_initial_max_data)
+                .expect("QUIC initial max data limit too large"),
         );
-        transport_config.send_window(self.quic_initial_max_data);
+        transport_config.send_window(self.inner.config.quic_initial_max_data);
 
         // Per-stream flow control
         transport_config.stream_receive_window(
-            quinn::VarInt::from_u64(self.quic_initial_max_stream_data)
+            quinn::VarInt::from_u64(self.inner.config.quic_initial_max_stream_data)
                 .expect("QUIC initial max stream data limit too large"),
         );
 
-        if let Some(mtu) = self.quic_initial_mtu {
+        if let Some(mtu) = self.inner.config.quic_initial_mtu {
             transport_config.initial_mtu(mtu);
         }
 
@@ -180,11 +204,13 @@ impl ManageConnection for QuicConnection {
         debug!(
             "Initiating QUIC connection to {} (SNI: {:?})",
             remote_addr,
-            self.tls_server_name()
+            self.inner.config.tls_server_name()
         );
-        let connecting =
-            self.endpoint
-                .connect_with(client_config, remote_addr, self.tls_server_name().to_str().as_ref())?;
+        let connecting = self.endpoint.connect_with(
+            client_config,
+            remote_addr,
+            self.inner.config.tls_server_name().to_str().as_ref(),
+        )?;
 
         debug!("Waiting for QUIC handshake to complete...");
         let connection = match connecting.await {
@@ -223,9 +249,20 @@ impl ManageConnection for QuicConnection {
     }
 
     fn has_broken(&self, conn: &mut Self::Connection) -> bool {
+        if self.inner.is_broken.load(Ordering::SeqCst) {
+            warn!("Connection pool: Connection marked as broken, discarding");
+            return true;
+        }
+
         match conn {
-            Some(c) => c.close_reason().is_some(),
-            None => true,
+            Some(c) => {
+                if c.close_reason().is_some() {
+                    warn!("Connection pool: Connection has close_reason, discarding");
+                    return true;
+                }
+                false
+            }
+            None => true, // No connection, so it's "broken"
         }
     }
 }

@@ -87,11 +87,10 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
                 let mut sessions = item.sessions.lock();
                 let keys: Vec<_> = sessions.keys().cloned().collect();
                 for id in keys {
-                    if id != conn_id {
-                        if let Some(notify) = sessions.remove(&id) {
+                    if id != conn_id
+                        && let Some(notify) = sessions.remove(&id) {
                             notify.notify_waiters();
                         }
-                    }
                 }
                 let notify = sessions
                     .entry(conn_id)
@@ -99,7 +98,6 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
                     .clone();
 
                 let cnx_awaiter = item.get_cnx_awaiter();
-                while cnx_awaiter.try_recv().is_ok() {}
                 (cnx_awaiter, notify)
             }
         } else {

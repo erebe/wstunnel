@@ -44,6 +44,7 @@ impl TunnelRead for QuicTunnelRead {
             writer.write_all(&data).await?;
             return Ok(());
         }
+
         match self.inner.read_chunk(MAX_PACKET_LENGTH, true).await {
             Ok(Some(chunk)) => {
                 writer.write_all(&chunk.bytes).await?;
@@ -261,6 +262,7 @@ pub async fn connect(
                         "QUIC connect: Connection {} failed to open stream. Closing and retrying.",
                         connection.stable_id()
                     );
+
                     connection.close(quinn::VarInt::from_u32(0), b"stale connection");
                     continue;
                 }
@@ -279,6 +281,7 @@ pub async fn connect(
                         "QUIC connect: Failed to send request on connection {}. Closing and retrying.",
                         connection.stable_id()
                     );
+
                     connection.close(quinn::VarInt::from_u32(0), b"stale connection");
                     continue;
                 }
@@ -290,6 +293,7 @@ pub async fn connect(
                         "QUIC connect: Timed out sending request on connection {}. Closing and retrying.",
                         connection.stable_id()
                     );
+
                     connection.close(quinn::VarInt::from_u32(0), b"stale connection");
                     continue;
                 }
@@ -365,10 +369,7 @@ pub async fn connect(
 
                 debug!("QUIC connect: Tunnel established successfully");
                 return Ok((
-                    QuicTunnelRead {
-                        inner: recv,
-                        pre_read: extra_bytes,
-                    },
+                    QuicTunnelRead::new(recv).with_pre_read(extra_bytes),
                     QuicTunnelWrite::new(send),
                     parts,
                 ));
@@ -380,6 +381,7 @@ pub async fn connect(
                         connection.stable_id(),
                         e
                     );
+
                     connection.close(quinn::VarInt::from_u32(0), b"stale connection");
                     continue;
                 }
@@ -392,6 +394,7 @@ pub async fn connect(
                         "QUIC connect: Handshake timed out on connection {}. Closing and retrying.",
                         connection.stable_id()
                     );
+
                     connection.close(quinn::VarInt::from_u32(0), b"stale connection");
                     continue;
                 }

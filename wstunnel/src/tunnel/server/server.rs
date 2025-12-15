@@ -563,22 +563,20 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
             let _ = socket.set_send_buffer_size(requested_size);
             let _ = socket.set_recv_buffer_size(requested_size);
 
-            if let Ok(size) = socket.send_buffer_size() {
-                if size < requested_size && self.config.quic_socket_buffer_size > 0 {
+            if let Ok(size) = socket.send_buffer_size()
+                && size < requested_size && self.config.quic_socket_buffer_size > 0 {
                     warn!(
                         "QUIC UDP send buffer size is small: {} bytes. This may limit throughput. Consider increasing net.core.wmem_max.",
                         size
                     );
                 }
-            }
-            if let Ok(size) = socket.recv_buffer_size() {
-                if size < requested_size && self.config.quic_socket_buffer_size > 0 {
+            if let Ok(size) = socket.recv_buffer_size()
+                && size < requested_size && self.config.quic_socket_buffer_size > 0 {
                     warn!(
                         "QUIC UDP recv buffer size is small: {} bytes. This may limit throughput. Consider increasing net.core.rmem_max.",
                         size
                     );
                 }
-            }
 
             socket.bind(&quic_bind_addr.into())?;
             socket.set_nonblocking(true)?;

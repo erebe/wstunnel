@@ -283,8 +283,9 @@ impl<E: TokioExecutorRef> WsClient<E> {
             });
 
             // Forward websocket rx to local rx
+            let config = client.config.clone();
             let graceful_shutdown = async move {
-                if let TransportScheme::Quic | TransportScheme::Quics = client.config.remote_addr.scheme() {
+                if let TransportScheme::Quic | TransportScheme::Quics = config.remote_addr.scheme() {
                     // For QUIC, we need to wait a bit before closing the tunnel to allow the client to receive the response
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }

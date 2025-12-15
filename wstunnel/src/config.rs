@@ -325,7 +325,7 @@ pub struct Client {
     #[cfg_attr(feature = "clap", arg(
         long,
         value_name = "DURATION(s|m|h)",
-        default_value = "1.5s",
+        default_value = "2s",
         value_parser = parsers::parse_duration_sec,
         verbatim_doc_comment
     ))]

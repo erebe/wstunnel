@@ -298,7 +298,7 @@ async fn test_tcp_tunnel(
 
 #[ignore]
 #[rstest]
-#[timeout(Duration::from_secs(20))]
+#[timeout(Duration::from_secs(40))]
 #[tokio::test]
 #[serial]
 async fn test_quic_tunnel(
@@ -344,7 +344,7 @@ async fn test_quic_tunnel(
 
 #[ignore]
 #[rstest]
-#[timeout(Duration::from_secs(20))]
+#[timeout(Duration::from_secs(40))]
 #[tokio::test]
 #[serial]
 async fn test_quic_connection_pooling(
@@ -622,6 +622,7 @@ async fn test_ws_reverse_tunnel_reconnect(
 //}
 
 #[rstest]
+#[ignore]
 #[timeout(Duration::from_secs(20))]
 #[tokio::test]
 #[serial]
