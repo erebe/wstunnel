@@ -88,9 +88,10 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
                 let keys: Vec<_> = sessions.keys().cloned().collect();
                 for id in keys {
                     if id != conn_id
-                        && let Some(notify) = sessions.remove(&id) {
-                            notify.notify_waiters();
-                        }
+                        && let Some(notify) = sessions.remove(&id)
+                    {
+                        notify.notify_waiters();
+                    }
                 }
                 let notify = sessions
                     .entry(conn_id)

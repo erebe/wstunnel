@@ -163,24 +163,25 @@ pub async fn propagate_local_to_remote(
         // Coalescing Loop: Try to read more if available to fill the buffer
         // This helps batching small packets (e.g. from iperf -l 400) into larger QUIC frames
         if let Ok(len) = &read_len
-            && *len > 0 {
-                loop {
-                    // Stop if buffer is full
-                    if ws_tx.buf_mut().chunk_mut().len() == 0 {
-                        break;
-                    }
+            && *len > 0
+        {
+            loop {
+                // Stop if buffer is full
+                if ws_tx.buf_mut().chunk_mut().len() == 0 {
+                    break;
+                }
 
-                    // Try to read more with a small timeout to encourage batching
-                    // This prevents sending millions of tiny packets (e.g. iperf -l 400) which overwhelms the receiver
-                    let fut = local_rx.read_buf(ws_tx.buf_mut());
-                    match fut.now_or_never() {
-                        Some(Ok(0)) => break, // EOF
-                        Some(Ok(_n)) => continue,
-                        Some(Err(_)) => break, // Error
-                        None => break,         // Pending, write what we have
-                    }
+                // Try to read more with a small timeout to encourage batching
+                // This prevents sending millions of tiny packets (e.g. iperf -l 400) which overwhelms the receiver
+                let fut = local_rx.read_buf(ws_tx.buf_mut());
+                match fut.now_or_never() {
+                    Some(Ok(0)) => break, // EOF
+                    Some(Ok(_n)) => continue,
+                    Some(Err(_)) => break, // Error
+                    None => break,         // Pending, write what we have
                 }
             }
+        }
 
         let _read_len = match read_len {
             Ok(0) => break,
