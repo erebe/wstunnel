@@ -132,6 +132,7 @@ async fn client_ws(dns_resolver: DnsResolver) -> WsClient {
         quic_keep_alive_interval: Duration::from_secs(10),
         quic_socket_buffer_size: 0,
         quic_initial_mtu: None,
+        quic_handshake_timeout: Duration::from_millis(1500),
     };
 
     WsClient::new(
@@ -194,6 +195,7 @@ async fn client_quic(
         quic_keep_alive_interval: Duration::from_secs(10),
         quic_socket_buffer_size: 0,
         quic_initial_mtu: None,
+        quic_handshake_timeout: Duration::from_millis(1500),
     };
     WsClient::new(
         client_config,
