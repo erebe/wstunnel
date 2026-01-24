@@ -31,8 +31,7 @@ jobs:
 
           - name: Linux aarch64
             target: aarch64-unknown-linux-musl
-            build-args: "--release --features=jemalloc"
-            JEMALLOC_SYS_WITH_LG_PAGE: "16"
+            build-args: "--release --no-default-features --features ring,mimalloc"
 
           - name: Linux armv7hf
             target: armv7-unknown-linux-musleabihf
@@ -52,7 +51,7 @@ jobs:
 
           - name: Android aarch64
             target: aarch64-linux-android
-            build-args: "--release --features=jemalloc"
+            build-args: "--release --features=mimalloc"
 
           - name: Android armv7
             target: armv7-linux-androideabi
@@ -73,7 +72,7 @@ jobs:
           - name: MacOS aarch64
             os: macos-latest
             target: aarch64-apple-darwin
-            build-args: "--release --features=jemalloc"
+            build-args: "--release --features=mimalloc"
 
           # - name: iOS x86_64
           #   target: x86_64-apple-ios
