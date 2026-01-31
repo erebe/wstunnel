@@ -31,7 +31,7 @@ jobs:
 
           - name: Linux aarch64
             target: aarch64-unknown-linux-musl
-            build-args: "--release --features=jemalloc"
+            build-args: "--release --features=jemalloc -vv"
             JEMALLOC_SYS_WITH_LG_PAGE: "16"
 
           - name: Linux armv7hf
