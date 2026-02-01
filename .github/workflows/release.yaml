@@ -145,7 +145,7 @@ jobs:
       - name: Build ${{ matrix.platform.name }} binary
         uses: actions-rs/cargo@v1
         env: 
-          JEMALLOC_SYS_WITH_LG_PAGE: '16'
+          JEMALLOC_SYS_WITH_LG_PAGE: ${{ contains(matrix.platform.target, 'aarch64') && '16' || '4' }}
         # We use cross-rs if not running on x86_64 architecture on Linux
         with:
           command: build
