@@ -13,7 +13,7 @@ use bytes::{Buf, Bytes, BytesMut};
 use fast_socks5::new_udp_header;
 use fast_socks5::util::target_addr::TargetAddr;
 use log::warn;
-use std::pin::{Pin, pin};
+use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{Poll, ready};
 use std::time::Duration;
