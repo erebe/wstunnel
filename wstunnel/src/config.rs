@@ -78,7 +78,7 @@ pub struct Client {
     #[cfg_attr(feature = "clap", arg(
         long,
         value_name = "DURATION(s|m|h)",
-        default_value = "1s",
+        default_value = "3s",
         value_parser = parsers::parse_duration_sec,
         alias = "timeout-connect-sec",
         env = "WSTUNNEL_TIMEOUT_CONNECT",
@@ -298,7 +298,7 @@ pub struct Server {
     #[cfg_attr(feature = "clap", arg(
         long,
         value_name = "DURATION(s|m|h)",
-        default_value = "1s",
+        default_value = "3s",
         value_parser = parsers::parse_duration_sec,
         alias = "timeout-connect-sec",
         env = "WSTUNNEL_TIMEOUT_CONNECT",
