@@ -157,7 +157,7 @@ pub async fn create_client(
         http_headers: args.http_headers.into_iter().filter(|(k, _)| k != HOST).collect(),
         http_headers_file: args.http_headers_file,
         http_header_host: host_header,
-        timeout_connect: Duration::from_secs(10),
+        timeout_connect: args.timeout_connect,
         websocket_ping_frequency: args
             .websocket_ping_frequency
             .or(Some(Duration::from_secs(30)))
@@ -509,7 +509,7 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyho
             .websocket_ping_frequency
             .or(Some(Duration::from_secs(30)))
             .filter(|d| d.as_secs() > 0),
-        timeout_connect: Duration::from_secs(10),
+        timeout_connect: args.timeout_connect,
         websocket_mask_frame: args.websocket_mask_frame,
         tls: tls_config,
         dns_resolver: DnsResolver::new_from_urls(

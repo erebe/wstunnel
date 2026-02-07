@@ -164,7 +164,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                     &remote.host,
                     remote.port,
                     self.config.socket_so_mark,
-                    timeout.unwrap_or(Duration::from_secs(10)),
+                    timeout.unwrap_or(self.config.timeout_connect),
                     &self.config.dns_resolver,
                 );
                 let (rx, tx) = match &self.config.http_proxy {
@@ -179,7 +179,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                     &remote.host,
                     remote.port,
                     self.config.socket_so_mark,
-                    Duration::from_secs(10),
+                    self.config.timeout_connect,
                     &self.config.dns_resolver,
                 );
                 let (rx, mut tx) = match &self.config.http_proxy {
