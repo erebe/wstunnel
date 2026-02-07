@@ -136,7 +136,11 @@ async fn handle_session(
         .handle_tunnel_request(restrictions, restrict_path, client_addr, &http_request)
         .await;
 
-    let (remote_addr, local_rx, local_tx, need_preamble) = match tunnel {
+    // `reverse_socks5` gates the deferred SOCKS5 reply on the reverse connect
+    // handshake. WebTransport has no equivalent of the handshake byte read used
+    // by the websocket and http2 handlers, so reverse SOCKS5 over WebTransport
+    // keeps its existing behaviour rather than being half-gated here.
+    let (remote_addr, local_rx, local_tx, need_preamble, _reverse_socks5) = match tunnel {
         Ok(tunnel) => tunnel,
         Err(response) => {
             let status = response.status();
