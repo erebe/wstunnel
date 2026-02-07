@@ -7,6 +7,7 @@ use crate::restrictions::types::{RestrictionConfig, RestrictionsRules};
 use crate::somark::SoMark;
 use crate::tunnel::connectors::{TcpTunnelConnector, TunnelConnector, UdpTunnelConnector};
 use crate::tunnel::listeners::{HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener};
+use crate::tunnel::server::AnyAsyncWrite;
 use crate::tunnel::server::handler_http2::http_server_upgrade;
 use crate::tunnel::server::handler_websocket::ws_server_upgrade;
 use crate::tunnel::server::reverse_tunnel::ReverseTunnelServer;
@@ -36,7 +37,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -90,7 +91,8 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         (
             RemoteAddr,
             Pin<Box<dyn AsyncRead + Send>>,
-            Pin<Box<dyn AsyncWrite + Send>>,
+            Pin<Box<dyn AnyAsyncWrite>>,
+            bool,
             bool,
         ),
         HttpResponse,
@@ -135,6 +137,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         info!("Tunnel accepted due to matched restriction: {}", restriction.name);
 
         let req_protocol = remote.protocol.clone();
+        let reverse_socks5 = matches!(req_protocol, LocalProtocol::ReverseSocks5 { .. });
         let inject_cookie = req_protocol.is_dynamic_reverse_tunnel();
         let tunnel = self
             .exec_tunnel(restriction, remote, client_addr)
@@ -146,7 +149,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
 
         let (remote_addr, local_rx, local_tx) = tunnel;
         info!("connected to {:?} {}:{}", req_protocol, remote_addr.host, remote_addr.port);
-        Ok((remote_addr, local_rx, local_tx, inject_cookie))
+        Ok((remote_addr, local_rx, local_tx, inject_cookie, reverse_socks5))
     }
 
     async fn exec_tunnel(
@@ -154,7 +157,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         restriction: &RestrictionConfig,
         remote: RemoteAddr,
         client_address: SocketAddr,
-    ) -> anyhow::Result<(RemoteAddr, Pin<Box<dyn AsyncRead + Send>>, Pin<Box<dyn AsyncWrite + Send>>)> {
+    ) -> anyhow::Result<(RemoteAddr, Pin<Box<dyn AsyncRead + Send>>, Pin<Box<dyn AnyAsyncWrite>>)> {
         match remote.protocol {
             LocalProtocol::Udp { timeout, .. } => {
                 let connector = UdpTunnelConnector::new(
