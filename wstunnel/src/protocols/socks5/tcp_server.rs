@@ -29,19 +29,22 @@ pub enum Socks5ReadHalf {
 }
 
 pub enum Socks5WriteHalf {
-    Tcp(OwnedWriteHalf),
+    Tcp {
+        writer: OwnedWriteHalf,
+        pending_reply: bool,
+    },
     Udp(Socks5UdpStreamWriter),
 }
 
 pub enum Socks5Stream {
-    Tcp(TcpStream),
+    Tcp { stream: TcpStream, pending_reply: bool },
     Udp((Socks5UdpStream, Socks5UdpStreamWriter)),
 }
 
 impl Socks5Stream {
     pub fn local_protocol(&self) -> LocalProtocol {
         match self {
-            Self::Tcp(_) => LocalProtocol::Tcp { proxy_protocol: false }, // TODO: Implement proxy protocol
+            Self::Tcp { .. } => LocalProtocol::Tcp { proxy_protocol: false }, // TODO: Implement proxy protocol
             Self::Udp(s) => LocalProtocol::Udp {
                 timeout: s.0.watchdog_deadline.as_ref().map(|x| x.period()),
             },
@@ -50,9 +53,15 @@ impl Socks5Stream {
 
     pub fn into_split(self) -> (Socks5ReadHalf, Socks5WriteHalf) {
         match self {
-            Self::Tcp(s) => {
-                let (r, w) = s.into_split();
-                (Socks5ReadHalf::Tcp(r), Socks5WriteHalf::Tcp(w))
+            Self::Tcp { stream, pending_reply } => {
+                let (r, w) = stream.into_split();
+                (
+                    Socks5ReadHalf::Tcp(r),
+                    Socks5WriteHalf::Tcp {
+                        writer: w,
+                        pending_reply,
+                    },
+                )
             }
             Self::Udp((r, w)) => (Socks5ReadHalf::Udp(r), Socks5WriteHalf::Udp(w)),
         }
@@ -173,21 +182,18 @@ pub async fn run_server(
                     continue;
                 };
 
-                let mut cnx = cnx.into_inner();
-                let ret = cnx
-                    .write_all(&new_reply(
-                        &ReplyError::Succeeded,
-                        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-                    ))
-                    .await;
-
-                if let Err(err) = ret {
-                    warn!("Cannot reply to socks5 client: {}", err);
-                    continue;
-                }
-
+                let cnx = cnx.into_inner();
                 drop(acceptor);
-                return Some((Ok((Socks5Stream::Tcp(cnx), (host, port))), (server, udp_server, tasks)));
+                return Some((
+                    Ok((
+                        Socks5Stream::Tcp {
+                            stream: cnx,
+                            pending_reply: true,
+                        },
+                        (host, port),
+                    )),
+                    (server, udp_server, tasks),
+                ));
             }
         },
     );
@@ -226,6 +232,32 @@ fn new_reply(error: &ReplyError, sock_addr: SocketAddr) -> Vec<u8> {
 }
 
 impl Unpin for Socks5Stream {}
+
+impl Socks5WriteHalf {
+    pub(crate) async fn send_reply_if_needed(&mut self, error: ReplyError) -> anyhow::Result<()> {
+        let should_reply = match self {
+            Self::Tcp { pending_reply, .. } => {
+                if *pending_reply {
+                    *pending_reply = false;
+                    true
+                } else {
+                    false
+                }
+            }
+            Self::Udp(_) => false,
+        };
+
+        if should_reply {
+            let bind_addr = match error {
+                ReplyError::Succeeded => SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+                _ => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            };
+            self.write_all(&new_reply(&error, bind_addr)).await?;
+        }
+
+        Ok(())
+    }
+}
 impl AsyncRead for Socks5ReadHalf {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -242,21 +274,21 @@ impl AsyncRead for Socks5ReadHalf {
 impl AsyncWrite for Socks5WriteHalf {
     fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         match self.get_mut() {
-            Self::Tcp(s) => Pin::new(s).poll_write(cx, buf),
+            Self::Tcp { writer, .. } => Pin::new(writer).poll_write(cx, buf),
             Self::Udp(s) => Pin::new(s).poll_write(cx, buf),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.get_mut() {
-            Self::Tcp(s) => Pin::new(s).poll_flush(cx),
+            Self::Tcp { writer, .. } => Pin::new(writer).poll_flush(cx),
             Self::Udp(s) => Pin::new(s).poll_flush(cx),
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.get_mut() {
-            Self::Tcp(s) => Pin::new(s).poll_shutdown(cx),
+            Self::Tcp { writer, .. } => Pin::new(writer).poll_shutdown(cx),
             Self::Udp(s) => Pin::new(s).poll_shutdown(cx),
         }
     }
@@ -267,15 +299,70 @@ impl AsyncWrite for Socks5WriteHalf {
         bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, Error>> {
         match self.get_mut() {
-            Self::Tcp(s) => Pin::new(s).poll_write_vectored(cx, bufs),
+            Self::Tcp { writer, .. } => Pin::new(writer).poll_write_vectored(cx, bufs),
             Self::Udp(s) => Pin::new(s).poll_write_vectored(cx, bufs),
         }
     }
 
     fn is_write_vectored(&self) -> bool {
         match self {
-            Self::Tcp(s) => s.is_write_vectored(),
+            Self::Tcp { writer, .. } => writer.is_write_vectored(),
             Self::Udp(s) => s.is_write_vectored(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
+    use tokio::time::{Duration, timeout};
+
+    async fn tcp_writer_with_client(pending_reply: bool) -> (tokio::net::TcpStream, Socks5WriteHalf) {
+        let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+            .await
+            .unwrap();
+        let client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let (_, writer) = server.into_split();
+
+        (client, Socks5WriteHalf::Tcp { writer, pending_reply })
+    }
+
+    #[tokio::test]
+    async fn deferred_socks5_reply_is_sent_only_when_requested() {
+        let (mut client, mut writer) = tcp_writer_with_client(true).await;
+
+        assert!(timeout(Duration::from_millis(30), client.read_u8()).await.is_err());
+
+        writer.send_reply_if_needed(ReplyError::Succeeded).await.unwrap();
+        let mut reply = [0u8; 10];
+        client.read_exact(&mut reply).await.unwrap();
+
+        assert_eq!(reply[0], consts::SOCKS5_VERSION);
+        assert_eq!(reply[1], ReplyError::Succeeded.as_u8());
+    }
+
+    #[tokio::test]
+    async fn deferred_socks5_reply_is_one_shot() {
+        let (mut client, mut writer) = tcp_writer_with_client(true).await;
+
+        writer.send_reply_if_needed(ReplyError::GeneralFailure).await.unwrap();
+        let mut reply = [0u8; 10];
+        client.read_exact(&mut reply).await.unwrap();
+        assert_eq!(reply[1], ReplyError::GeneralFailure.as_u8());
+
+        writer.send_reply_if_needed(ReplyError::Succeeded).await.unwrap();
+        assert!(timeout(Duration::from_millis(30), client.read_u8()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn socks5_reply_is_skipped_when_not_pending() {
+        let (mut client, mut writer) = tcp_writer_with_client(false).await;
+        writer.send_reply_if_needed(ReplyError::Succeeded).await.unwrap();
+        assert!(timeout(Duration::from_millis(30), client.read_u8()).await.is_err());
     }
 }

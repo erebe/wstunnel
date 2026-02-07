@@ -28,11 +28,16 @@ use uuid::Uuid;
 pub struct Http2TunnelRead {
     inner: BodyStream<Incoming>,
     cnx_poller: Option<AbortHandle>,
+    prefetched: BytesMut,
 }
 
 impl Http2TunnelRead {
-    pub const fn new(inner: BodyStream<Incoming>, cnx_poller: Option<AbortHandle>) -> Self {
-        Self { inner, cnx_poller }
+    pub fn new(inner: BodyStream<Incoming>, cnx_poller: Option<AbortHandle>) -> Self {
+        Self {
+            inner,
+            cnx_poller,
+            prefetched: BytesMut::new(),
+        }
     }
 }
 
@@ -46,6 +51,14 @@ impl Drop for Http2TunnelRead {
 
 impl TunnelRead for Http2TunnelRead {
     async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> Result<(), io::Error> {
+        if !self.prefetched.is_empty() {
+            let data = self.prefetched.split().freeze();
+            return match writer.write_all(data.as_ref()).await {
+                Ok(_) => Ok(()),
+                Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
+            };
+        }
+
         loop {
             match self.inner.next().await {
                 Some(Ok(frame)) => match frame.into_data() {
@@ -54,6 +67,40 @@ impl TunnelRead for Http2TunnelRead {
                             Ok(_) => Ok(()),
                             Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
                         };
+                    }
+                    Err(err) => {
+                        warn!("{err:?}");
+                        continue;
+                    }
+                },
+                Some(Err(err)) => {
+                    return Err(io::Error::new(ErrorKind::ConnectionAborted, err));
+                }
+                None => return Err(io::Error::new(ErrorKind::BrokenPipe, "closed")),
+            }
+        }
+    }
+}
+
+impl Http2TunnelRead {
+    pub async fn read_handshake_byte(&mut self) -> Result<u8, io::Error> {
+        if !self.prefetched.is_empty() {
+            let data = self.prefetched.split_to(1);
+            return Ok(data[0]);
+        }
+
+        loop {
+            match self.inner.next().await {
+                Some(Ok(frame)) => match frame.into_data() {
+                    Ok(data) => {
+                        if data.is_empty() {
+                            continue;
+                        }
+                        let first = data[0];
+                        if data.len() > 1 {
+                            self.prefetched.extend_from_slice(&data[1..]);
+                        }
+                        return Ok(first);
                     }
                     Err(err) => {
                         warn!("{err:?}");

@@ -1,17 +1,22 @@
 use crate::executor::{DefaultTokioExecutor, TokioExecutorRef};
+use crate::protocols::socks5::Socks5WriteHalf;
 use crate::tunnel;
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::client::cnx_pool::WsConnection;
 use crate::tunnel::connectors::TunnelConnector;
 use crate::tunnel::listeners::TunnelListener;
+use crate::tunnel::reverse_socks5::{HANDSHAKE_CONNECT_FAIL, HANDSHAKE_CONNECT_OK};
 use crate::tunnel::tls_reloader::TlsReloader;
-use crate::tunnel::transport::io::{TunnelReader, TunnelWriter};
+use crate::tunnel::transport::io::{TunnelReader, TunnelWrite, TunnelWriter};
 use crate::tunnel::transport::{TransportScheme, jwt_token_to_tunnel};
 use anyhow::Context;
+use bytes::BufMut;
+use fast_socks5::ReplyError;
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
 use log::debug;
+use std::any::Any;
 use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,6 +37,28 @@ pub struct WsClient<E: TokioExecutorRef = DefaultTokioExecutor> {
 }
 
 impl<E: TokioExecutorRef> WsClient<E> {
+    async fn send_socks5_reply_if_needed<W: Any + AsyncWrite + Send + 'static>(
+        writer: &mut W,
+        error: ReplyError,
+    ) -> anyhow::Result<()> {
+        let Some(socks5_writer) = (writer as &mut dyn Any).downcast_mut::<Socks5WriteHalf>() else {
+            return Ok(());
+        };
+
+        socks5_writer.send_reply_if_needed(error).await
+    }
+
+    async fn send_reverse_socks5_handshake(writer: &mut TunnelWriter, success: bool) -> anyhow::Result<()> {
+        let byte = if success {
+            HANDSHAKE_CONNECT_OK
+        } else {
+            HANDSHAKE_CONNECT_FAIL
+        };
+        writer.buf_mut().put_u8(byte);
+        writer.write().await?;
+        Ok(())
+    }
+
     pub async fn new(
         config: WsClientConfig,
         connection_min_idle: u32,
@@ -68,24 +95,38 @@ impl<E: TokioExecutorRef> WsClient<E> {
     ) -> anyhow::Result<()>
     where
         R: AsyncRead + Send + 'static,
-        W: AsyncWrite + Send + 'static,
+        W: AsyncWrite + Send + 'static + Any,
     {
+        let (local_rx, mut local_tx) = duplex_stream;
+
         // Connect to server with the correct protocol
         let (ws_rx, ws_tx, response) = match self.config.remote_addr.scheme() {
             TransportScheme::Ws | TransportScheme::Wss => {
-                tunnel::transport::websocket::connect(request_id, self, remote_cfg)
-                    .await
-                    .map(|(r, w, response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response))?
+                match tunnel::transport::websocket::connect(request_id, self, remote_cfg).await {
+                    Ok((r, w, response)) => (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response),
+                    Err(err) => {
+                        let _ = Self::send_socks5_reply_if_needed(&mut local_tx, ReplyError::GeneralFailure).await;
+                        return Err(err);
+                    }
+                }
             }
             TransportScheme::Http | TransportScheme::Https => {
-                tunnel::transport::http2::connect(request_id, self, remote_cfg)
-                    .await
-                    .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
+                match tunnel::transport::http2::connect(request_id, self, remote_cfg).await {
+                    Ok((r, w, response)) => (TunnelReader::Http2(r), TunnelWriter::Http2(w), response),
+                    Err(err) => {
+                        let _ = Self::send_socks5_reply_if_needed(&mut local_tx, ReplyError::GeneralFailure).await;
+                        return Err(err);
+                    }
+                }
             }
         };
 
         debug!("Server response: {response:?}");
-        let (local_rx, local_tx) = duplex_stream;
+
+        if let Err(err) = Self::send_socks5_reply_if_needed(&mut local_tx, ReplyError::Succeeded).await {
+            return Err(err);
+        }
+
         let (close_tx, close_rx) = oneshot::channel::<()>();
 
         // Forward local tx to websocket tx
@@ -151,6 +192,8 @@ impl<E: TokioExecutorRef> WsClient<E> {
         }
 
         let mut reconnect_delay = new_reconnect_delay(self.reverse_tunnel_connection_retry_max_backoff);
+        let is_reverse_socks5 = matches!(remote_addr.protocol, tunnel::LocalProtocol::ReverseSocks5 { .. });
+
         loop {
             let client = self.clone();
             let request_id = Uuid::now_v7();
@@ -161,7 +204,7 @@ impl<E: TokioExecutorRef> WsClient<E> {
                 remote = format!("{}:{}", remote_addr.host, remote_addr.port)
             );
             // Correctly configure tunnel cfg
-            let (ws_rx, ws_tx, response) = match client.config.remote_addr.scheme() {
+            let (ws_rx, mut ws_tx, response) = match client.config.remote_addr.scheme() {
                 TransportScheme::Ws | TransportScheme::Wss => {
                     match tunnel::transport::websocket::connect(request_id, &client, &remote_addr)
                         .instrument(span.clone())
@@ -206,13 +249,28 @@ impl<E: TokioExecutorRef> WsClient<E> {
                     port: jwt.claims.rp,
                 });
 
+            let need_reverse_socks5_handshake = is_reverse_socks5
+                && matches!(remote.as_ref().map(|r| &r.protocol), Some(tunnel::LocalProtocol::Tcp { .. }));
+
             let (local_rx, local_tx) = match connector.connect(&remote).instrument(span.clone()).await {
                 Ok(s) => s,
                 Err(err) => {
                     event!(parent: &span, Level::ERROR, "Cannot connect to {remote:?}: {err:?}");
+                    if need_reverse_socks5_handshake {
+                        let _ = Self::send_reverse_socks5_handshake(&mut ws_tx, false).await;
+                        let _ = ws_tx.close().await;
+                    }
                     continue;
                 }
             };
+
+            if need_reverse_socks5_handshake {
+                if let Err(err) = Self::send_reverse_socks5_handshake(&mut ws_tx, true).await {
+                    event!(parent: &span, Level::ERROR, "Cannot send reverse socks5 handshake: {err:?}");
+                    let _ = ws_tx.close().await;
+                    continue;
+                }
+            }
 
             let (close_tx, close_rx) = oneshot::channel::<()>();
             self.executor.spawn({
