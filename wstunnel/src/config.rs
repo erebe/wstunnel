@@ -72,6 +72,20 @@ pub struct Client {
     ))]
     pub connection_retry_max_backoff: Duration,
 
+    /// Timeout used when establishing connections for tunnel traffic.
+    /// This includes connecting to the wstunnel server and reverse tunnel endpoint connects.
+    /// For reverse SOCKS5, client/server values can differ; the shorter side effectively limits wait time.
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "3s",
+        value_parser = parsers::parse_duration_sec,
+        alias = "timeout-connect-sec",
+        env = "WSTUNNEL_TIMEOUT_CONNECT",
+        verbatim_doc_comment
+    ))]
+    pub timeout_connect: Duration,
+
     /// When using reverse tunnel, the client will try to always keep a connection to the server to await for new tunnels
     /// This delay is the maximum of time the client will wait before trying to reconnect to the server in case of failure.
     /// The client follows an exponential backoff strategy until it reaches this maximum delay
@@ -278,6 +292,19 @@ pub struct Server {
     /// Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
     #[cfg_attr(feature = "clap", arg(long, default_value = "false", verbatim_doc_comment))]
     pub websocket_mask_frame: bool,
+
+    /// Timeout used when establishing upstream connections and waiting for reverse SOCKS5 connect handshakes.
+    /// For reverse SOCKS5, client/server values can differ; the shorter side effectively limits wait time.
+    #[cfg_attr(feature = "clap", arg(
+        long,
+        value_name = "DURATION(s|m|h)",
+        default_value = "3s",
+        value_parser = parsers::parse_duration_sec,
+        alias = "timeout-connect-sec",
+        env = "WSTUNNEL_TIMEOUT_CONNECT",
+        verbatim_doc_comment
+    ))]
+    pub timeout_connect: Duration,
 
     /// Dns resolver to use to lookup ips of domain name
     /// This option is not going to work if you use transparent proxy

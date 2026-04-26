@@ -161,6 +161,7 @@ pub struct WebsocketTunnelRead {
     inner: WebSocketRead<TransportReadHalf>,
     pending_operations: Sender<Frame<'static>>,
     notify_pending_ops: Arc<Notify>,
+    prefetched: BytesMut,
 }
 
 impl WebsocketTunnelRead {
@@ -172,6 +173,7 @@ impl WebsocketTunnelRead {
                 inner: ws,
                 pending_operations: tx,
                 notify_pending_ops: notify.clone(),
+                prefetched: BytesMut::new(),
             },
             (rx, notify),
         )
@@ -186,6 +188,14 @@ fn frame_reader(_: Frame<'_>) -> futures_util::future::Ready<anyhow::Result<()>>
 impl TunnelRead for WebsocketTunnelRead {
     async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> Result<(), io::Error> {
         loop {
+            if !self.prefetched.is_empty() {
+                let data = self.prefetched.split().freeze();
+                return match writer.write_all(data.as_ref()).await {
+                    Ok(_) => Ok(()),
+                    Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
+                };
+            }
+
             let msg = match self.inner.read_frame(&mut frame_reader).await {
                 Ok(msg) => msg,
                 Err(err) => return Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
@@ -230,6 +240,66 @@ impl TunnelRead for WebsocketTunnelRead {
                     self.notify_pending_ops.notify_waiters();
                 }
             };
+        }
+    }
+}
+
+impl WebsocketTunnelRead {
+    pub async fn read_handshake_byte(&mut self) -> Result<u8, io::Error> {
+        if !self.prefetched.is_empty() {
+            let data = self.prefetched.split_to(1);
+            return Ok(data[0]);
+        }
+
+        loop {
+            let msg = match self.inner.read_frame(&mut frame_reader).await {
+                Ok(msg) => msg,
+                Err(err) => return Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
+            };
+
+            match msg.opcode {
+                OpCode::Continuation | OpCode::Text | OpCode::Binary => {
+                    let payload = msg.payload.as_ref();
+                    if payload.is_empty() {
+                        continue;
+                    }
+                    let first = payload[0];
+                    if payload.len() > 1 {
+                        self.prefetched.extend_from_slice(&payload[1..]);
+                    }
+                    return Ok(first);
+                }
+                OpCode::Close => {
+                    let _ = self
+                        .pending_operations
+                        .send(Frame::close(CloseCode::Normal.into(), &[]))
+                        .await;
+                    self.notify_pending_ops.notify_waiters();
+                    return Err(io::Error::new(ErrorKind::NotConnected, "websocket close"));
+                }
+                OpCode::Ping => {
+                    if self
+                        .pending_operations
+                        .send(Frame::new(true, msg.opcode, None, Payload::Owned(msg.payload.to_owned())))
+                        .await
+                        .is_err()
+                    {
+                        return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send ping"));
+                    }
+                    self.notify_pending_ops.notify_waiters();
+                }
+                OpCode::Pong => {
+                    if self
+                        .pending_operations
+                        .send(Frame::pong(Payload::Borrowed(&[])))
+                        .await
+                        .is_err()
+                    {
+                        return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send pong"));
+                    }
+                    self.notify_pending_ops.notify_waiters();
+                }
+            }
         }
     }
 }
