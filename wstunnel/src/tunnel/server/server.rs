@@ -185,10 +185,25 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                 };
 
                 if proxy_protocol {
+                    let mut dest_addr = tx.local_addr()?;
+                    
+                    // Fix address family mismatches to satisfy PROXY protocol v2 rules
+                    if client_address.is_ipv6() && dest_addr.is_ipv4() {
+                        dest_addr = std::net::SocketAddr::new(
+                            std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+                            dest_addr.port()
+                        );
+                    } else if client_address.is_ipv4() && dest_addr.is_ipv6() {
+                        dest_addr = std::net::SocketAddr::new(
+                            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                            dest_addr.port()
+                        );
+                    }
+
                     let header = ppp::v2::Builder::with_addresses(
                         ppp::v2::Version::Two | ppp::v2::Command::Proxy,
                         ppp::v2::Protocol::Stream,
-                        (client_address, tx.local_addr()?),
+                        (client_address, dest_addr),
                     )
                     .build()?;
                     let _ = tx.write_all(&header).await;
