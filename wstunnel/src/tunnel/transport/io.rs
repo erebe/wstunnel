@@ -195,6 +195,7 @@ pub async fn propagate_remote_to_local(
             match err.kind() {
                 ErrorKind::NotConnected => debug!("Connection closed frame received"),
                 ErrorKind::BrokenPipe => debug!("Remote side closed connection"),
+                ErrorKind::UnexpectedEof => debug!("Remote side closed connection {err}"),
                 _ => error!("error while reading from tunnel rx {err}"),
             }
             break;
