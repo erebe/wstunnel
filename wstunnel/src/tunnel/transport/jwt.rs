@@ -1,7 +1,6 @@
 use crate::tunnel::{LocalProtocol, RemoteAddr};
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, TokenData};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::ops::Deref;
 use std::sync::LazyLock;
 use std::time::SystemTime;
@@ -16,13 +15,6 @@ static JWT_KEY: LazyLock<(Header, EncodingKey)> = LazyLock::new(|| {
         .as_nanos()
         .to_ne_bytes();
     (Header::new(Algorithm::HS256), EncodingKey::from_secret(&now))
-});
-
-static JWT_DECODE: LazyLock<(Validation, DecodingKey)> = LazyLock::new(|| {
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.required_spec_claims = HashSet::with_capacity(0);
-    validation.insecure_disable_signature_validation();
-    (validation, DecodingKey::from_secret(b"champignonfrais"))
 });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,8 +57,7 @@ pub fn tunnel_to_jwt_token(request_id: Uuid, tunnel: &RemoteAddr) -> String {
 }
 
 pub fn jwt_token_to_tunnel(token: &str) -> anyhow::Result<TokenData<JwtTunnelConfig>> {
-    let (validation, decode_key) = JWT_DECODE.deref();
-    let jwt: TokenData<JwtTunnelConfig> = jsonwebtoken::decode(token, decode_key, validation)?;
+    let jwt: TokenData<JwtTunnelConfig> = jsonwebtoken::dangerous::insecure_decode(token)?;
     Ok(jwt)
 }
 

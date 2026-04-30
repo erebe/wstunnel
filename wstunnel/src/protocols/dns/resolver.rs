@@ -3,11 +3,9 @@ use crate::somark::SoMark;
 use anyhow::{Context, anyhow};
 use futures_util::{FutureExt, TryFutureExt};
 use hickory_resolver::Resolver;
-use hickory_resolver::config::{LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts};
-use hickory_resolver::name_server::GenericConnector;
-use hickory_resolver::proto::runtime::iocompat::AsyncIoTokioAsStd;
-use hickory_resolver::proto::runtime::{RuntimeProvider, TokioHandle, TokioRuntimeProvider, TokioTime};
-use hickory_resolver::proto::xfer::Protocol;
+use hickory_resolver::config::{ConnectionConfig, LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts};
+use hickory_resolver::net::runtime::iocompat::AsyncIoTokioAsStd;
+use hickory_resolver::net::runtime::{RuntimeProvider, TokioHandle, TokioRuntimeProvider, TokioTime};
 use log::warn;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -18,7 +16,7 @@ use tokio::net::{TcpStream, UdpSocket};
 use url::{Host, Url};
 
 #[cfg(feature = "aws-lc-rs")]
-use hickory_resolver::ResolveError;
+use hickory_resolver::net::NetError;
 #[cfg(feature = "aws-lc-rs")]
 use tokio_rustls::rustls::client::EchConfig;
 
@@ -44,7 +42,7 @@ fn sort_socket_addrs(socket_addrs: &[SocketAddr], prefer_ipv6: bool) -> impl Ite
 pub enum DnsResolver {
     System,
     TrustDns {
-        resolver: Box<Resolver<GenericConnector<TokioRuntimeProviderWithSoMark>>>,
+        resolver: Box<Resolver<TokioRuntimeProviderWithSoMark>>,
         prefer_ipv6: bool,
     },
 }
@@ -57,7 +55,7 @@ impl DnsResolver {
                 let addrs: Vec<_> = resolver
                     .lookup_ip(domain)
                     .await?
-                    .into_iter()
+                    .iter()
                     .map(|ip| match ip {
                         IpAddr::V4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
                         IpAddr::V6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
@@ -71,7 +69,7 @@ impl DnsResolver {
     }
 
     #[cfg(feature = "aws-lc-rs")]
-    pub async fn lookup_ech_config(&self, domain: &Host) -> Result<Option<EchConfig>, ResolveError> {
+    pub async fn lookup_ech_config(&self, domain: &Host) -> Result<Option<EchConfig>, NetError> {
         use hickory_resolver::proto::rr::rdata::svcb::{SvcParamKey, SvcParamValue};
         use hickory_resolver::proto::rr::{RData, RecordType};
         use tokio_rustls::rustls::crypto::aws_lc_rs::hpke::ALL_SUPPORTED_SUITES;
@@ -92,16 +90,17 @@ impl DnsResolver {
         let lookup = resolver.lookup(domain, RecordType::HTTPS).await?;
 
         let ech_config = lookup
+            .answers()
             .iter()
-            .filter_map(|record_data| {
-                if let RData::HTTPS(svcb) = record_data {
+            .filter_map(|record| {
+                if let RData::HTTPS(svcb) = &record.data {
                     Some(svcb)
                 } else {
                     None
                 }
             })
             .flat_map(|svcb| {
-                svcb.svc_params().iter().filter_map(|sp| {
+                svcb.svc_params.iter().filter_map(|sp| {
                     let (SvcParamKey::EchConfigList, SvcParamValue::EchConfigList(e)) = sp else {
                         return None;
                     };
@@ -125,7 +124,7 @@ impl DnsResolver {
             mut opts: ResolverOpts,
             proxy: Option<Url>,
             so_mark: SoMark,
-        ) -> Resolver<GenericConnector<TokioRuntimeProviderWithSoMark>> {
+        ) -> anyhow::Result<Resolver<TokioRuntimeProviderWithSoMark>> {
             opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
             opts.timeout = Duration::from_secs(1);
 
@@ -137,12 +136,9 @@ impl DnsResolver {
                 opts.num_concurrent_reqs = cfg.name_servers().len();
             }
 
-            let mut builder = Resolver::builder_with_config(
-                cfg,
-                GenericConnector::new(TokioRuntimeProviderWithSoMark::new(proxy, so_mark)),
-            );
+            let mut builder = Resolver::builder_with_config(cfg, TokioRuntimeProviderWithSoMark::new(proxy, so_mark));
             *builder.options_mut() = opts;
-            builder.build()
+            Ok(builder.build()?)
         }
 
         fn get_sni(resolver: &Url) -> anyhow::Result<String> {
@@ -155,31 +151,39 @@ impl DnsResolver {
         }
 
         fn url_to_ns_config(resolver: &Url) -> anyhow::Result<NameServerConfig> {
-            let (protocol, port, tls_sni) = match resolver.scheme() {
-                "dns" => (Protocol::Udp, resolver.port().unwrap_or(53), None),
-                "dns+https" => (Protocol::Https, resolver.port().unwrap_or(443), Some(get_sni(resolver)?)),
-                "dns+tls" => (Protocol::Tls, resolver.port().unwrap_or(853), Some(get_sni(resolver)?)),
+            let (mut conn_config, port) = match resolver.scheme() {
+                "dns" => (ConnectionConfig::udp(), resolver.port().unwrap_or(53)),
+                "dns+https" => {
+                    let sni = get_sni(resolver)?;
+                    (
+                        ConnectionConfig::https(Arc::from(sni.as_str()), None),
+                        resolver.port().unwrap_or(443),
+                    )
+                }
+                "dns+tls" => {
+                    let sni = get_sni(resolver)?;
+                    (ConnectionConfig::tls(Arc::from(sni.as_str())), resolver.port().unwrap_or(853))
+                }
                 _ => return Err(anyhow!("invalid protocol for dns resolver")),
             };
+            conn_config.port = port;
+
             let host = resolver
                 .host()
                 .ok_or_else(|| anyhow!("Invalid dns resolver host: {resolver}"))?;
-            let sock = match host {
+            let ip = match host {
                 Host::Domain(host) => match Host::parse(host) {
-                    Ok(Host::Ipv4(ip)) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
-                    Ok(Host::Ipv6(ip)) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
+                    Ok(Host::Ipv4(ip)) => IpAddr::V4(ip),
+                    Ok(Host::Ipv6(ip)) => IpAddr::V6(ip),
                     Ok(Host::Domain(_)) | Err(_) => {
                         return Err(anyhow!("Dns resolver must be an ip address, got {host}"));
                     }
                 },
-                Host::Ipv4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
-                Host::Ipv6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
+                Host::Ipv4(ip) => IpAddr::V4(ip),
+                Host::Ipv6(ip) => IpAddr::V6(ip),
             };
 
-            let mut ns = NameServerConfig::new(sock, protocol);
-            ns.tls_dns_name = tls_sni;
-
-            Ok(ns)
+            Ok(NameServerConfig::new(ip, true, vec![conn_config]))
         }
 
         // no dns resolver specified, fall-back to default one
@@ -192,7 +196,7 @@ impl DnsResolver {
             };
 
             return Ok(Self::TrustDns {
-                resolver: Box::new(mk_resolver(cfg, opts, proxy, so_mark)),
+                resolver: Box::new(mk_resolver(cfg, opts, proxy, so_mark)?),
                 prefer_ipv6,
             });
         };
@@ -203,13 +207,13 @@ impl DnsResolver {
         }
 
         // otherwise, use the specified resolvers
-        let mut cfg = ResolverConfig::new();
+        let mut cfg = ResolverConfig::from_parts(None, vec![], vec![]);
         for resolver in resolvers.iter() {
             cfg.add_name_server(url_to_ns_config(resolver)?);
         }
 
         Ok(Self::TrustDns {
-            resolver: Box::new(mk_resolver(cfg, ResolverOpts::default(), proxy, so_mark)),
+            resolver: Box::new(mk_resolver(cfg, ResolverOpts::default(), proxy, so_mark)?),
             prefer_ipv6,
         })
     }
