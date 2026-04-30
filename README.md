@@ -78,7 +78,7 @@ You can give it a try with wstunnel demo server.
 ```bash
 # In a terminal start wstunnel client
 # You can set as tls-sni-override whatever domain you want. The tunnel is the only one that is going to be allowed. 
-wstunnel client -L 'tcp://4443:localhost:444?proxy_protocol' -P demo --tls-sni-override=google.fr wss://49.13.58.9
+wstunnel client -L 'tcp://4443:10.43.0.11:444' -P demo --tls-sni-override=google.fr wss://49.13.58.9
 
 # on another terminal, run curl and it should return you this greetings
 curl -k https://localhost:4443
