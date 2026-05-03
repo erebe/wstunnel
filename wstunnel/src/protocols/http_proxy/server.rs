@@ -151,7 +151,10 @@ pub async fn run_server(
     timeout: Option<Duration>,
     credentials: Option<(String, String)>,
 ) -> Result<HttpProxyListener, anyhow::Error> {
-    info!("Starting http proxy server listening cnx on {bind} with credentials {credentials:?}");
+    info!(
+        "Starting http proxy server listening cnx on {bind} with credential {:?}",
+        credentials.as_ref().map(|x| (&x.0, "xxx"))
+    );
 
     let listener = TcpListener::bind(bind)
         .await
