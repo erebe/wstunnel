@@ -1,6 +1,6 @@
 [package]
 name = "wstunnel"
-version = "10.5.3"
+version = "10.5.4"
 edition = "2024"
 repository = "https://github.com/erebe/wstunnel.git"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -57,7 +57,6 @@ rcgen = { version = "0.14.7", default-features = false, features = [] }
 hickory-resolver = { version = "0.26.0", default-features = false, features = [
   "system-config",
   "tokio",
-  "rustls-platform-verifier",
 ] }
 aws-lc-rs = { version = "*", optional = true }
 

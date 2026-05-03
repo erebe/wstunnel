@@ -17,8 +17,10 @@ use url::{Host, Url};
 
 #[cfg(feature = "aws-lc-rs")]
 use hickory_resolver::net::NetError;
+use tokio_rustls::rustls;
 #[cfg(feature = "aws-lc-rs")]
 use tokio_rustls::rustls::client::EchConfig;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 
 // Interleave v4 and v6 addresses as per RFC8305.
 // The first address is v6 if we have any v6 addresses.
@@ -136,8 +138,9 @@ impl DnsResolver {
                 opts.num_concurrent_reqs = cfg.name_servers().len();
             }
 
-            let mut builder = Resolver::builder_with_config(cfg, TokioRuntimeProviderWithSoMark::new(proxy, so_mark));
-            *builder.options_mut() = opts;
+            let builder = Resolver::builder_with_config(cfg, TokioRuntimeProviderWithSoMark::new(proxy, so_mark))
+                .with_options(opts)
+                .with_tls_config(tls_client_config()?);
             Ok(builder.build()?)
         }
 
@@ -217,6 +220,33 @@ impl DnsResolver {
             prefer_ipv6,
         })
     }
+}
+
+fn tls_client_config() -> Result<ClientConfig, rustls::Error> {
+    let mut root_store = RootCertStore::empty();
+
+    // Load system certificates and add them to the root store
+    let certs = rustls_native_certs::load_native_certs();
+    certs.errors.iter().for_each(|err| {
+        warn!("cannot load system some system certificates: {err}");
+    });
+    for cert in certs.certs {
+        if let Err(err) = root_store.add(cert) {
+            warn!("cannot load a system certificate: {err:?}");
+            continue;
+        }
+    }
+
+    if root_store.is_empty() {
+        warn!(
+            "DNS resolver has loaded no system certificates. If you use Dns Over HTTPS, or tls-over-https, it is most likely going to fail. Please install system certificates to avoid this warning."
+        );
+    }
+    let config_builder = ClientConfig::builder_with_provider(ClientConfig::builder().crypto_provider().clone())
+        .with_safe_default_protocol_versions()?
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    Ok(config_builder)
 }
 
 #[derive(Clone)]
