@@ -25,6 +25,12 @@ use url::Host;
 
 #[fixture]
 fn dns_resolver() -> DnsResolver {
+    if tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .is_err()
+    {
+        let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+    }
     DnsResolver::new_from_urls(&[], None, SoMark::new(None), true).expect("Cannot create DNS resolver")
 }
 
