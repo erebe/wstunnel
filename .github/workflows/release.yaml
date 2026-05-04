@@ -83,12 +83,12 @@ jobs:
 
           # Windows
           - name: Windows x86_64
-            os: windows-latest
+            os: windows-2022
             target: x86_64-pc-windows-msvc
             build-args: "--profile release-with-symbols"
 
           - name: Windows x86
-            os: windows-latest
+            os: windows-2022
             target: i686-pc-windows-msvc
             build-args: "--profile release-with-symbols --no-default-features --features ring"
 
