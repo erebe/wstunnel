@@ -1,6 +1,6 @@
 [package]
 name = "wstunnel-cli"
-version = "10.5.4"
+version = "10.5.5"
 edition = "2024"
 
 [dependencies]
