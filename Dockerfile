@@ -2,7 +2,7 @@ ARG BUILDER_IMAGE=builder_cache
 
 ############################################################
 # Cache image with all the deps
-FROM rust:1.93-trixie AS builder_cache
+FROM rust:1.95-trixie AS builder_cache
 
 RUN rustup component add rustfmt clippy && apt-get update && apt-get install cmake libclang-dev -y
 
