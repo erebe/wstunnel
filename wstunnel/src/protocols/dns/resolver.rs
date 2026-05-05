@@ -191,17 +191,25 @@ impl DnsResolver {
 
         // no dns resolver specified, fall-back to default one
         if resolvers.is_empty() {
-            let Ok((cfg, opts)) = hickory_resolver::system_conf::read_system_conf() else {
-                warn!(
-                    "Fall-backing to system dns resolver. You should consider specifying a dns resolver. To avoid performance issue"
-                );
-                return Ok(Self::System);
-            };
-
-            return Ok(Self::TrustDns {
-                resolver: Box::new(mk_resolver(cfg, opts, proxy, so_mark)?),
-                prefer_ipv6,
-            });
+            cfg_select! {
+                target_os = "android" => {
+                    // Android requires ndk to be initialized to read the system dns resolver.
+                    warn!("Fall-backing to system dns resolver. You should consider specifying a dns resolver. To avoid performance issue");
+                    return Ok(Self::System);
+                }
+                _ => {
+                    let Ok((cfg, opts)) = hickory_resolver::system_conf::read_system_conf() else {
+                        warn!(
+                            "Fall-backing to system dns resolver. You should consider specifying a dns resolver. To avoid performance issue"
+                        );
+                        return Ok(Self::System);
+                    };
+                    return Ok(Self::TrustDns {
+                        resolver: Box::new(mk_resolver(cfg, opts, proxy, so_mark)?),
+                        prefer_ipv6,
+                    });
+                }
+            }
         };
 
         // if one is specified as system, use the default one from libc
