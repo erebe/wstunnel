@@ -1,0 +1,12 @@
+{
+  "mode": "client",
+  "log_lvl": "INFO",
+  "no_color": false,
+  "client": {
+    "local_to_remote": [
+      "tcp://8080:localhost:80"
+    ],
+    "remote_addr": "ws://localhost:9090",
+    "connection_min_idle": 0
+  }
+}

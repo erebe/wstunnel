@@ -1,5 +1,7 @@
 use crate::tunnel::LocalProtocol;
 pub use hyper::http::{HeaderName, HeaderValue};
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -7,9 +9,21 @@ use tokio_rustls::rustls::pki_types::DnsName;
 use url::{Host, Url};
 
 pub const DEFAULT_CLIENT_UPGRADE_PATH_PREFIX: &str = "v1";
+pub const DEFAULT_CLIENT_REMOTE_ADDR: &str = "ws://127.0.0.1:8080";
+pub const DEFAULT_SERVER_REMOTE_ADDR: &str = "ws://0.0.0.0:8080";
 
-#[derive(Clone, Debug)]
+fn default_client_remote_addr() -> Option<Url> {
+    Some(Url::parse(DEFAULT_CLIENT_REMOTE_ADDR).unwrap())
+}
+
+fn default_server_remote_addr() -> Option<Url> {
+    Some(Url::parse(DEFAULT_SERVER_REMOTE_ADDR).unwrap())
+}
+
+#[serde_as]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
+#[serde(default)]
 pub struct Client {
     /// Listen on local and forwards traffic from remote. Can be specified multiple times
     /// examples:
@@ -44,6 +58,10 @@ pub struct Client {
     /// 'http://[::1]:1212'         =>     listen on server for incoming http proxy request on port 1212 and forward dynamically request from local machine (login/password is supported)
     /// 'unix://wstunnel.sock:g.com:443' =>     listen on server for incoming data from unix socket of path wstunnel.sock and forward to g.com:443 from local machine
     #[cfg_attr(feature = "clap", arg(short='R', long, value_name = "{tcp,udp,socks5,unix}://[BIND:]PORT:HOST:PORT", value_parser = parsers::parse_reverse_tunnel_arg, verbatim_doc_comment))]
+    #[serde(
+        serialize_with = "serde_impls::serialize_reverse_local_to_remote",
+        deserialize_with = "serde_impls::deserialize_reverse_local_to_remote"
+    )]
     pub remote_to_local: Vec<LocalToRemote>,
 
     /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
@@ -70,6 +88,7 @@ pub struct Client {
         alias = "connection-retry-max-backoff-sec",
         verbatim_doc_comment
     ))]
+    #[serde_as(as = "serde_impls::duration_human::HumanDuration")]
     pub connection_retry_max_backoff: Duration,
 
     /// When using reverse tunnel, the client will try to always keep a connection to the server to await for new tunnels
@@ -84,12 +103,14 @@ pub struct Client {
         alias = "reverse-tunnel-connection-retry-max-backoff-sec",
         verbatim_doc_comment
     ))]
+    #[serde_as(as = "serde_impls::duration_human::HumanDuration")]
     pub reverse_tunnel_connection_retry_max_backoff: Duration,
 
     /// Domain name that will be used as SNI during TLS handshake
     /// Warning: If you are behind a CDN (i.e: Cloudflare) you must set this domain also in the http HOST header.
     ///          or it will be flagged as fishy and your request rejected
     #[cfg_attr(feature = "clap", arg(long, value_name = "DOMAIN_NAME", value_parser = parsers::parse_sni_override, verbatim_doc_comment))]
+    #[serde(serialize_with = "serialize_dns_name", deserialize_with = "deserialize_dns_name")]
     pub tls_sni_override: Option<DnsName<'static>>,
 
     /// Disable sending SNI during TLS handshake
@@ -163,6 +184,12 @@ pub struct Client {
     /// Pass authorization header with basic auth credentials during the upgrade request.
     /// If you need more customization, you can use the http_headers option.
     #[cfg_attr(feature = "clap", arg(long, value_name = "USER[:PASS]", value_parser = parsers::parse_http_credentials, verbatim_doc_comment))]
+    #[serde(
+        serialize_with = "serialize_header_value",
+        deserialize_with = "deserialize_header_value",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub http_upgrade_credentials: Option<HeaderValue>,
 
     /// Frequency at which the client will send websocket pings to the server.
@@ -175,6 +202,7 @@ pub struct Client {
         alias = "websocket-ping-frequency-sec",
         verbatim_doc_comment
     ))]
+    #[serde_as(as = "Option<serde_impls::duration_human::HumanDuration>")]
     pub websocket_ping_frequency: Option<Duration>,
 
     /// Enable the masking of websocket frames. Default is false
@@ -185,6 +213,12 @@ pub struct Client {
     /// Send custom headers in the upgrade request
     /// Can be specified multiple time
     #[cfg_attr(feature = "clap", arg(short='H', long, value_name = "HEADER_NAME: HEADER_VALUE", value_parser = parsers::parse_http_headers, verbatim_doc_comment))]
+    #[serde(
+        serialize_with = "serialize_header_pairs",
+        deserialize_with = "deserialize_header_pairs",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
     pub http_headers: Vec<(HeaderName, HeaderValue)>,
 
     /// Send custom headers in the upgrade request reading them from a file.
@@ -205,7 +239,8 @@ pub struct Client {
     ///     This is not going to work, because http1 does not support streaming naturally
     ///   - The only way to make it works with http2 is to have wstunnel directly exposed to the internet without any reverse proxy in front of it
     #[cfg_attr(feature = "clap", arg(value_name = "ws[s]|http[s]://wstunnel.server.com[:port]", value_parser = parsers::parse_server_url, verbatim_doc_comment))]
-    pub remote_addr: Url,
+    #[serde(default = "default_client_remote_addr")]
+    pub remote_addr: Option<Url>,
 
     /// [Optional] Certificate (pem) to present to the server when connecting over TLS (HTTPS).
     /// Used when the server requires clients to authenticate themselves with a certificate (i.e. mTLS).
@@ -247,15 +282,57 @@ pub struct Client {
     pub dns_resolver_prefer_ipv4: bool,
 }
 
-#[derive(Debug)]
+impl Default for Client {
+    fn default() -> Self {
+        Self {
+            local_to_remote: vec![],
+            remote_to_local: vec![],
+            socket_so_mark: None,
+            connection_min_idle: 0,
+            connection_retry_max_backoff: Duration::from_secs(300),
+            reverse_tunnel_connection_retry_max_backoff: Duration::from_secs(1),
+            tls_sni_override: None,
+            tls_sni_disable: false,
+            tls_ech_enable: false,
+            tls_verify_certificate: false,
+            http_proxy: None,
+            http_proxy_login: None,
+            http_proxy_password: None,
+            http_upgrade_path_prefix: DEFAULT_CLIENT_UPGRADE_PATH_PREFIX.to_string(),
+            http_upgrade_credentials: None,
+            websocket_ping_frequency: Some(Duration::from_secs(30)),
+            websocket_mask_frame: false,
+            http_headers: vec![],
+            http_headers_file: None,
+            remote_addr: Some(Url::parse(DEFAULT_CLIENT_REMOTE_ADDR).unwrap()),
+            tls_certificate: None,
+            tls_private_key: None,
+            dns_resolver: vec![],
+            dns_resolver_prefer_ipv4: false,
+        }
+    }
+}
+
+impl Client {
+    /// Get the remote address URL. Panics if not set.
+    /// This should only be called after validation ensures remote_addr is Some.
+    pub fn remote_addr(&self) -> &Url {
+        self.remote_addr.as_ref().expect("remote_addr must be set")
+    }
+}
+
+#[serde_as]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
+#[serde(default)]
 pub struct Server {
     /// Address of the wstunnel server to bind to
     /// Example: With TLS wss://0.0.0.0:8080 or without ws://[::]:8080
     ///
     /// The server is capable of detecting by itself if the request is websocket or http2. So you don't need to specify it.
     #[cfg_attr(feature = "clap", arg(value_name = "ws[s]://0.0.0.0[:port]", value_parser = parsers::parse_server_url, verbatim_doc_comment))]
-    pub remote_addr: Url,
+    #[serde(default = "default_server_remote_addr")]
+    pub remote_addr: Option<Url>,
 
     /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
     /// You need to use {root, sudo, capabilities} to run wstunnel when using this option
@@ -272,6 +349,7 @@ pub struct Server {
         alias = "websocket-ping-frequency-sec",
         verbatim_doc_comment
     ))]
+    #[serde_as(as = "Option<serde_impls::duration_human::HumanDuration>")]
     pub websocket_ping_frequency: Option<Duration>,
 
     /// Enable the masking of websocket frames. Default is false
@@ -398,7 +476,39 @@ pub struct Server {
         alias = "remote-to-local-server-idle-timeout-sec",
         verbatim_doc_comment,
     ))]
+    #[serde_as(as = "serde_impls::duration_human::HumanDuration")]
     pub remote_to_local_server_idle_timeout: Duration,
+}
+
+impl Default for Server {
+    fn default() -> Self {
+        Self {
+            remote_addr: Some(Url::parse(DEFAULT_SERVER_REMOTE_ADDR).unwrap()),
+            socket_so_mark: None,
+            websocket_ping_frequency: Some(Duration::from_secs(30)),
+            websocket_mask_frame: false,
+            dns_resolver: vec![],
+            dns_resolver_prefer_ipv4: false,
+            restrict_to: None,
+            restrict_http_upgrade_path_prefix: None,
+            restrict_config: None,
+            tls_certificate: None,
+            tls_private_key: None,
+            tls_client_ca_certs: None,
+            http_proxy: None,
+            http_proxy_login: None,
+            http_proxy_password: None,
+            remote_to_local_server_idle_timeout: Duration::from_secs(180),
+        }
+    }
+}
+
+impl Server {
+    /// Get the remote address URL. Panics if not set.
+    /// This should only be called after validation ensures remote_addr is Some.
+    pub fn remote_addr(&self) -> &Url {
+        self.remote_addr.as_ref().expect("remote_addr must be set")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -407,6 +517,354 @@ pub struct LocalToRemote {
     pub local: SocketAddr,
     pub remote: (Host, u16),
 }
+
+// Serde implementations for complex types
+mod serde_impls {
+    use super::*;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::str::FromStr;
+
+    // LocalToRemote serialization as string
+    impl Serialize for LocalToRemote {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let s = format_local_to_remote(self);
+            serializer.serialize_str(&s)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for LocalToRemote {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let s = String::deserialize(deserializer)?;
+            #[cfg(feature = "clap")]
+            {
+                super::parsers::parse_tunnel_arg(&s).map_err(serde::de::Error::custom)
+            }
+            #[cfg(not(feature = "clap"))]
+            {
+                Err(serde::de::Error::custom("LocalToRemote deserialization requires clap feature"))
+            }
+        }
+    }
+
+    fn format_local_to_remote(l: &LocalToRemote) -> String {
+        use LocalProtocol::*;
+        let protocol = match &l.local_protocol {
+            Tcp { .. } => "tcp",
+            Udp { .. } => "udp",
+            Stdio { .. } => "stdio",
+            Socks5 { .. } => "socks5",
+            HttpProxy { .. } => "http",
+            TProxyTcp => "tproxy+tcp",
+            TProxyUdp { .. } => "tproxy+udp",
+            Unix { .. } => "unix",
+            ReverseTcp => "tcp",
+            ReverseUdp { .. } => "udp",
+            ReverseSocks5 { .. } => "socks5",
+            ReverseHttpProxy { .. } => "http",
+            ReverseUnix { .. } => "unix",
+        };
+
+        let local = if matches!(l.local_protocol, Unix { .. } | ReverseUnix { .. }) {
+            if let Unix { ref path, .. } | ReverseUnix { ref path } = l.local_protocol {
+                path.to_string_lossy().to_string()
+            } else {
+                String::new()
+            }
+        } else if matches!(l.local_protocol, Stdio { .. }) {
+            String::new()
+        } else {
+            l.local.to_string()
+        };
+
+        let remote = format!("{}:{}", l.remote.0, l.remote.1);
+
+        if local.is_empty() {
+            format!("{protocol}://{remote}")
+        } else {
+            format!("{protocol}://{local}:{remote}")
+        }
+    }
+
+    // HeaderName/HeaderValue wrapper for serde
+    pub fn serialize_header_name<S>(header: &HeaderName, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(header.as_str())
+    }
+
+    pub fn deserialize_header_name<'de, D>(deserializer: D) -> Result<HeaderName, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        HeaderName::from_str(&s).map_err(serde::de::Error::custom)
+    }
+
+    pub fn serialize_header_value<S>(header: &Option<HeaderValue>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match header {
+            Some(value) => serializer.serialize_str(value.to_str().map_err(serde::ser::Error::custom)?),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize_header_value<'de, D>(deserializer: D) -> Result<Option<HeaderValue>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        match s {
+            Some(val) => HeaderValue::from_str(&val).map(Some).map_err(serde::de::Error::custom),
+            None => Ok(None),
+        }
+    }
+
+    pub fn serialize_header_pairs<S>(headers: &[(HeaderName, HeaderValue)], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(headers.len()))?;
+        for (name, value) in headers {
+            let s = format!("{}: {}", name.as_str(), value.to_str().map_err(serde::ser::Error::custom)?);
+            seq.serialize_element(&s)?;
+        }
+        seq.end()
+    }
+
+    pub fn deserialize_header_pairs<'de, D>(deserializer: D) -> Result<Vec<(HeaderName, HeaderValue)>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let strings: Vec<String> = Vec::deserialize(deserializer)?;
+        strings
+            .iter()
+            .map(|s| {
+                let parts: Vec<&str> = s.splitn(2, ':').collect();
+                if parts.len() != 2 {
+                    return Err(serde::de::Error::custom(format!("Invalid header format: {}", s)));
+                }
+                let name = HeaderName::from_str(parts[0].trim()).map_err(serde::de::Error::custom)?;
+                let value = HeaderValue::from_str(parts[1].trim()).map_err(serde::de::Error::custom)?;
+                Ok((name, value))
+            })
+            .collect()
+    }
+
+    pub fn serialize_duration<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let secs = duration.as_secs();
+        if secs % 3600 == 0 {
+            serializer.serialize_str(&format!("{}h", secs / 3600))
+        } else if secs % 60 == 0 {
+            serializer.serialize_str(&format!("{}m", secs / 60))
+        } else {
+            serializer.serialize_str(&format!("{}s", secs))
+        }
+    }
+
+    pub fn deserialize_duration<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        #[cfg(feature = "clap")]
+        {
+            super::parsers::parse_duration_sec(&s).map_err(serde::de::Error::custom)
+        }
+        #[cfg(not(feature = "clap"))]
+        {
+            // Fallback implementation when clap is not available
+            let (arg, multiplier) = match &s[s.len().saturating_sub(1)..] {
+                "s" => (&s[..s.len() - 1], 1),
+                "m" => (&s[..s.len() - 1], 60),
+                "h" => (&s[..s.len() - 1], 3600),
+                _ => (s.as_str(), 1),
+            };
+
+            let secs = arg
+                .parse::<u64>()
+                .map_err(|_| serde::de::Error::custom(format!("cannot parse duration from {}", s)))?;
+
+            Ok(Duration::from_secs(secs * multiplier))
+        }
+    }
+
+    // serde_with compatible module for parsing human-readable durations
+    pub mod duration_human {
+        use serde_with::{DeserializeAs, SerializeAs};
+        use std::time::Duration;
+
+        pub struct HumanDuration;
+
+        impl SerializeAs<Duration> for HumanDuration {
+            fn serialize_as<S>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                super::serialize_duration(value, serializer)
+            }
+        }
+
+        impl<'de> DeserializeAs<'de, Duration> for HumanDuration {
+            fn deserialize_as<D>(deserializer: D) -> Result<Duration, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                super::deserialize_duration(deserializer)
+            }
+        }
+
+        impl SerializeAs<Option<Duration>> for HumanDuration {
+            fn serialize_as<S>(value: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                super::serialize_option_duration(value, serializer)
+            }
+        }
+
+        impl<'de> DeserializeAs<'de, Option<Duration>> for HumanDuration {
+            fn deserialize_as<D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                super::deserialize_option_duration(deserializer)
+            }
+        }
+    }
+
+    pub fn serialize_option_duration<S>(duration: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match duration {
+            Some(d) => {
+                let secs = d.as_secs();
+                if secs % 3600 == 0 {
+                    serializer.serialize_str(&format!("{}h", secs / 3600))
+                } else if secs % 60 == 0 {
+                    serializer.serialize_str(&format!("{}m", secs / 60))
+                } else {
+                    serializer.serialize_str(&format!("{}s", secs))
+                }
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize_option_duration<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        match s {
+            Some(s) => {
+                #[cfg(feature = "clap")]
+                {
+                    super::parsers::parse_duration_sec(&s)
+                        .map(Some)
+                        .map_err(serde::de::Error::custom)
+                }
+                #[cfg(not(feature = "clap"))]
+                {
+                    // Fallback implementation when clap is not available
+                    let (arg, multiplier) = match &s[s.len().saturating_sub(1)..] {
+                        "s" => (&s[..s.len() - 1], 1),
+                        "m" => (&s[..s.len() - 1], 60),
+                        "h" => (&s[..s.len() - 1], 3600),
+                        _ => (s.as_str(), 1),
+                    };
+
+                    let secs = arg
+                        .parse::<u64>()
+                        .map_err(|_| serde::de::Error::custom(format!("cannot parse duration from {}", s)))?;
+
+                    Ok(Some(Duration::from_secs(secs * multiplier)))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn serialize_dns_name<S>(dns: &Option<DnsName<'static>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match dns {
+            Some(name) => serializer.serialize_str(name.as_ref().as_ref()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize_dns_name<'de, D>(deserializer: D) -> Result<Option<DnsName<'static>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        match s {
+            Some(name) => {
+                #[cfg(feature = "clap")]
+                {
+                    super::parsers::parse_sni_override(&name)
+                        .map(Some)
+                        .map_err(serde::de::Error::custom)
+                }
+                #[cfg(not(feature = "clap"))]
+                {
+                    Err(serde::de::Error::custom("DnsName deserialization requires clap feature"))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    // Custom deserializer for remote_to_local (reverse tunnels)
+    pub fn deserialize_reverse_local_to_remote<'de, D>(deserializer: D) -> Result<Vec<LocalToRemote>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let strings: Vec<String> = Vec::deserialize(deserializer)?;
+        #[cfg(feature = "clap")]
+        {
+            strings
+                .iter()
+                .map(|s| super::parsers::parse_reverse_tunnel_arg(s).map_err(serde::de::Error::custom))
+                .collect()
+        }
+        #[cfg(not(feature = "clap"))]
+        {
+            Err(serde::de::Error::custom("Reverse tunnel deserialization requires clap feature"))
+        }
+    }
+
+    // Custom serializer for remote_to_local (reverse tunnels) - uses the same format as local_to_remote
+    pub fn serialize_reverse_local_to_remote<S>(tunnels: &Vec<LocalToRemote>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(tunnels.len()))?;
+        for tunnel in tunnels {
+            let s = format_local_to_remote(tunnel);
+            seq.serialize_element(&s)?;
+        }
+        seq.end()
+    }
+}
+
+pub use serde_impls::*;
 
 #[cfg(feature = "clap")]
 mod parsers {
@@ -802,6 +1260,32 @@ mod parsers {
         ; "with full ipv6 tunnel")]
         fn test_parse_tunnel_arg(input: &str) -> LocalToRemote {
             parse_tunnel_arg(input).unwrap()
+        }
+
+        #[test]
+        fn test_remote_to_local_deserialization() {
+            use crate::config::Client;
+
+            let yaml = r#"
+local_to_remote: []
+remote_to_local:
+  - "tcp://9090:localhost:443"
+  - "udp://8080:1.1.1.1:53"
+remote_addr: "ws://localhost:8080"
+"#;
+
+            let client: Client = serde_yaml::from_str(yaml).unwrap();
+
+            // Check that remote_to_local was parsed
+            assert_eq!(client.remote_to_local.len(), 2);
+
+            // Check that the first protocol is ReverseTcp, not Tcp
+            let tunnel1 = &client.remote_to_local[0];
+            assert!(matches!(tunnel1.local_protocol, LocalProtocol::ReverseTcp));
+
+            // Check that the second protocol is ReverseUdp, not Udp
+            let tunnel2 = &client.remote_to_local[1];
+            assert!(matches!(tunnel2.local_protocol, LocalProtocol::ReverseUdp { .. }));
         }
     }
 }

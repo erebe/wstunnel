@@ -79,6 +79,9 @@ pub async fn create_client(
         args.http_upgrade_path_prefix
     };
 
+    // Get remote_addr before moving any fields from args
+    let remote_addr = args.remote_addr.as_ref().unwrap();
+
     let http_proxy = mk_http_proxy(args.http_proxy, args.http_proxy_login, args.http_proxy_password)?;
     let dns_resolver = DnsResolver::new_from_urls(
         &args.dns_resolver,
@@ -88,7 +91,7 @@ pub async fn create_client(
     )
     .expect("cannot create dns resolver");
 
-    let transport_scheme = TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
+    let transport_scheme = TransportScheme::from_str(remote_addr.scheme()).expect("invalid scheme in server url");
     let tls = match transport_scheme {
         TransportScheme::Ws | TransportScheme::Http => None,
         TransportScheme::Wss | TransportScheme::Https => {
@@ -100,7 +103,7 @@ pub async fn create_client(
 
                 #[cfg(feature = "aws-lc-rs")]
                 dns_resolver
-                    .lookup_ech_config(&args.remote_addr.host().unwrap().to_owned())
+                    .lookup_ech_config(&remote_addr.host().unwrap().to_owned())
                     .await?
             } else {
                 None
@@ -131,9 +134,9 @@ pub async fn create_client(
     let host_header = if let Some((_, host_val)) = args.http_headers.iter().find(|(h, _)| *h == HOST) {
         host_val.clone()
     } else {
-        let host = match args.remote_addr.port_or_known_default() {
-            None | Some(80) | Some(443) => args.remote_addr.host().unwrap().to_string(),
-            Some(port) => format!("{}:{}", args.remote_addr.host().unwrap(), port),
+        let host = match remote_addr.port_or_known_default() {
+            None | Some(80) | Some(443) => remote_addr.host().unwrap().to_string(),
+            Some(port) => format!("{}:{}", remote_addr.host().unwrap(), port),
         };
         HeaderValue::from_str(&host)?
     };
@@ -145,9 +148,9 @@ pub async fn create_client(
 
     let client_config = WsClientConfig {
         remote_addr: TransportAddr::new(
-            TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
-            args.remote_addr.host().unwrap().to_owned(),
-            args.remote_addr.port_or_known_default().unwrap(),
+            TransportScheme::from_str(remote_addr.scheme()).unwrap(),
+            remote_addr.host().unwrap().to_owned(),
+            remote_addr.port_or_known_default().unwrap(),
             tls,
         )
         .unwrap(),
@@ -446,7 +449,7 @@ pub async fn run_server(args: Server, executor: impl TokioExecutor) -> anyhow::R
 }
 
 async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyhow::Result<()> {
-    let tls_config = if args.remote_addr.scheme() == "wss" {
+    let tls_config = if args.remote_addr().scheme() == "wss" {
         let tls_certificate = if let Some(cert_path) = &args.tls_certificate {
             tls::load_certificates_from_pem(cert_path).expect("Cannot load tls certificate")
         } else {
@@ -501,10 +504,13 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyho
         .expect("Cannot convert restriction rules from path-prefix and restric-to")
     };
 
+    // Get remote_addr before moving any fields from args
+    let remote_addr = args.remote_addr.as_ref().unwrap();
+
     let http_proxy = mk_http_proxy(args.http_proxy, args.http_proxy_login, args.http_proxy_password)?;
     let server_config = WsServerConfig {
         socket_so_mark: SoMark::new(args.socket_so_mark),
-        bind: args.remote_addr.socket_addrs(|| Some(8080))?[0],
+        bind: remote_addr.socket_addrs(|| Some(8080))?[0],
         websocket_ping_frequency: args
             .websocket_ping_frequency
             .or(Some(Duration::from_secs(30)))
