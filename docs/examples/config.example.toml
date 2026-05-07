@@ -1,0 +1,57 @@
+# Complete wstunnel configuration example in TOML format
+# You can use this file instead of command line arguments
+# Usage: wstunnel --config config.toml client
+#    or: wstunnel --config config.toml server
+
+# Client configuration
+[client]
+# Listen on local and forward to remote
+local_to_remote = ["tcp://8080:localhost:80", "socks5://127.0.0.1:1080"]
+
+# Listen on remote and forward from local (reverse tunnels)
+remote_to_local = []
+
+# Server address (required if using client mode)
+remote_addr = "wss://tunnel.example.com:443"
+
+# Connection pool size (0 = disabled)
+connection_min_idle = 0
+
+# Maximum retry backoff time (with s/m/h suffix)
+connection_retry_max_backoff = "5m"
+reverse_tunnel_connection_retry_max_backoff = "1s"
+
+# TLS settings
+tls_sni_disable = false
+tls_ech_enable = false
+tls_verify_certificate = false
+
+# HTTP upgrade settings
+http_upgrade_path_prefix = "v1"
+
+# WebSocket settings
+websocket_ping_frequency = "30s"
+websocket_mask_frame = false
+
+# Custom HTTP headers (list of "Name: Value" strings)
+http_headers = []
+
+# DNS resolver settings
+dns_resolver = []
+dns_resolver_prefer_ipv4 = false
+
+# Server configuration
+[server]
+# Bind address (required if using server mode)
+remote_addr = "wss://0.0.0.0:8080"
+
+# WebSocket settings
+websocket_ping_frequency = "30s"
+websocket_mask_frame = false
+
+# DNS resolver settings
+dns_resolver = []
+dns_resolver_prefer_ipv4 = false
+
+# Reverse tunnel idle timeout
+remote_to_local_server_idle_timeout = "3m"

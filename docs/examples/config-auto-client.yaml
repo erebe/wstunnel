@@ -1,0 +1,7 @@
+# Client config that auto-detects mode (no explicit mode field)
+log_lvl: WARN
+
+client:
+  local_to_remote:
+    - "tcp://8080:localhost:80"
+  remote_addr: "ws://localhost:9090"

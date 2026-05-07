@@ -1,0 +1,9 @@
+# Complete client config with global options
+mode: client
+log_lvl: DEBUG
+no_color: false
+
+client:
+  local_to_remote:
+    - "tcp://8080:localhost:80"
+  remote_addr: "ws://localhost:9090"
