@@ -1,0 +1,4 @@
+# TOML format server configuration example
+[server]
+remote_addr = "ws://0.0.0.0:9090"
+websocket_ping_frequency = "30s"

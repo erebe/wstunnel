@@ -1,0 +1,101 @@
+# Example wstunnel configuration file
+# You can use this file instead of command line arguments
+# Usage: wstunnel --config config.yaml client
+#    or: wstunnel --config config.yaml server
+#    or: wstunnel --config config.yaml (uses client or server section from config)
+#
+# CLI arguments take precedence over config file values
+
+# Client configuration
+client:
+  # Listen on local and forward to remote
+  # Examples:
+  # - "tcp://1212:google.com:443"
+  # - "udp://1212:1.1.1.1:53"
+  # - "socks5://127.0.0.1:1080"
+  # - "http://127.0.0.1:8080"
+  local_to_remote:
+    - "tcp://8080:localhost:80"
+    - "socks5://127.0.0.1:1080"
+  
+  # Listen on remote and forward from local (reverse tunnels)
+  # Examples:
+  # - "tcp://8080:localhost:80"
+  # - "udp://5353:1.1.1.1:53"
+  remote_to_local: []
+  
+  # Server address (required if using client mode)
+  remote_addr: "wss://tunnel.example.com:443"
+  
+  # Connection pool size (0 = disabled)
+  connection_min_idle: 0
+  
+  # Maximum retry backoff time (with s/m/h suffix)
+  connection_retry_max_backoff: "5m"
+  reverse_tunnel_connection_retry_max_backoff: "1s"
+  
+  # TLS settings
+  tls_sni_override: null  # Override SNI during TLS handshake
+  tls_sni_disable: false  # Disable SNI
+  tls_ech_enable: false   # Enable encrypted SNI
+  tls_verify_certificate: false  # Enable certificate verification
+  tls_certificate: null   # Path to client certificate (mTLS)
+  tls_private_key: null   # Path to client private key (mTLS)
+  
+  # HTTP proxy settings
+  http_proxy: null  # e.g., "user:pass@proxy.example.com:8080"
+  http_proxy_login: null
+  http_proxy_password: null
+  
+  # HTTP upgrade settings
+  http_upgrade_path_prefix: "v1"
+  http_upgrade_credentials: null  # e.g., "user:password"
+  
+  # WebSocket settings
+  websocket_ping_frequency: "30s"
+  websocket_mask_frame: false
+  
+  # Custom HTTP headers (list of "Name: Value" strings)
+  http_headers: []
+  http_headers_file: null  # Path to file with headers
+  
+  # DNS resolver settings
+  dns_resolver: []  # e.g., ["dns://1.1.1.1", "dns+https://1.1.1.1?sni=cloudflare-dns.com"]
+  dns_resolver_prefer_ipv4: false
+  
+  # Linux only: SO_MARK socket option
+  socket_so_mark: null
+
+# Server configuration
+server:
+  # Bind address (required if using server mode)
+  remote_addr: "wss://0.0.0.0:8080"
+  
+  # WebSocket settings
+  websocket_ping_frequency: "30s"
+  websocket_mask_frame: false
+  
+  # DNS resolver settings
+  dns_resolver: []
+  dns_resolver_prefer_ipv4: false
+  
+  # Access restrictions
+  restrict_to: null  # List of allowed destinations
+  restrict_http_upgrade_path_prefix: null  # List of allowed path prefixes
+  restrict_config: null  # Path to restrictions YAML file
+  
+  # TLS settings
+  tls_certificate: null  # Path to server certificate
+  tls_private_key: null  # Path to server private key
+  tls_client_ca_certs: null  # Path to client CA certificates (mTLS)
+  
+  # HTTP proxy settings
+  http_proxy: null
+  http_proxy_login: null
+  http_proxy_password: null
+  
+  # Reverse tunnel idle timeout
+  remote_to_local_server_idle_timeout: "3m"
+  
+  # Linux only: SO_MARK socket option
+  socket_so_mark: null

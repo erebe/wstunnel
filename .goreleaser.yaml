@@ -1,5 +1,19 @@
+version: 2
+
 builds:
-  - goos:
+  - id: linux-packages
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    binary: wstunnel
+    main: goreleaser.go
+    hooks:
+      post:
+        - ./.goreleaser_hook.sh "{{ .Arch }}" "{{ .Os }}" "{{ .Arm }}" "{{ .ProjectName }}"
+  - id: other-platforms
+    goos:
       - linux
       - darwin
       - windows
@@ -15,6 +29,10 @@ builds:
       - "7"
     binary: wstunnel
     ignore:
+      - goos: linux
+        goarch: amd64
+      - goos: linux
+        goarch: arm64
       - goos: windows
         goarch: arm64
       - goos: windows
@@ -35,10 +53,51 @@ builds:
         goarch: "arm64"
     main: goreleaser.go
     hooks:
-      #pre:
-      #  - /bin/sh -c "if [ ! -e ./goreleaser.go ]; then echo -e 'package main\\\nfunc main() { }' > ./goreleaser.go ; fi"
       post:
         - ./.goreleaser_hook.sh "{{ .Arch }}" "{{ .Os }}" "{{ .Arm }}" "{{ .ProjectName }}"
+
+archives:
+  - id: linux-packages
+    ids:
+      - linux-packages
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+      - docs/examples/*
+  - id: other-platforms
+    ids:
+      - other-platforms
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+      - docs/examples/config-client-example.yaml
+      - docs/examples/config-server-example.yaml
+      - docs/examples/config.example.yaml
+      - docs/examples/config.example.toml
+      - docs/examples/restrictions.yaml
+      - docs/examples/example-env-vars.sh
+
 checksum:
   name_template: "checksums.txt"
 changelog:

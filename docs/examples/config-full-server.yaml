@@ -1,0 +1,7 @@
+# Complete server config with global options
+mode: server
+log_lvl: INFO
+no_color: false
+
+server:
+  remote_addr: "ws://0.0.0.0:9090"

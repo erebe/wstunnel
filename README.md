@@ -619,7 +619,7 @@ Now your wstunnel server, will only accept connection if the client specify the 
 request.
 
 If you need more customization, you can use a config file to specify specific rules with `--restrict-config`.
-You can find examples of restriction rules [there](https://github.com/erebe/wstunnel/blob/main/restrictions.yaml)
+You can find examples of restriction rules [there](https://github.com/erebe/wstunnel/blob/main/docs/examples/restrictions.yaml)
 
 ---
 
