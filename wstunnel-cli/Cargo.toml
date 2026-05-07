@@ -2,11 +2,14 @@
 name = "wstunnel-cli"
 version = "10.5.5"
 edition = "2024"
+include = ["src/**/*", "../docs/examples/*", "../LICENSE", "../README.md"]
 
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive", "env"] }
+config = { version = "0.14", default-features = false, features = ["yaml", "toml", "json"] }
 fdlimit = "0.3.0"
+serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.52.1", features = ["full"] }
 tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "local-time"] }
