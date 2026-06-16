@@ -18,6 +18,11 @@ use tokio::task::JoinSet;
 use tracing::{info, warn};
 use url::Host;
 
+/// Max time a client has to send its SOCKS5 greeting and command once connected.
+/// The accept loop handles connections one at a time, so an idle client must not
+/// hold it: a real client sends its handshake immediately.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[allow(clippy::type_complexity)]
 pub struct Socks5Listener {
     socks_server: Pin<Box<dyn Stream<Item = anyhow::Result<(Socks5Stream, (Host, u16))>> + Send>>,
@@ -114,39 +119,56 @@ pub async fn run_server(
                     }
                 };
 
-                // Authenticate the connection
+                // Authenticate the connection, bounding the handshake read so a
+                // silent client cannot hold the accept loop (see HANDSHAKE_TIMEOUT).
                 let proto = if let Some((ref username, ref password)) = credentials {
                     let username = username.clone();
                     let password = password.clone();
-                    match Socks5ServerProtocol::accept_password_auth(socket, move |user, pass| {
-                        user == username && pass == password
-                    })
+                    match tokio::time::timeout(
+                        HANDSHAKE_TIMEOUT,
+                        Socks5ServerProtocol::accept_password_auth(socket, move |user, pass| {
+                            user == username && pass == password
+                        }),
+                    )
                     .await
                     {
-                        Ok((proto, _)) => proto,
-                        Err(err) => {
+                        Ok(Ok((proto, _))) => proto,
+                        Ok(Err(err)) => {
                             warn!("Rejecting socks5 cnx (auth failed): {}", err);
+                            continue;
+                        }
+                        Err(_) => {
+                            warn!("Rejecting socks5 cnx: handshake timed out after {:?}", HANDSHAKE_TIMEOUT);
                             continue;
                         }
                     }
                 } else {
-                    match Socks5ServerProtocol::accept_no_auth(socket).await {
-                        Ok(proto) => proto,
-                        Err(err) => {
+                    match tokio::time::timeout(HANDSHAKE_TIMEOUT, Socks5ServerProtocol::accept_no_auth(socket)).await {
+                        Ok(Ok(proto)) => proto,
+                        Ok(Err(err)) => {
                             warn!("Rejecting socks5 cnx (auth failed): {}", err);
+                            continue;
+                        }
+                        Err(_) => {
+                            warn!("Rejecting socks5 cnx: handshake timed out after {:?}", HANDSHAKE_TIMEOUT);
                             continue;
                         }
                     }
                 };
 
-                // Read the SOCKS5 command
-                let (proto, cmd, target_addr) = match proto.read_command().await {
-                    Ok(result) => result,
-                    Err(err) => {
-                        warn!("Rejecting socks5 cnx: {}", err);
-                        continue;
-                    }
-                };
+                // Read the SOCKS5 command, bounded by the same handshake timeout.
+                let (proto, cmd, target_addr) =
+                    match tokio::time::timeout(HANDSHAKE_TIMEOUT, proto.read_command()).await {
+                        Ok(Ok(result)) => result,
+                        Ok(Err(err)) => {
+                            warn!("Rejecting socks5 cnx: {}", err);
+                            continue;
+                        }
+                        Err(_) => {
+                            warn!("Rejecting socks5 cnx: command read timed out after {:?}", HANDSHAKE_TIMEOUT);
+                            continue;
+                        }
+                    };
 
                 let (host, port) = match &target_addr {
                     TargetAddr::Ip(SocketAddr::V4(ip)) => (Host::Ipv4(*ip.ip()), ip.port()),
