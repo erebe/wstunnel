@@ -8,6 +8,7 @@ use wstunnel::LocalProtocol;
 use wstunnel::config::{Client, Server};
 use wstunnel::executor::DefaultTokioExecutor;
 use wstunnel::{run_client, run_server};
+use wstunnel::tunnel::ca_reloader::SystemCaReloader;
 
 #[cfg(feature = "jemalloc")]
 use tikv_jemallocator::Jemalloc;
@@ -91,6 +92,9 @@ async fn main() -> anyhow::Result<()> {
     if let Err(err) = fdlimit::raise_fd_limit() {
         warn!("Failed to set soft filelimit to hard file limit: {}", err)
     }
+
+    // Start system CA reloader
+    let _ = SystemCaReloader::start(None);
 
     match args.commands {
         Commands::Client(args) => {

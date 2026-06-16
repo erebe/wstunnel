@@ -1,3 +1,4 @@
+pub mod ca_reloader;
 pub mod client;
 pub mod connectors;
 pub mod listeners;
