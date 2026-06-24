@@ -173,7 +173,11 @@ impl<E: TokioExecutorRef> WsClient<E> {
                         }
                     }
                     let mut wrapper = Wrapper(to_local_tx_clone);
-                    let _ = ws_rx.copy(&mut wrapper).await;
+                    loop {
+                        if ws_rx.copy(&mut wrapper).await.is_err() {
+                            break;
+                        }
+                    }
                 }.instrument(Span::current()));
             }
 
@@ -182,18 +186,39 @@ impl<E: TokioExecutorRef> WsClient<E> {
             let ws_tx_senders_clone = ws_tx_senders.clone();
             self.executor.spawn(async move {
                 tokio::pin!(local_rx);
-                let mut buf = bytes::BytesMut::with_capacity(65536);
                 let mut counter = 0;
-                while let Ok(n) = local_rx.read_buf(&mut buf).await {
-                    if n == 0 {
-                        break;
+                loop {
+                    let mut buf = bytes::BytesMut::with_capacity(65536);
+                    match local_rx.read_buf(&mut buf).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let data = buf.split_to(n).freeze();
+                            let mut idx = counter % ws_tx_senders_clone.len();
+                            let mut sent = false;
+                            for _ in 0..ws_tx_senders_clone.len() {
+                                match ws_tx_senders_clone[idx].try_send(data.clone()) {
+                                    Ok(_) => {
+                                        sent = true;
+                                        break;
+                                    }
+                                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                        idx = (idx + 1) % ws_tx_senders_clone.len();
+                                    }
+                                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                        break;
+                                    }
+                                }
+                            }
+                            if !sent {
+                                let orig_idx = counter % ws_tx_senders_clone.len();
+                                if ws_tx_senders_clone[orig_idx].send(data).await.is_err() {
+                                    break;
+                                }
+                            }
+                            counter += 1;
+                        }
+                        Err(_) => break,
                     }
-                    let data = buf.split_to(n).freeze();
-                    let idx = counter % ws_tx_senders_clone.len();
-                    if ws_tx_senders_clone[idx].send(data).await.is_err() {
-                        break;
-                    }
-                    counter += 1;
                 }
             }.instrument(Span::current()));
 
