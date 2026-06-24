@@ -6,7 +6,7 @@ use crate::tunnel::client::cnx_pool::WsConnection;
 use crate::tunnel::connectors::TunnelConnector;
 use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::tls_reloader::TlsReloader;
-use crate::tunnel::transport::io::{TunnelReader, TunnelWriter};
+use crate::tunnel::transport::io::{TunnelRead, TunnelReader, TunnelWrite, TunnelWriter};
 use crate::tunnel::transport::{TransportScheme, jwt_token_to_tunnel};
 use anyhow::Context;
 use futures_util::pin_mut;
@@ -15,7 +15,7 @@ use log::debug;
 use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
 use tracing::{Instrument, Level, Span, error, event, span};
@@ -70,35 +70,171 @@ impl<E: TokioExecutorRef> WsClient<E> {
         R: AsyncRead + Send + 'static,
         W: AsyncWrite + Send + 'static,
     {
-        // Connect to server with the correct protocol
-        let (ws_rx, ws_tx, response) = match self.config.remote_addr.scheme() {
-            TransportScheme::Ws | TransportScheme::Wss => {
-                tunnel::transport::websocket::connect(request_id, self, remote_cfg)
-                    .await
-                    .map(|(r, w, response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response))?
-            }
-            TransportScheme::Http | TransportScheme::Https => {
-                tunnel::transport::http2::connect(request_id, self, remote_cfg)
-                    .await
-                    .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
-            }
-        };
-
-        debug!("Server response: {response:?}");
         let (local_rx, local_tx) = duplex_stream;
-        let (close_tx, close_rx) = oneshot::channel::<()>();
 
-        // Forward local tx to websocket tx
-        let ping_frequency = self.config.websocket_ping_frequency;
-        self.executor.spawn(
-            super::super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, ping_frequency)
-                .instrument(Span::current()),
-        );
+        if self.config.udp_multiplex > 1 && matches!(remote_cfg.protocol, crate::LocalProtocol::Udp { .. }) {
+            let n = self.config.udp_multiplex;
+            let mut ws_tx_senders = Vec::new();
+            let (to_local_tx, mut to_local_rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(2048);
 
-        // Forward websocket rx to local rx
-        let _ = super::super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).await;
+            for _ in 0..n {
+                let (ws_rx, ws_tx, response) = match self.config.remote_addr.scheme() {
+                    TransportScheme::Ws | TransportScheme::Wss => {
+                        tunnel::transport::websocket::connect(request_id, self, remote_cfg)
+                            .await
+                            .map(|(r, w, response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response))?
+                    }
+                    TransportScheme::Http | TransportScheme::Https => {
+                        tunnel::transport::http2::connect(request_id, self, remote_cfg)
+                            .await
+                            .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
+                    }
+                };
 
-        Ok(())
+                debug!("Server response (multiplexed): {response:?}");
+
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(100);
+                ws_tx_senders.push(tx);
+
+                let ping_frequency = self.config.websocket_ping_frequency;
+                let mut ws_tx = ws_tx;
+                
+                self.executor.spawn(async move {
+                    let frequency = ping_frequency.unwrap_or(Duration::from_secs(3600 * 24));
+                    let mut interval = tokio::time::interval(frequency);
+                    let notify = ws_tx.pending_operations_notify();
+                    let mut has_pending = Box::pin(notify.notified());
+                    
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = &mut has_pending => {
+                                has_pending = Box::pin(notify.notified());
+                                if ws_tx.handle_pending_operations().await.is_err() {
+                                    break;
+                                }
+                            }
+                            data = rx.recv() => {
+                                match data {
+                                    Some(data) => {
+                                        ws_tx.buf_mut().clear();
+                                        ws_tx.buf_mut().extend_from_slice(&data);
+                                        if ws_tx.write().await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    None => break,
+                                }
+                            }
+                            _ = interval.tick(), if ping_frequency.is_some() => {
+                                if ws_tx.ping().await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let _ = ws_tx.close().await;
+                }.instrument(Span::current()));
+
+                let mut ws_rx = ws_rx;
+                let to_local_tx_clone = to_local_tx.clone();
+                self.executor.spawn(async move {
+                    struct Wrapper(tokio::sync::mpsc::Sender<bytes::Bytes>);
+                    impl AsyncWrite for Wrapper {
+                        fn poll_write(
+                            self: std::pin::Pin<&mut Self>,
+                            _cx: &mut std::task::Context<'_>,
+                            buf: &[u8],
+                        ) -> std::task::Poll<Result<usize, std::io::Error>> {
+                            let data = bytes::Bytes::copy_from_slice(buf);
+                            match self.0.try_send(data) {
+                                Ok(_) => std::task::Poll::Ready(Ok(buf.len())),
+                                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                    std::task::Poll::Ready(Ok(buf.len()))
+                                }
+                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                    std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "channel closed")))
+                                }
+                            }
+                        }
+
+                        fn poll_flush(
+                            self: std::pin::Pin<&mut Self>,
+                            _cx: &mut std::task::Context<'_>,
+                        ) -> std::task::Poll<Result<(), std::io::Error>> {
+                            std::task::Poll::Ready(Ok(()))
+                        }
+
+                        fn poll_shutdown(
+                            self: std::pin::Pin<&mut Self>,
+                            _cx: &mut std::task::Context<'_>,
+                        ) -> std::task::Poll<Result<(), std::io::Error>> {
+                            std::task::Poll::Ready(Ok(()))
+                        }
+                    }
+                    let mut wrapper = Wrapper(to_local_tx_clone);
+                    let _ = ws_rx.copy(&mut wrapper).await;
+                }.instrument(Span::current()));
+            }
+
+            drop(to_local_tx);
+
+            let ws_tx_senders_clone = ws_tx_senders.clone();
+            self.executor.spawn(async move {
+                tokio::pin!(local_rx);
+                let mut buf = bytes::BytesMut::with_capacity(65536);
+                let mut counter = 0;
+                while let Ok(n) = local_rx.read_buf(&mut buf).await {
+                    if n == 0 {
+                        break;
+                    }
+                    let data = buf.split_to(n).freeze();
+                    let idx = counter % ws_tx_senders_clone.len();
+                    if ws_tx_senders_clone[idx].send(data).await.is_err() {
+                        break;
+                    }
+                    counter += 1;
+                }
+            }.instrument(Span::current()));
+
+            tokio::pin!(local_tx);
+            while let Some(data) = to_local_rx.recv().await {
+                if local_tx.write_all(&data).await.is_err() {
+                    break;
+                }
+            }
+
+            Ok(())
+        } else {
+            // Connect to server with the correct protocol
+            let (ws_rx, ws_tx, response) = match self.config.remote_addr.scheme() {
+                TransportScheme::Ws | TransportScheme::Wss => {
+                    tunnel::transport::websocket::connect(request_id, self, remote_cfg)
+                        .await
+                        .map(|(r, w, response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response))?
+                }
+                TransportScheme::Http | TransportScheme::Https => {
+                    tunnel::transport::http2::connect(request_id, self, remote_cfg)
+                        .await
+                        .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
+                }
+            };
+
+            debug!("Server response: {response:?}");
+            let (close_tx, close_rx) = oneshot::channel::<()>();
+
+            // Forward local tx to websocket tx
+            let ping_frequency = self.config.websocket_ping_frequency;
+            self.executor.spawn(
+                super::super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, ping_frequency)
+                    .instrument(Span::current()),
+            );
+
+            // Forward websocket rx to local rx
+            let _ = super::super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx).await;
+
+            Ok(())
+        }
     }
 
     pub async fn run_tunnel(self, tunnel_listener: impl TunnelListener) -> anyhow::Result<()> {
