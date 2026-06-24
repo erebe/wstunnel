@@ -212,7 +212,7 @@ pub(super) fn validate_tunnel<'a>(
 }
 
 pub(super) fn inject_cookie(response: &mut http::Response<impl Body>, remote_addr: &RemoteAddr) -> Result<(), ()> {
-    let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), remote_addr)) else {
+    let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), None, remote_addr)) else {
         error!("Bad header value for reverse socks5: {} {}", remote_addr.host, remote_addr.port);
         return Err(());
     };

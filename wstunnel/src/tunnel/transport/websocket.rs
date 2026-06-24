@@ -236,6 +236,7 @@ impl TunnelRead for WebsocketTunnelRead {
 
 pub async fn connect(
     request_id: Uuid,
+    flow_id: Option<Uuid>,
     client: &WsClient<impl crate::TokioExecutorRef>,
     dest_addr: &RemoteAddr,
 ) -> anyhow::Result<(WebsocketTunnelRead, WebsocketTunnelWrite, Parts)> {
@@ -255,7 +256,7 @@ pub async fn connect(
         .header(SEC_WEBSOCKET_VERSION, "13")
         .header(
             SEC_WEBSOCKET_PROTOCOL,
-            format!("v1, {}{}", JWT_HEADER_PREFIX, tunnel_to_jwt_token(request_id, dest_addr)),
+            format!("v1, {}{}", JWT_HEADER_PREFIX, tunnel_to_jwt_token(request_id, flow_id, dest_addr)),
         )
         .version(hyper::Version::HTTP_11);
 

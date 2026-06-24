@@ -23,12 +23,17 @@ pub struct JwtTunnelConfig {
     pub p: LocalProtocol, // protocol to use
     pub r: String,        // remote host
     pub rp: u16,          // remote port
+    // UDP multiplexing flow id: shared by the N connections that belong to the same local UDP session.
+    // None for regular (non-multiplexed) tunnels. Optional for backward compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub m: Option<Uuid>,
 }
 
 impl JwtTunnelConfig {
-    fn new(request_id: Uuid, dest: &RemoteAddr) -> Self {
+    fn new(request_id: Uuid, flow_id: Option<Uuid>, dest: &RemoteAddr) -> Self {
         Self {
             id: request_id.to_string(),
+            m: flow_id,
             p: match dest.protocol {
                 LocalProtocol::Tcp { .. } => dest.protocol.clone(),
                 LocalProtocol::Udp { .. } => dest.protocol.clone(),
@@ -50,8 +55,8 @@ impl JwtTunnelConfig {
     }
 }
 
-pub fn tunnel_to_jwt_token(request_id: Uuid, tunnel: &RemoteAddr) -> String {
-    let cfg = JwtTunnelConfig::new(request_id, tunnel);
+pub fn tunnel_to_jwt_token(request_id: Uuid, flow_id: Option<Uuid>, tunnel: &RemoteAddr) -> String {
+    let cfg = JwtTunnelConfig::new(request_id, flow_id, tunnel);
     let (alg, secret) = JWT_KEY.deref();
     jsonwebtoken::encode(alg, &cfg, secret).unwrap_or_default()
 }

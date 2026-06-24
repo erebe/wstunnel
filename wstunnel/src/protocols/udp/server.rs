@@ -310,6 +310,14 @@ impl WsUdpSocket {
     pub fn new(socket: Arc<UdpSocket>) -> Self {
         Self { socket }
     }
+
+    /// Downgrade to a `Weak` reference to the underlying socket.
+    /// Used by the server-side UDP multiplexing flow registry so that the registry
+    /// does not keep the socket alive on its own: the socket is closed automatically
+    /// once all the tunnel connections of a flow have dropped their `WsUdpSocket` clones.
+    pub fn downgrade(&self) -> Weak<UdpSocket> {
+        Arc::downgrade(&self.socket)
+    }
 }
 
 impl AsyncRead for WsUdpSocket {
