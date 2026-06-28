@@ -2,11 +2,12 @@ use crate::protocols;
 use crate::protocols::tls;
 use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::client::l4_transport_stream::TransportStream;
+use anyhow::anyhow;
 use bb8::ManageConnection;
 use bytes::Bytes;
 use std::ops::Deref;
 use std::sync::Arc;
-use tracing::instrument;
+use tracing::{instrument, warn};
 
 #[derive(Clone)]
 pub struct WsConnection(Arc<WsClientConfig>);
@@ -55,7 +56,16 @@ impl ManageConnection for WsConnection {
         };
 
         if self.remote_addr.tls().is_some() {
-            let tls_stream = tls::connect(self, tcp_stream).await?;
+            // Bound the TLS handshake with the same timeout as the TCP connect,
+            // so a peer that accepts the connection but never completes the
+            // handshake is dropped instead of held.
+            let tls_stream = match tokio::time::timeout(timeout, tls::connect(self, tcp_stream)).await {
+                Ok(res) => res?,
+                Err(_) => {
+                    warn!("Timed out after {timeout:?} doing the TLS handshake with the server");
+                    return Err(anyhow!("Timed out doing the TLS handshake with the server"));
+                }
+            };
             Ok(Some(TransportStream::from_client_tls(tls_stream, Bytes::default())))
         } else {
             Ok(Some(TransportStream::from_tcp(tcp_stream, Bytes::default())))
