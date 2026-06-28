@@ -113,7 +113,7 @@ pub fn tls_connector(
 ) -> anyhow::Result<TlsConnector> {
     // Load system certificates
     let root_store = crate::tunnel::ca_reloader::get_root_store();
-	let crypto_provider = rustls::crypto::CryptoProvider::get_default().unwrap().clone();
+    let crypto_provider = rustls::crypto::CryptoProvider::get_default().unwrap().clone();
 
     let config_builder = ClientConfig::builder_with_provider(crypto_provider);
     let config_builder = if let Some(ech_config) = ech_config {

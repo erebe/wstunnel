@@ -1,5 +1,5 @@
 use arc_swap::ArcSwap;
-use std::sync::{Arc, LazyLock, Once};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio_rustls::rustls::RootCertStore;
 use tracing::{debug, warn};
@@ -31,35 +31,28 @@ impl SystemCaReloader {
             loop {
                 ticker.tick().await;
                 let new_store = Self::load_system_ca_certs();
-                if !new_store.is_empty() {
-                    SYSTEM_ROOT_STORE.store(Arc::new(new_store));
-                    debug!("System CA certificates reloaded successfully");
-                } else {
-                    warn!("Reloaded system CA certificates store was empty, ignoring replacement");
-                }
+                SYSTEM_ROOT_STORE.store(Arc::new(new_store));
+                debug!("System CA certificates reloaded successfully");
             }
         })
     }
 
     /// Safely initializes the process-wide default CryptoProvider exactly once
     fn init_crypto_provider() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            #[cfg(feature = "aws-lc-rs")]
+        #[cfg(feature = "aws-lc-rs")]
+        {
+            if tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
+                .install_default()
+                .is_err()
             {
-                if tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
-                    .install_default()
-                    .is_err()
-                {
-                    #[cfg(feature = "ring")]
-                    let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
-                }
-            }
-            #[cfg(all(not(feature = "aws-lc-rs"), feature = "ring"))]
-            {
+                #[cfg(feature = "ring")]
                 let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
             }
-        });
+        }
+        #[cfg(all(not(feature = "aws-lc-rs"), feature = "ring"))]
+        {
+            let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+        }
     }
 
     /// Helper function to load system certificates into a RootCertStore

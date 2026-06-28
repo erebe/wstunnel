@@ -18,9 +18,9 @@ use url::{Host, Url};
 #[cfg(feature = "aws-lc-rs")]
 use hickory_resolver::net::NetError;
 use tokio_rustls::rustls;
+use tokio_rustls::rustls::ClientConfig;
 #[cfg(feature = "aws-lc-rs")]
 use tokio_rustls::rustls::client::EchConfig;
-use tokio_rustls::rustls::ClientConfig;
 
 // Interleave v4 and v6 addresses as per RFC8305.
 // The first address is v6 if we have any v6 addresses.

@@ -82,15 +82,9 @@ impl Debug for LocalProtocol {
         }
 
         match self {
-            Self::Tcp { proxy_protocol } => f
-                .debug_struct("Tcp")
-                .field("proxy_protocol", proxy_protocol)
-                .finish(),
+            Self::Tcp { proxy_protocol } => f.debug_struct("Tcp").field("proxy_protocol", proxy_protocol).finish(),
             Self::Udp { timeout } => f.debug_struct("Udp").field("timeout", timeout).finish(),
-            Self::Stdio { proxy_protocol } => f
-                .debug_struct("Stdio")
-                .field("proxy_protocol", proxy_protocol)
-                .finish(),
+            Self::Stdio { proxy_protocol } => f.debug_struct("Stdio").field("proxy_protocol", proxy_protocol).finish(),
             Self::Socks5 { timeout, credentials } => f
                 .debug_struct("Socks5")
                 .field("timeout", timeout)
@@ -168,7 +162,10 @@ mod tests {
         assert!(!rendered.contains("supersecret"), "password leaked: {rendered}");
         assert!(!rendered.contains("cyera"), "username leaked: {rendered}");
         assert!(rendered.contains("<redacted>"), "credentials not redacted: {rendered}");
-        assert!(rendered.contains("Some(30s)"), "non-secret fields should still render: {rendered}");
+        assert!(
+            rendered.contains("Some(30s)"),
+            "non-secret fields should still render: {rendered}"
+        );
     }
 
     #[test]
