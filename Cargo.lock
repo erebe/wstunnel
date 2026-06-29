@@ -4389,7 +4389,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "wstunnel"
-version = "10.6.0"
+version = "10.6.1"
 dependencies = [
  "ahash",
  "anyhow",
@@ -4447,7 +4447,7 @@ dependencies = [
 
 [[package]]
 name = "wstunnel-cli"
-version = "10.6.0"
+version = "10.6.1"
 dependencies = [
  "anyhow",
  "clap",
