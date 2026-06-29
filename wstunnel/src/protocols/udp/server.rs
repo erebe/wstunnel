@@ -85,17 +85,18 @@ impl UdpServer {
 
     #[inline]
     pub fn clean_dead_keys(&mut self) {
+        // Fast path: check if there are keys to delete without acquiring write lock
         let nb_key_to_delete = self.keys_to_delete.read().len();
         if nb_key_to_delete == 0 {
             return;
         }
 
         debug!("Cleaning {} dead udp peers", nb_key_to_delete);
+        // Use drain to avoid separate iter + clear operations
         let mut keys_to_delete = self.keys_to_delete.write();
-        for key in keys_to_delete.iter() {
-            self.peers.remove(key);
+        for key in keys_to_delete.drain(..) {
+            self.peers.remove(&key);
         }
-        keys_to_delete.clear();
     }
     pub fn clone_socket(&self) -> Arc<UdpSocket> {
         self.listener.clone()
