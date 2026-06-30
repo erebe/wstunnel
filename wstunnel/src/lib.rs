@@ -165,6 +165,7 @@ pub async fn create_client(
         websocket_mask_frame: args.websocket_mask_frame,
         dns_resolver,
         http_proxy,
+        udp_multiplex: args.udp_multiplex,
     };
 
     let client = WsClient::new(

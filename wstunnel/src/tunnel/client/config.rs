@@ -26,6 +26,7 @@ pub struct WsClientConfig {
     pub websocket_mask_frame: bool,
     pub http_proxy: Option<Url>,
     pub dns_resolver: DnsResolver,
+    pub udp_multiplex: usize,
 }
 
 impl WsClientConfig {
