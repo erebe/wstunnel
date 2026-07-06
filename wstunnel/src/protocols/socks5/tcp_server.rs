@@ -77,14 +77,14 @@ pub async fn run_server(
     timeout: Option<Duration>,
     credentials: Option<(String, String)>,
 ) -> Result<Socks5Listener, anyhow::Error> {
-    info!(
-        "Starting SOCKS5 server listening cnx on {} with credentials {:?}",
-        bind, credentials
-    );
-
     let listener = TcpListener::bind(bind)
         .await
         .with_context(|| format!("Cannot create socks5 server {bind:?}"))?;
+
+    info!(
+        "Starting SOCKS5 server listening cnx on {} with credentials {:?}",
+        listener.local_addr().unwrap_or(bind), credentials
+    );
 
     let udp_server = super::udp_server::run_server(bind, timeout).await?;
     let stream = stream::unfold(
