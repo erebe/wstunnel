@@ -1,5 +1,19 @@
+version: 2
+
 builds:
-  - goos:
+  - id: linux-packages
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    binary: wstunnel
+    main: goreleaser.go
+    hooks:
+      post:
+        - ./.goreleaser_hook.sh "{{ .Arch }}" "{{ .Os }}" "{{ .Arm }}" "{{ .ProjectName }}"
+  - id: other-platforms
+    goos:
       - linux
       - darwin
       - windows
@@ -15,6 +29,10 @@ builds:
       - "7"
     binary: wstunnel
     ignore:
+      - goos: linux
+        goarch: amd64
+      - goos: linux
+        goarch: arm64
       - goos: windows
         goarch: arm64
       - goos: windows
@@ -35,10 +53,141 @@ builds:
         goarch: "arm64"
     main: goreleaser.go
     hooks:
-      #pre:
-      #  - /bin/sh -c "if [ ! -e ./goreleaser.go ]; then echo -e 'package main\\\nfunc main() { }' > ./goreleaser.go ; fi"
       post:
         - ./.goreleaser_hook.sh "{{ .Arch }}" "{{ .Os }}" "{{ .Arm }}" "{{ .ProjectName }}"
+
+archives:
+  - id: linux-packages
+    ids:
+      - linux-packages
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+      - docs/examples/*
+  - id: other-platforms
+    ids:
+      - other-platforms
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+      - docs/examples/config-client-example.yaml
+      - docs/examples/config-server-example.yaml
+      - docs/examples/config.example.yaml
+      - docs/examples/config.example.toml
+      - docs/examples/restrictions.yaml
+      - docs/examples/example-env-vars.sh
+
+nfpms:
+  - id: wstunnel
+    package_name: wstunnel
+    vendor: Erebe
+    homepage: https://github.com/erebe/wstunnel
+    maintainer: Erebe - Romain Gerard
+    description: |
+      Tunnel all your traffic over websocket protocol
+      
+      Wstunnel uses the websocket protocol to tunnel TCP traffic through
+      firewalls and proxies. It allows you to tunnel whatever traffic you
+      want and access whatever resources/site you need.
+    license: BSD-3-Clause
+    ids:
+      - linux-packages
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      # Systemd service files
+      - src: docs/examples/wstunnel-client@.service
+        dst: /usr/lib/systemd/system/wstunnel-client@.service
+        file_info:
+          mode: 0644
+      - src: docs/examples/wstunnel-server@.service
+        dst: /usr/lib/systemd/system/wstunnel-server@.service
+        file_info:
+          mode: 0644
+      # Example configuration files
+      - src: docs/examples/config-client-example.yaml
+        dst: /usr/share/doc/wstunnel/examples/config-client-example.yaml
+        file_info:
+          mode: 0644
+      - src: docs/examples/config-server-example.yaml
+        dst: /usr/share/doc/wstunnel/examples/config-server-example.yaml
+        file_info:
+          mode: 0644
+      - src: docs/examples/config.example.yaml
+        dst: /usr/share/doc/wstunnel/examples/config.example.yaml
+        file_info:
+          mode: 0644
+      - src: docs/examples/config.example.toml
+        dst: /usr/share/doc/wstunnel/examples/config.example.toml
+        file_info:
+          mode: 0644
+      - src: docs/examples/restrictions.yaml
+        dst: /usr/share/doc/wstunnel/examples/restrictions.yaml
+        file_info:
+          mode: 0644
+      - src: docs/examples/example-env-vars.sh
+        dst: /usr/share/doc/wstunnel/examples/example-env-vars.sh
+        file_info:
+          mode: 0755
+      # Documentation
+      - src: README.md
+        dst: /usr/share/doc/wstunnel/README.md
+        file_info:
+          mode: 0644
+      - src: docs/systemd-setup.md
+        dst: /usr/share/doc/wstunnel/systemd-setup.md
+        file_info:
+          mode: 0644
+      - src: docs/config-file.md
+        dst: /usr/share/doc/wstunnel/config-file.md
+        file_info:
+          mode: 0644
+      - src: LICENSE
+        dst: /usr/share/doc/wstunnel/LICENSE
+        file_info:
+          mode: 0644
+      # Create config directory
+      - dst: /etc/wstunnel
+        type: dir
+        file_info:
+          mode: 0755
+          owner: root
+          group: wstunnel
+    scripts:
+      preinstall: "scripts/preinstall.sh"
+      postinstall: "scripts/postinstall.sh"
+      preremove: "scripts/preremove.sh"
+    overrides:
+      deb:
+        dependencies:
+          - systemd
+      rpm:
+        dependencies:
+          - systemd
+
 checksum:
   name_template: "checksums.txt"
 changelog:

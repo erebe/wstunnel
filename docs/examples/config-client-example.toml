@@ -1,0 +1,7 @@
+# TOML format client configuration example
+[client]
+local_to_remote = ["tcp://8080:localhost:80", "socks5://127.0.0.1:1080"]
+remote_addr = "ws://localhost:9090"
+connection_min_idle = 5
+tls_verify_certificate = false
+websocket_ping_frequency = "30s"
