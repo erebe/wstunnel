@@ -448,6 +448,7 @@ pub fn configure_tproxy(listener: &UdpSocket) -> anyhow::Result<()> {
             nix::sys::socket::setsockopt(&listener.as_fd(), nix::sys::socket::sockopt::Ipv4OrigDstAddr, &true)?;
         }
         IpAddr::V6(_) => {
+            #[cfg(not(target_env = "uclibc"))]
             nix::sys::socket::setsockopt(&listener.as_fd(), nix::sys::socket::sockopt::Ipv6OrigDstAddr, &true)?;
         }
     };

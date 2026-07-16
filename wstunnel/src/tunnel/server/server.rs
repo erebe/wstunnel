@@ -525,6 +525,8 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                     let fut = async move {
                         let stream = hyper_util::rt::TokioIo::new(stream);
                         let mut conn_fut = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+                        conn_fut.http1().timer(TokioTimer::new());
+                        conn_fut.http2().timer(TokioTimer::new());
                         if let Some(ping) = server.config.websocket_ping_frequency {
                             conn_fut.http2().keep_alive_interval(ping);
                         }

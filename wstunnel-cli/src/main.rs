@@ -7,6 +7,7 @@ use tracing_subscriber::filter::Directive;
 use wstunnel::LocalProtocol;
 use wstunnel::config::{Client, Server};
 use wstunnel::executor::DefaultTokioExecutor;
+use wstunnel::tunnel::ca_reloader::SystemCaReloader;
 use wstunnel::{run_client, run_server};
 
 #[cfg(feature = "jemalloc")]
@@ -26,7 +27,7 @@ pub struct Wstunnel {
 
     /// Disable color output in logs
     #[arg(long, global = true, verbatim_doc_comment, env = "NO_COLOR")]
-    no_color: Option<String>,
+    no_color: bool,
 
     /// *WARNING* The flag does nothing, you need to set the env variable *WARNING*
     /// Control the number of threads that will be used.
@@ -69,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
         env_filter = env_filter.add_directive(Directive::from_str("h2::codec=off").expect("Invalid log directive"));
     }
     let logger = tracing_subscriber::fmt()
-        .with_ansi(args.no_color.is_none())
+        .with_ansi(!args.no_color)
         .with_env_filter(env_filter);
 
     // stdio tunnel capture stdio, so need to log into stderr
@@ -89,8 +90,11 @@ async fn main() -> anyhow::Result<()> {
         logger.init();
     };
     if let Err(err) = fdlimit::raise_fd_limit() {
-        warn!("Failed to set soft filelimit to hard file limit: {}", err)
+        warn!("Failed to set soft file limit to hard file limit: {}", err)
     }
+
+    // Start system CA reloader
+    SystemCaReloader::start(None);
 
     match args.commands {
         Commands::Client(args) => {

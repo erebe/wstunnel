@@ -111,21 +111,10 @@ pub fn tls_connector(
     tls_client_certificate: Option<Vec<CertificateDer<'static>>>,
     tls_client_key: Option<PrivateKeyDer<'static>>,
 ) -> anyhow::Result<TlsConnector> {
-    let mut root_store = RootCertStore::empty();
+    // Load system certificates
+    let root_store = crate::tunnel::ca_reloader::get_root_store();
+    let crypto_provider = rustls::crypto::CryptoProvider::get_default().unwrap().clone();
 
-    // Load system certificates and add them to the root store
-    let certs = rustls_native_certs::load_native_certs();
-    certs.errors.iter().for_each(|err| {
-        warn!("cannot load system some system certificates: {err}");
-    });
-    for cert in certs.certs {
-        if let Err(err) = root_store.add(cert) {
-            warn!("cannot load a system certificate: {err:?}");
-            continue;
-        }
-    }
-
-    let crypto_provider = ClientConfig::builder().crypto_provider().clone();
     let config_builder = ClientConfig::builder_with_provider(crypto_provider);
     let config_builder = if let Some(ech_config) = ech_config {
         info!("Using TLS ECH (encrypted sni) with config: {:?}", ech_config);
