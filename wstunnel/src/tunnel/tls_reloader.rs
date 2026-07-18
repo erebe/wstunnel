@@ -33,6 +33,51 @@ fn poll_watcher<F: notify::EventHandler>(handler: F, paths: &[&Path]) -> anyhow:
     Ok(watcher)
 }
 
+/// A do-nothing poll watcher used only to initialize the struct field before the real watcher is
+/// installed. `with_manual_polling` keeps its idle thread blocked (no ticking) until it is dropped
+/// and replaced.
+fn placeholder_poll_watcher() -> anyhow::Result<PollWatcher> {
+    Ok(PollWatcher::new(|_| {}, Config::default().with_manual_polling())?)
+}
+
+/// Install an inotify watcher (instant reloads on in-place writes) and a content-comparing poll
+/// watcher (fallback for symlink/rename renewals the inotify watcher misses) on the given paths.
+/// Both watchers get their own handler instance produced by `make_handler`. Returns the two
+/// watchers; the caller stores them to keep them alive.
+fn install_watchers<H, F>(paths: &[&Path], mut make_handler: F) -> anyhow::Result<(RecommendedWatcher, PollWatcher)>
+where
+    H: notify::EventHandler,
+    F: FnMut() -> H,
+{
+    let mut inotify = notify::recommended_watcher(make_handler()).with_context(|| "Cannot create tls certificate watcher")?;
+    for path in paths {
+        inotify.watch(path, notify::RecursiveMode::NonRecursive)?;
+    }
+    let poll = poll_watcher(make_handler(), paths)?;
+    Ok((inotify, poll))
+}
+
+/// Handle a filesystem event for one watched TLS file: (re)load it on create/modify, or
+/// re-establish the watch if it was removed or failed to load.
+fn handle_file_event<R>(state: TlsReloaderState, event: &notify::Event, path: &Path, reload: R)
+where
+    R: FnOnce() -> anyhow::Result<()>,
+{
+    match event.kind {
+        EventKind::Create(_) | EventKind::Modify(_) => {
+            if let Err(err) = reload() {
+                warn!("Error while loading TLS file {path:?}: {err:?}");
+                TlsReloader::try_rewatch_certificate(state, path.to_path_buf());
+            }
+        }
+        EventKind::Remove(_) => {
+            warn!("TLS file {path:?} has been removed, trying to re-set a watch for it");
+            TlsReloader::try_rewatch_certificate(state, path.to_path_buf());
+        }
+        EventKind::Access(_) | EventKind::Other | EventKind::Any => trace!("Ignoring event {event:?}"),
+    }
+}
+
 struct TlsReloaderServerState {
     fs_watcher: Mutex<RecommendedWatcher>,
     poll_watcher: Mutex<PollWatcher>,
@@ -141,8 +186,7 @@ impl TlsReloader {
 
         let this = Arc::new(TlsReloaderServerState {
             fs_watcher: Mutex::new(notify::recommended_watcher(|_| {})?),
-            // Placeholder replaced below; manual polling so its idle thread blocks instead of ticking.
-            poll_watcher: Mutex::new(PollWatcher::new(|_| {}, Config::default().with_manual_polling())?),
+            poll_watcher: Mutex::new(placeholder_poll_watcher()?),
             tls_reload_certificate: AtomicBool::new(false),
             cert_path: cert_path.to_path_buf(),
             key_path: key_path.to_path_buf(),
@@ -156,27 +200,12 @@ impl TlsReloader {
             paths.push(client_ca_path.as_path());
         }
 
-        // inotify watcher: instant reload on in-place file writes.
-        let mut watcher = notify::recommended_watcher({
+        let (inotify, poll) = install_watchers(&paths, || {
             let this = Server(this.clone());
-
             move |event: notify::Result<notify::Event>| Self::handle_server_fs_event(&this, event)
-        })
-        .with_context(|| "Cannot create tls certificate watcher")?;
-        for path in &paths {
-            watcher.watch(path, notify::RecursiveMode::NonRecursive)?;
-        }
-        *this.fs_watcher.lock() = watcher;
-
-        // Poll watcher: fallback catching renewals inotify misses (e.g. certbot symlink swaps).
-        let poll_watcher = poll_watcher(
-            {
-                let this = Server(this.clone());
-                move |event: notify::Result<notify::Event>| Self::handle_server_fs_event(&this, event)
-            },
-            &paths,
-        )?;
-        *this.poll_watcher.lock() = poll_watcher;
+        })?;
+        *this.fs_watcher.lock() = inotify;
+        *this.poll_watcher.lock() = poll;
 
         Ok(Self { state: Server(this) })
     }
@@ -195,8 +224,7 @@ impl TlsReloader {
 
         let this = Arc::new(TlsReloaderClientState {
             fs_watcher: Mutex::new(notify::recommended_watcher(|_| {})?),
-            // Placeholder replaced below; manual polling so its idle thread blocks instead of ticking.
-            poll_watcher: Mutex::new(PollWatcher::new(|_| {}, Config::default().with_manual_polling())?),
+            poll_watcher: Mutex::new(placeholder_poll_watcher()?),
             tls_reload_certificate: AtomicBool::new(false),
             cert_path: cert_path.to_path_buf(),
             key_path: key_path.to_path_buf(),
@@ -206,27 +234,12 @@ impl TlsReloader {
         info!("Starting to watch tls certificates and private key for changes to reload them");
         let paths = [this.cert_path.as_path(), this.key_path.as_path()];
 
-        // inotify watcher: instant reload on in-place file writes.
-        let mut watcher = notify::recommended_watcher({
+        let (inotify, poll) = install_watchers(&paths, || {
             let this = Client(this.clone());
-
             move |event: notify::Result<notify::Event>| Self::handle_client_fs_event(&this, event)
-        })
-        .with_context(|| "Cannot create tls certificate watcher")?;
-        for path in &paths {
-            watcher.watch(path, notify::RecursiveMode::NonRecursive)?;
-        }
-        *this.fs_watcher.lock() = watcher;
-
-        // Poll watcher: fallback catching renewals inotify misses (e.g. certbot symlink swaps).
-        let poll_watcher = poll_watcher(
-            {
-                let this = Client(this.clone());
-                move |event: notify::Result<notify::Event>| Self::handle_client_fs_event(&this, event)
-            },
-            &paths,
-        )?;
-        *this.poll_watcher.lock() = poll_watcher;
+        })?;
+        *this.fs_watcher.lock() = inotify;
+        *this.poll_watcher.lock() = poll;
 
         Ok(Self { state: Client(this) })
     }
@@ -293,59 +306,17 @@ impl TlsReloader {
         }
 
         if let Some(path) = event.paths.iter().find(|p| p.ends_with(&this.cert_path)) {
-            match event.kind {
-                EventKind::Create(_) | EventKind::Modify(_) => {
-                    if let Err(err) = this.reload_cert() {
-                        warn!("Error while loading TLS certificate {:?}", err);
-                        Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
-                    }
-                }
-                EventKind::Remove(_) => {
-                    warn!("TLS certificate file has been removed, trying to re-set a watch for it");
-                    Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
-                }
-                EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                    trace!("Ignoring event {event:?}");
-                }
-            }
+            handle_file_event(Server(this.clone()), &event, path, || this.reload_cert());
         }
 
         if let Some(path) = event.paths.iter().find(|p| p.ends_with(&this.key_path)) {
-            match event.kind {
-                EventKind::Create(_) | EventKind::Modify(_) => {
-                    if let Err(err) = this.reload_key() {
-                        warn!("Error while loading TLS private key {:?}", err);
-                        Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
-                    }
-                }
-                EventKind::Remove(_) => {
-                    warn!("TLS private key file has been removed, trying to re-set a watch for it");
-                    Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
-                }
-                EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                    trace!("Ignoring event {event:?}");
-                }
-            }
+            handle_file_event(Server(this.clone()), &event, path, || this.reload_key());
         }
 
         if let Some(client_ca_path) = &this.client_ca_path
             && let Some(path) = event.paths.iter().find(|p| p.ends_with(client_ca_path))
         {
-            match event.kind {
-                EventKind::Create(_) | EventKind::Modify(_) => {
-                    if let Err(err) = this.reload_client_ca() {
-                        warn!("Error while loading TLS client certificate {:?}", err);
-                        Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
-                    }
-                }
-                EventKind::Remove(_) => {
-                    warn!("TLS client certificate has been removed, trying to re-set a watch for it");
-                    Self::try_rewatch_certificate(Server(this.clone()), path.to_path_buf());
-                }
-                EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                    trace!("Ignoring event {event:?}");
-                }
-            }
+            handle_file_event(Server(this.clone()), &event, path, || this.reload_client_ca());
         }
     }
 
@@ -369,21 +340,7 @@ impl TlsReloader {
 
         let tls = this.client_config.remote_addr.tls().unwrap();
         if let Some(path) = event.paths.iter().find(|p| p.ends_with(&this.cert_path)) {
-            match event.kind {
-                EventKind::Create(_) | EventKind::Modify(_) => {
-                    if let Err(err) = this.reload() {
-                        warn!("Error while loading TLS certificate {:?}", err);
-                        Self::try_rewatch_certificate(Client(this.clone()), path.to_path_buf());
-                    }
-                }
-                EventKind::Remove(_) => {
-                    warn!("TLS certificate file has been removed, trying to re-set a watch for it");
-                    Self::try_rewatch_certificate(Client(this.clone()), path.to_path_buf());
-                }
-                EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                    trace!("Ignoring event {event:?}");
-                }
-            }
+            handle_file_event(Client(this.clone()), &event, path, || this.reload());
         }
 
         if let Some(path) = event
@@ -391,21 +348,7 @@ impl TlsReloader {
             .iter()
             .find(|p| p.ends_with(tls.tls_key_path.as_ref().unwrap()))
         {
-            match event.kind {
-                EventKind::Create(_) | EventKind::Modify(_) => {
-                    if let Err(err) = this.reload() {
-                        warn!("Error while loading TLS private key {:?}", err);
-                        Self::try_rewatch_certificate(Client(this.clone()), path.to_path_buf());
-                    }
-                }
-                EventKind::Remove(_) => {
-                    warn!("TLS private key file has been removed, trying to re-set a watch for it");
-                    Self::try_rewatch_certificate(Client(this.clone()), path.to_path_buf());
-                }
-                EventKind::Access(_) | EventKind::Other | EventKind::Any => {
-                    trace!("Ignoring event {event:?}");
-                }
-            }
+            handle_file_event(Client(this.clone()), &event, path, || this.reload());
         }
     }
 }
