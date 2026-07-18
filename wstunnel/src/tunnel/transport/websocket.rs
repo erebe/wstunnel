@@ -247,7 +247,7 @@ pub async fn connect(
 
     let mut req = Request::builder()
         .method("GET")
-        .uri(format!("/{}/events", &client_cfg.http_upgrade_path_prefix))
+        .uri(format!("/{}/events", client_cfg.http_upgrade_path_prefix))
         .header(HOST, &client_cfg.http_header_host)
         .header(UPGRADE, "websocket")
         .header(CONNECTION, "upgrade")

@@ -160,7 +160,7 @@ pub async fn connect(
             authority
                 .as_deref()
                 .unwrap_or_else(|| client.config.http_header_host.to_str().unwrap_or("")),
-            &client.config.http_upgrade_path_prefix
+            client.config.http_upgrade_path_prefix
         ))
         .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
         .header(CONTENT_TYPE, "application/json")
