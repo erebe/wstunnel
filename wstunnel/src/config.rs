@@ -61,6 +61,13 @@ pub struct Client {
     )]
     pub connection_min_idle: u32,
 
+    /// For UDP tunnels, multiplex the traffic over multiple concurrent TCP/WebSocket connections to bypass QOS.
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, value_name = "INT", default_value = "1", verbatim_doc_comment)
+    )]
+    pub udp_multiplex: usize,
+
     /// The maximum of time in seconds while we are going to try to connect to the server before failing the connection/tunnel request
     #[cfg_attr(feature = "clap", arg(
         long,

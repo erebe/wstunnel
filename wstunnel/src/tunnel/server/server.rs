@@ -10,6 +10,7 @@ use crate::tunnel::listeners::{HttpProxyTunnelListener, Socks5TunnelListener, Tc
 use crate::tunnel::server::handler_http2::http_server_upgrade;
 use crate::tunnel::server::handler_websocket::ws_server_upgrade;
 use crate::tunnel::server::reverse_tunnel::ReverseTunnelServer;
+use crate::tunnel::server::udp_flow::UdpFlowRegistry;
 use crate::tunnel::server::utils::{
     HttpResponse, bad_request, extract_authorization, extract_path_prefix, extract_tunnel_info,
     extract_x_forwarded_for, find_mapped_port, validate_tunnel,
@@ -42,6 +43,7 @@ use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tracing::{Instrument, Level, Span, error, info, span, warn};
 use url::{Host, Url};
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct TlsServerConfig {
@@ -122,6 +124,9 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
 
         Span::current().record("id", &jwt.claims.id);
         Span::current().record("remote", format!("{}:{}", jwt.claims.r, jwt.claims.rp));
+        // UDP multiplexing flow id (shared by the N connections of the same local UDP session).
+        // Must be read before `try_from` consumes the claims.
+        let flow_id = jwt.claims.m;
         let remote = RemoteAddr::try_from(jwt.claims).map_err(|err| {
             warn!("Rejecting connection with bad tunnel info: {err} {}", req.uri());
             bad_request()
@@ -137,7 +142,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         let req_protocol = remote.protocol.clone();
         let inject_cookie = req_protocol.is_dynamic_reverse_tunnel();
         let tunnel = self
-            .exec_tunnel(restriction, remote, client_addr)
+            .exec_tunnel(restriction, remote, flow_id, client_addr)
             .await
             .map_err(|err| {
                 warn!("Rejecting connection with bad upgrade request: {err} {}", req.uri());
@@ -153,10 +158,15 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         &self,
         restriction: &RestrictionConfig,
         remote: RemoteAddr,
+        flow_id: Option<Uuid>,
         client_address: SocketAddr,
     ) -> anyhow::Result<(RemoteAddr, Pin<Box<dyn AsyncRead + Send>>, Pin<Box<dyn AsyncWrite + Send>>)> {
         match remote.protocol {
             LocalProtocol::Udp { timeout, .. } => {
+                if self.config.http_proxy.is_some() {
+                    return Err(anyhow!("UDP tunneling is not supported with HTTP proxy"));
+                }
+
                 let connector = UdpTunnelConnector::new(
                     &remote.host,
                     remote.port,
@@ -164,9 +174,18 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                     timeout.unwrap_or(Duration::from_secs(10)),
                     &self.config.dns_resolver,
                 );
-                let (rx, tx) = match &self.config.http_proxy {
+
+                // For UDP multiplexing, all the connections sharing the same flow_id reuse a single
+                // upstream socket so the destination only ever sees one source 5-tuple.
+                let (rx, tx) = match flow_id {
+                    Some(flow_id) => {
+                        static UDP_FLOWS: LazyLock<UdpFlowRegistry> = LazyLock::new(UdpFlowRegistry::default);
+                        let socket = UDP_FLOWS
+                            .get_or_connect(flow_id, || async { Ok(connector.connect(&None).await?.0) })
+                            .await?;
+                        (socket.clone(), socket)
+                    }
                     None => connector.connect(&None).await?,
-                    Some(_) => Err(anyhow!("UDP tunneling is not supported with HTTP proxy"))?,
                 };
 
                 Ok((remote, Box::pin(rx), Box::pin(tx)))

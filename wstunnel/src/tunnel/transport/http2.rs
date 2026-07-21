@@ -122,6 +122,7 @@ impl TunnelWrite for Http2TunnelWrite {
 
 pub async fn connect(
     request_id: Uuid,
+    flow_id: Option<Uuid>,
     client: &WsClient<impl crate::TokioExecutorRef>,
     dest_addr: &RemoteAddr,
 ) -> anyhow::Result<(Http2TunnelRead, Http2TunnelWrite, Parts)> {
@@ -162,7 +163,7 @@ pub async fn connect(
                 .unwrap_or_else(|| client.config.http_header_host.to_str().unwrap_or("")),
             client.config.http_upgrade_path_prefix
         ))
-        .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
+        .header(COOKIE, tunnel_to_jwt_token(request_id, flow_id, dest_addr))
         .header(CONTENT_TYPE, "application/json")
         .version(hyper::Version::HTTP_2);
 
