@@ -331,8 +331,6 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
     }
 
     pub async fn serve(self, restrictions: RestrictionsRules) -> anyhow::Result<()> {
-        info!("Starting wstunnel server listening on {}", self.config.bind);
-
         // setup upgrade request handler
         let mk_websocket_upgrade_fn = |server: WsServer<_>,
                                        restrictions: Arc<ArcSwap<RestrictionsRules>>,
@@ -423,6 +421,8 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         let listener = TcpListener::bind(&self.config.bind)
             .await
             .with_context(|| format!("Failed to bind to socket on {}", self.config.bind))?;
+
+        info!("Starting wstunnel server listening on {}", listener.local_addr().unwrap_or(self.config.bind));
 
         loop {
             let (stream, peer_addr) = match listener.accept().await {

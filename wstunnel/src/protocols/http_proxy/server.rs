@@ -151,14 +151,15 @@ pub async fn run_server(
     timeout: Option<Duration>,
     credentials: Option<(String, String)>,
 ) -> Result<HttpProxyListener, anyhow::Error> {
-    info!(
-        "Starting http proxy server listening cnx on {bind} with credential {:?}",
-        credentials.as_ref().map(|x| (&x.0, "xxx"))
-    );
-
     let listener = TcpListener::bind(bind)
         .await
         .with_context(|| format!("Cannot create TCP server {bind:?}"))?;
+
+    info!(
+        "Starting http proxy server listening cnx on {} with credential {:?}",
+        listener.local_addr().unwrap_or(bind),
+        credentials.as_ref().map(|x| (&x.0, "xxx"))
+    );
 
     let http1 = {
         let mut builder = http1::Builder::new();

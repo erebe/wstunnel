@@ -210,11 +210,11 @@ pub async fn connect_with_http_proxy(
 
 #[cfg_attr(not(target_os = "linux"), expect(unused_variables))]
 pub async fn run_server(bind: SocketAddr, ip_transparent: bool) -> Result<TcpListenerStream, anyhow::Error> {
-    info!("Starting TCP server listening cnx on {bind}");
-
     let listener = TcpListener::bind(bind)
         .await
         .with_context(|| format!("Cannot create TCP server {bind:?}"))?;
+
+    info!("Starting TCP server listening cnx on {}", listener.local_addr().unwrap_or(bind));
 
     #[cfg(target_os = "linux")]
     if ip_transparent {
