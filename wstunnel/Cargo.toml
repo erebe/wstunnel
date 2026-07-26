@@ -7,16 +7,16 @@ repository = "https://github.com/erebe/wstunnel.git"
 
 [dependencies]
 ahash = { version = "0.8.12", features = [] }
-anyhow = "1.0.103"
-base64 = "0.22.1"
+anyhow = "1.0.104"
+base64 = "0.23.0"
 scopeguard = "1.2.0"
 
 bb8 = { version = "0.9.1", features = [] }
 bytes = { version = "1.12.1", features = [] }
-clap = { version = "4.6.2", features = ["derive", "env"], optional = true }
+clap = { version = "4.6.4", features = ["derive", "env"], optional = true }
 fast-socks5 = { version = "1.0.0", features = [] }
 fastwebsockets = { version = "0.10.0", features = ["upgrade", "simd", "unstable-split"] }
-futures-util = { version = "0.3.32" }
+futures-util = { version = "0.3.33" }
 ppp = { version = "2.3.0", features = [] }
 async-channel = { version = "2.5.0", features = [] }
 arc-swap = { version = "1.9.2", features = [] }
@@ -27,10 +27,10 @@ serde_regex = "1.2.0"
 serde_yaml = { version = "0.9.34", features = [] }
 ipnet = { version = "2.12.0", features = ["serde"] }
 
-hyper = { version = "1.10.1", features = ["client", "http1", "http2"] }
+hyper = { version = "1.11.0", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1.20", features = ["tokio", "server", "server-auto"] }
 http-body-util = { version = "0.1.4" }
-jsonwebtoken = { version = "10.4.0", default-features = false }
+jsonwebtoken = { version = "11.0.0", default-features = false }
 log = "0.4.33"
 nix = { version = "0.31.3", features = ["socket", "net", "uio"] }
 parking_lot = "0.12.5"
@@ -40,11 +40,14 @@ httparse = { version = "1.10.1", features = [] }
 
 rustls-native-certs = { version = "0.8.4", features = [] }
 rustls-pemfile = { version = "2.2.0", features = [] }
+# WebTransport (HTTP/3 over QUIC) transport. Takes our own rustls config, so the
+# crypto provider follows from the aws-lc-rs/ring features below. Re-exports quinn.
+web-transport-quinn = { version = "0.11.12", features = [] }
 x509-parser = "0.18.1"
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
 socket2 = { version = "0.6.5", features = ["all"] }
-tokio = { version = "1.53.0", features = ["io-std", "net", "signal", "sync", "time"] }
-tokio-stream = { version = "0.1.18", features = ["net"] }
+tokio = { version = "1.53.1", features = ["io-std", "net", "signal", "sync", "time"] }
+tokio-stream = { version = "0.1.19", features = ["net"] }
 
 tracing = { version = "0.1.44", features = ["log"] }
 url = "2.5.8"
@@ -62,7 +65,7 @@ aws-lc-rs = { version = "*", optional = true }
 
 [target.'cfg(not(target_family = "unix"))'.dependencies]
 crossterm = { version = "0.29.0" }
-tokio-util = { version = "0.7.18", features = ["io"] }
+tokio-util = { version = "0.7.19", features = ["io"] }
 
 [target.'cfg(target_family = "unix")'.dependencies]
 tokio-fd = "0.3.0"
@@ -72,7 +75,7 @@ testcontainers = "0.27.3"
 test-case = "3.3.1"
 collection_macros = "0.2.0"
 rstest = "0.26.1"
-serial_test = "3.5.0"
+serial_test = "4.0.1"
 derive_more = { version = "2.1.1", features = ["from"] }
 get_if_addrs = "0.5.3"
 

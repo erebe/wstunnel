@@ -41,7 +41,7 @@ nodejs to use this tool, I remade it in ~~Haskell~~ Rust and improved it.
 * Support for tls/https server with certificates auto-reload (with embedded self-signed certificate, or your own)
 * Support of mTLS with certificates auto-reload - [documentation here](https://github.com/erebe/wstunnel/blob/main/docs/using_mtls.md)
 * Support IPv6
-* Support for Websocket and HTTP2 as transport protocol (websocket is more performant)
+* Support for Websocket, HTTP2 and WebTransport as transport protocol (websocket is more performant)
 * **Standalone binaries** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
 
 ## Sponsors <a name="sponsors"></a>
@@ -89,21 +89,30 @@ curl -k https://localhost:4443
 ## Command line <a name="cmd"></a>
 
 ```
-Usage: wstunnel client [OPTIONS] <ws[s]|http[s]://wstunnel.server.com[:port]>
+Usage: wstunnel client [OPTIONS] <ws[s]|http[s]|wts://wstunnel.server.com[:port]>
 
 Arguments:
-  <ws[s]|http[s]://wstunnel.server.com[:port]>
+  <ws[s]|http[s]|wts://wstunnel.server.com[:port]>
           Address of the wstunnel server
-          You can either use websocket or http2 as transport protocol. Use websocket if you are unsure.
+          You can use websocket, http2 or webtransport as transport protocol. Use websocket if you are unsure.
           Example: For websocket with TLS wss://wstunnel.example.com or without ws://wstunnel.example.com
                    For http2 with TLS https://wstunnel.example.com or without http://wstunnel.example.com
+                   For webtransport wts://wstunnel.example.com (always TLS)
           
           *WARNING* HTTP2 as transport protocol is harder to make it works because:
             - If you are behind a (reverse) proxy/CDN they are going to buffer the whole request before forwarding it to the server
               Obviously, this is not going to work for tunneling traffic
             - if you have wstunnel behind a reverse proxy, most of them (i.e: nginx) are going to turn http2 request into http1
               This is not going to work, because http1 does not support streaming naturally
-          The only way to make it works with http2 is to have wstunnel directly exposed to the internet without any reverse proxy in front of it
+            - The only way to make it works with http2 is to have wstunnel directly exposed to the internet without any reverse proxy in front of it
+          
+          *WARNING* WEBTRANSPORT (wts://) runs on HTTP/3 over QUIC, so:
+            - It needs UDP to be reachable end to end on that port. Firewalls and container port
+              mappings that only forward TCP make the handshake time out after 10s. This is by far
+              the most common cause of a wts:// tunnel not connecting
+            - The server must be started with --enable-webtransport (or with the wts:// scheme)
+            - TLS is always used, as QUIC mandates TLS 1.3. There is no cleartext variant
+            - --http-proxy, --tls-sni-disable and --tls-ech-enable are not supported with it
 
 Options:
   -L, --local-to-remote <{tcp,udp,socks5,stdio,unix}://[BIND:]PORT:HOST:PORT>
@@ -121,12 +130,12 @@ Options:
           
           'http://[::1]:1212'              =>       start a http proxy on port 1212 and forward dynamically requested tunnel
           'http://[::1]:1212?login=admin&password=admin' => start a http proxy on port 1212 and only accept connection with login=admin and password=admin
-
+          
           'tproxy+tcp://[::1]:1212'        =>       listen locally on tcp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
           'tproxy+udp://[::1]:1212?timeout_sec=10'  listen locally on udp on port 1212 as a *transparent proxy* and forward dynamically requested tunnel
                                                     linux only and requires sudo/CAP_NET_ADMIN
           
-          'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client --log-lvl=off -L stdio://%h:%p ws://localhost:8080" my-server`
+          'stdio://google.com:443'         =>       listen for data from stdio, mainly for `ssh -o ProxyCommand="wstunnel client -L stdio://%h:%p ws://localhost:8080" my-server`
           
           'unix:///tmp/wstunnel.sock:g.com:443' =>  listen for data from unix socket of path /tmp/wstunnel.sock and forward to g.com:443
 
@@ -135,14 +144,14 @@ Options:
           examples:
           'tcp://1212:google.com:443'      =>     listen on server for incoming tcp cnx on port 1212 and forward to google.com on port 443 from local machine
           'udp://1212:1.1.1.1:53'          =>     listen on server for incoming udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53 from local machine
-          'socks5://[::1]:1212'            =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine
-          'http://[::1]:1212'              =>     listen on server for incoming http proxy request on port 1212 and forward dynamically request from local machine (login/password is supported)
+          'socks5://[::1]:1212'            =>     listen on server for incoming socks5 request on port 1212 and forward dynamically request from local machine (login/password is supported)
+          'http://[::1]:1212'         =>     listen on server for incoming http proxy request on port 1212 and forward dynamically request from local machine (login/password is supported)
           'unix://wstunnel.sock:g.com:443' =>     listen on server for incoming data from unix socket of path wstunnel.sock and forward to g.com:443 from local machine
 
-      --no-color <NO_COLOR>
+      --no-color
           Disable color output in logs
           
-          [env: NO_COLOR=]
+          [env: NO_COLOR=1]
 
       --socket-so-mark <INT>
           (linux only) Mark network packet with SO_MARK sockoption with the specified value.
@@ -163,12 +172,25 @@ Options:
           
           [env: TOKIO_WORKER_THREADS=]
 
+      --connection-retry-max-backoff <DURATION(s|m|h)>
+          The maximum of time in seconds while we are going to try to connect to the server before failing the connection/tunnel request
+          
+          [default: 5m]
+
       --log-lvl <LOG_LEVEL>
           Control the log verbosity. i.e: TRACE, DEBUG, INFO, WARN, ERROR, OFF
           for more details: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#example-syntax
           
           [env: RUST_LOG=]
           [default: INFO]
+
+      --reverse-tunnel-connection-retry-max-backoff <DURATION(s|m|h)>
+          When using reverse tunnel, the client will try to always keep a connection to the server to await for new tunnels
+          This delay is the maximum of time the client will wait before trying to reconnect to the server in case of failure.
+          The client follows an exponential backoff strategy until it reaches this maximum delay
+          By default, the client tries to reconnect every 1 second
+          
+          [default: 1s]
 
       --tls-sni-override <DOMAIN_NAME>
           Domain name that will be used as SNI during TLS handshake
@@ -181,7 +203,7 @@ Options:
 
       --tls-ech-enable
           Enable ECH (encrypted sni) during TLS handshake to wstunnel server.
-          Warning: Ech DNS config is not refreshed over time. It is retrieved only once at startup of the program
+          Warning: Ech DNS config is not refreshed over time. It is retrieved only once at startup of the program  
 
       --tls-verify-certificate
           Enable TLS certificate verification.
@@ -205,6 +227,8 @@ Options:
   -P, --http-upgrade-path-prefix <HTTP_UPGRADE_PATH_PREFIX>
           Use a specific prefix that will show up in the http path during the upgrade request.
           Useful if you need to route requests server side but don't have vhosts
+          When using mTLS this option overrides the default behavior of using the common name of the
+          client's certificate. This will likely result in the wstunnel server rejecting the connection.
           
           [env: WSTUNNEL_HTTP_UPGRADE_PATH_PREFIX=]
           [default: v1]
@@ -213,10 +237,11 @@ Options:
           Pass authorization header with basic auth credentials during the upgrade request.
           If you need more customization, you can use the http_headers option.
 
-      --websocket-ping-frequency-sec <seconds>
-          Frequency at which the client will send websocket ping to the server.
+      --websocket-ping-frequency <DURATION(s|m|h)>
+          Frequency at which the client will send websocket pings to the server.
+          Set to zero to disable.
           
-          [default: 30]
+          [default: 30s]
 
       --websocket-mask-frame
           Enable the masking of websocket frames. Default is false
@@ -234,6 +259,7 @@ Options:
       --tls-certificate <FILE_PATH>
           [Optional] Certificate (pem) to present to the server when connecting over TLS (HTTPS).
           Used when the server requires clients to authenticate themselves with a certificate (i.e. mTLS).
+          Unless overridden, the HTTP upgrade path will be configured to be the common name (CN) of the certificate.
           The certificate will be automatically reloaded if it changes
 
       --tls-private-key <FILE_PATH>
@@ -249,37 +275,58 @@ Options:
           For Dns over HTTPS/TLS if an HTTP proxy is configured, it will be used also
           To use libc resolver, use
           system://0.0.0.0
-
+          
           **WARN** On windows you may want to specify explicitly the DNS resolver to avoid excessive DNS queries
+
+      --dns-resolver-prefer-ipv4
+          Enable if you prefer the dns resolver to prioritize IPv4 over IPv6
+          This is useful if you have a broken IPv6 connection, and want to avoid the delay of trying to connect to IPv6
+          If you don't have any IPv6 this does not change anything.
+          
+          [env: WSTUNNEL_DNS_PREFER_IPV4=]
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ```
 SERVER
-Usage: wstunnel server [OPTIONS] <ws[s]://0.0.0.0[:port]>
+Usage: wstunnel server [OPTIONS] <ws[s]|wts://0.0.0.0[:port]>
 
 Arguments:
-  <ws[s]://0.0.0.0[:port]>
+  <ws[s]|wts://0.0.0.0[:port]>
           Address of the wstunnel server to bind to
           Example: With TLS wss://0.0.0.0:8080 or without ws://[::]:8080
           
           The server is capable of detecting by itself if the request is websocket or http2. So you don't need to specify it.
+          
+          Use wts://0.0.0.0:8080 to additionally serve WebTransport. It is equivalent to
+          wss://0.0.0.0:8080 --enable-webtransport: the TCP listener still serves websocket and http2.
 
 Options:
+      --enable-webtransport
+          Also serve WebTransport (HTTP/3 over QUIC), by binding UDP on the same port as the TCP listener.
+          One server then serves websocket, http2 and webtransport clients at the same time.
+          
+          Requires TLS (wss://), as QUIC mandates TLS 1.3. Implied by the wts:// scheme.
+          
+          *WARNING* This opens a UDP port. Make sure your firewall and, if containerized, your port
+          mapping forward UDP as well as TCP, else wts:// clients time out during the handshake.
+
       --socket-so-mark <INT>
           (linux only) Mark network packet with SO_MARK sockoption with the specified value.
           You need to use {root, sudo, capabilities} to run wstunnel when using this option
 
-      --websocket-ping-frequency-sec <seconds>
-          Frequency at which the server will send websocket ping to client.
-
-      --no-color <NO_COLOR>
+      --no-color
           Disable color output in logs
           
-          [env: NO_COLOR=]
+          [env: NO_COLOR=1]
 
-      --websocket-mask-frame
-          Enable the masking of websocket frames. Default is false
-          Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
+      --websocket-ping-frequency <DURATION(s|m|h)>
+          Frequency at which the server will send websocket ping to client.
+          Set to zero to disable.
+          
+          [default: 30s]
 
       --nb-worker-threads <INT>
           *WARNING* The flag does nothing, you need to set the env variable *WARNING*
@@ -288,10 +335,9 @@ Options:
           
           [env: TOKIO_WORKER_THREADS=]
 
-      --restrict-to <DEST:PORT>
-          Server will only accept connection from the specified tunnel information.
-          Can be specified multiple time
-          Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
+      --websocket-mask-frame
+          Enable the masking of websocket frames. Default is false
+          Enable this option only if you use unsecure (non TLS) websocket server, and you see some issues. Otherwise, it is just overhead.
 
       --dns-resolver <DNS_RESOLVER>
           Dns resolver to use to lookup ips of domain name
@@ -299,7 +345,7 @@ Options:
           Can be specified multiple time
           Example:
            dns://1.1.1.1 for using udp
-           dns+https://1.1.1.1?sni=loudflare-dns.com for using dns over HTTPS
+           dns+https://1.1.1.1?sni=cloudflare-dns.com for using dns over HTTPS
            dns+tls://8.8.8.8?sni=dns.google for using dns over TLS
           To use libc resolver, use
           system://0.0.0.0
@@ -310,6 +356,18 @@ Options:
           
           [env: RUST_LOG=]
           [default: INFO]
+
+      --dns-resolver-prefer-ipv4
+          Enable if you prefer the dns resolver to prioritize IPv4 over IPv6
+          This is useful if you have a broken IPv6 connection, and want to avoid the delay of trying to connect to IPv6
+          If you don't have any IPv6 this does not change anything.
+          
+          [env: WSTUNNEL_DNS_PREFER_IPV4=]
+
+      --restrict-to <DEST:PORT>
+          Server will only accept connection from the specified tunnel information.
+          Can be specified multiple time
+          Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
 
   -r, --restrict-http-upgrade-path-prefix <RESTRICT_HTTP_UPGRADE_PATH_PREFIX>
           Server will only accept connection from if this specific path prefix is used during websocket upgrade.
@@ -335,21 +393,30 @@ Options:
           [Optional] Enables mTLS (client authentication with certificate). Argument must be PEM file
           containing one or more certificates of CA's of which the certificate of clients needs to be signed with.
           The ca will be automatically reloaded if it changes
-          
-    -p, --http-proxy <USER:PASS@HOST:PORT>
-          If set, will use this http proxy to connect to the client
 
+  -p, --http-proxy <USER:PASS@HOST:PORT>
+          If set, will use this http proxy to connect to the client
+          
           [env: HTTP_PROXY=]
 
       --http-proxy-login <LOGIN>
           If set, will use this login to connect to the http proxy. Override the one from --http-proxy
-
+          
           [env: WSTUNNEL_HTTP_PROXY_LOGIN=]
 
       --http-proxy-password <PASSWORD>
           If set, will use this password to connect to the http proxy. Override the one from --http-proxy
-
+          
           [env: WSTUNNEL_HTTP_PROXY_PASSWORD=]
+
+      --remote-to-local-server-idle-timeout <DURATION(s|m|h)>
+          Configure how much time a remote-to-local server is going to wait idle (without any new ws clients) before unbinding itself/stopping the server
+          Default is 190 seconds/3min
+          
+          [default: 3m]
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## Release <a name="release"></a>
@@ -374,6 +441,7 @@ docker pull ghcr.io/erebe/wstunnel:latest
 * [Reverse tunneling](#reverse)
 * [How to secure access of your wstunnel server](#secure)
 * [Use HTTP2 instead of websocket for transport protocol](#http2)
+* [Use WebTransport instead of websocket for transport protocol](#webtransport)
 * [Maximize your stealthiness/Make your traffic discrete](#stealth)
 
 ### Understand command line syntax <a name="syntax"></a>
@@ -653,6 +721,46 @@ In addition, you may also want to play with the request headers (i.e: content-le
 like normal traffic to bypass your firewall/proxy.
 Some firewall may not like to see request with content-length not set, or with content-type set to
 application/octet-stream
+
+### Use WebTransport instead of websocket for the transport protocol <a name="webtransport"></a>
+
+WebTransport runs on HTTP/3, which runs on QUIC, which runs on UDP. Use it if TCP is throttled or blocked on
+your network but UDP is not, or if your connection suffers from TCP head-of-line blocking (lossy links, mobile).
+
+The server does not serve it by default, because it needs a UDP socket. Enable it with `--enable-webtransport`,
+and it will listen on UDP on the same port as its TCP listener:
+
+```bash
+wstunnel server --enable-webtransport wss://[::]:8080
+```
+
+The `wts://` scheme is a shorthand for the same thing:
+
+```bash
+wstunnel server wts://[::]:8080
+```
+
+Either way the TCP listener keeps running, so a single server serves websocket, http2 and webtransport clients at
+the same time. On the client, the only difference is to specify wts:// instead of wss://
+
+```bash
+wstunnel client -L socks5://127.0.0.1:8888 wts://myRemoteHost:8080
+```
+
+**WARNING** Things to know before using WebTransport:
+
+- UDP must be reachable end to end on that port. If your firewall, security group, or `docker -p` mapping only
+  forwards TCP, the handshake times out after 10s with `timed out ... Is UDP reachable on that port?`.
+  This is by far the most common cause of "it does not connect"
+- TLS is always used, as QUIC mandates TLS 1.3. There is no cleartext variant, hence no `wt://`
+- `--http-proxy` does not work: an HTTP CONNECT proxy tunnels TCP, and QUIC is UDP. Use `wss://` or `https://`
+  if you must go through a proxy
+- `--tls-sni-disable` and `--tls-ech-enable` are not supported either. `--tls-sni-override` does work
+- A reverse proxy in front of wstunnel must forward QUIC/UDP, not terminate HTTP/3. Most do not, so as with
+  http2 you generally want the server directly exposed
+
+mTLS, path prefix restrictions, restriction rules, and server certificate auto-reload all behave as they do
+over websocket.
 
 ### Maximize your stealthiness/Make your traffic discrete <a name="stealth"></a>
 

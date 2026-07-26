@@ -11,6 +11,7 @@ pub mod io;
 mod jwt;
 mod types;
 pub mod websocket;
+pub mod webtransport;
 
 pub use jwt::JWT_HEADER_PREFIX;
 pub use jwt::JwtTunnelConfig;

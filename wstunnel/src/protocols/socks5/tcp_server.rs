@@ -83,7 +83,8 @@ pub async fn run_server(
 
     info!(
         "Starting SOCKS5 server listening cnx on {} with credentials {:?}",
-        listener.local_addr().unwrap_or(bind), credentials
+        listener.local_addr().unwrap_or(bind),
+        credentials
     );
 
     let udp_server = super::udp_server::run_server(bind, timeout).await?;

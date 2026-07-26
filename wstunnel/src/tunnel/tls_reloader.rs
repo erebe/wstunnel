@@ -7,8 +7,8 @@ use log::trace;
 use notify::{Config, EventKind, PollWatcher, RecommendedWatcher, Watcher};
 use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -26,7 +26,8 @@ fn poll_watcher<F: notify::EventHandler>(handler: F, paths: &[&Path]) -> anyhow:
     let config = Config::default()
         .with_poll_interval(POLL_INTERVAL)
         .with_compare_contents(true);
-    let mut watcher = PollWatcher::new(handler, config).with_context(|| "Cannot create tls certificate poll watcher")?;
+    let mut watcher =
+        PollWatcher::new(handler, config).with_context(|| "Cannot create tls certificate poll watcher")?;
     for path in paths {
         watcher.watch(path, notify::RecursiveMode::NonRecursive)?;
     }
@@ -49,7 +50,8 @@ where
     H: notify::EventHandler,
     F: FnMut() -> H,
 {
-    let mut inotify = notify::recommended_watcher(make_handler()).with_context(|| "Cannot create tls certificate watcher")?;
+    let mut inotify =
+        notify::recommended_watcher(make_handler()).with_context(|| "Cannot create tls certificate watcher")?;
     for path in paths {
         inotify.watch(path, notify::RecursiveMode::NonRecursive)?;
     }

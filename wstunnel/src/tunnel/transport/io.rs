@@ -1,5 +1,6 @@
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
+use crate::tunnel::transport::webtransport::{WebTransportTunnelRead, WebTransportTunnelWrite};
 use bytes::{BufMut, BytesMut};
 use futures_util::{FutureExt, pin_mut};
 use std::future::Future;
@@ -35,6 +36,9 @@ pub trait TunnelRead: Send + 'static {
 pub enum TunnelReader {
     Websocket(WebsocketTunnelRead),
     Http2(Http2TunnelRead),
+    // Boxed: a quinn RecvStream plus the session handle is several times the size of the other
+    // variants, and would otherwise inflate the enum for every tunnel.
+    WebTransport(Box<WebTransportTunnelRead>),
 }
 
 impl TunnelRead for TunnelReader {
@@ -42,6 +46,7 @@ impl TunnelRead for TunnelReader {
         match self {
             Self::Websocket(s) => s.copy(writer).await,
             Self::Http2(s) => s.copy(writer).await,
+            Self::WebTransport(s) => s.copy(writer).await,
         }
     }
 }
@@ -49,6 +54,8 @@ impl TunnelRead for TunnelReader {
 pub enum TunnelWriter {
     Websocket(WebsocketTunnelWrite),
     Http2(Http2TunnelWrite),
+    // Boxed for the same reason as `TunnelReader::WebTransport`.
+    WebTransport(Box<WebTransportTunnelWrite>),
 }
 
 impl TunnelWrite for TunnelWriter {
@@ -56,6 +63,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.buf_mut(),
             Self::Http2(s) => s.buf_mut(),
+            Self::WebTransport(s) => s.buf_mut(),
         }
     }
 
@@ -63,6 +71,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.write().await,
             Self::Http2(s) => s.write().await,
+            Self::WebTransport(s) => s.write().await,
         }
     }
 
@@ -70,6 +79,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.ping().await,
             Self::Http2(s) => s.ping().await,
+            Self::WebTransport(s) => s.ping().await,
         }
     }
 
@@ -77,6 +87,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.close().await,
             Self::Http2(s) => s.close().await,
+            Self::WebTransport(s) => s.close().await,
         }
     }
 
@@ -84,6 +95,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.pending_operations_notify(),
             Self::Http2(s) => s.pending_operations_notify(),
+            Self::WebTransport(s) => s.pending_operations_notify(),
         }
     }
 
@@ -91,6 +103,7 @@ impl TunnelWrite for TunnelWriter {
         match self {
             Self::Websocket(s) => s.handle_pending_operations().await,
             Self::Http2(s) => s.handle_pending_operations().await,
+            Self::WebTransport(s) => s.handle_pending_operations().await,
         }
     }
 }

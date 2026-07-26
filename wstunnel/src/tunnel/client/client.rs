@@ -1,4 +1,5 @@
 use crate::executor::{DefaultTokioExecutor, TokioExecutorRef};
+use crate::protocols::tls;
 use crate::tunnel;
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::WsClientConfig;
@@ -7,8 +8,9 @@ use crate::tunnel::connectors::TunnelConnector;
 use crate::tunnel::listeners::TunnelListener;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::io::{TunnelReader, TunnelWriter};
+use crate::tunnel::transport::webtransport::WebTransportEndpoint;
 use crate::tunnel::transport::{TransportScheme, jwt_token_to_tunnel};
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
 use log::debug;
@@ -26,6 +28,8 @@ use uuid::Uuid;
 pub struct WsClient<E: TokioExecutorRef = DefaultTokioExecutor> {
     pub config: Arc<WsClientConfig>,
     pub cnx_pool: bb8::Pool<WsConnection>,
+    /// QUIC endpoint, only for the webtransport transport. `None` for every other scheme.
+    pub(crate) webtransport: Option<Arc<WebTransportEndpoint>>,
     reverse_tunnel_connection_retry_max_backoff: Duration,
     _tls_reloader: Arc<TlsReloader>,
     pub(crate) executor: E,
@@ -40,6 +44,41 @@ impl<E: TokioExecutorRef> WsClient<E> {
         executor: E,
     ) -> anyhow::Result<Self> {
         let config = Arc::new(config);
+
+        // Webtransport runs over QUIC/UDP and never borrows a stream from the TCP pool, so keep
+        // the pool empty. Otherwise --connection-min-idle would dial the server's TCP port,
+        // which may not even be listening.
+        let is_webtransport = config.remote_addr.scheme().is_webtransport();
+        let connection_min_idle = if is_webtransport { 0 } else { connection_min_idle };
+
+        let webtransport = if is_webtransport {
+            let tls = config
+                .remote_addr
+                .tls()
+                .ok_or_else(|| anyhow!("webtransport requires TLS, which is missing from the configuration"))?;
+            let tls_config = tls::quic_client_config(
+                tls.tls_verify_certificate,
+                tls.tls_certificate_path
+                    .as_deref()
+                    .map(tls::load_certificates_from_pem)
+                    .transpose()
+                    .with_context(|| "Cannot load client TLS certificate (mTLS)")?,
+                tls.tls_key_path
+                    .as_deref()
+                    .map(tls::load_private_key_from_file)
+                    .transpose()
+                    .with_context(|| "Cannot load client TLS private key (mTLS)")?,
+            )
+            .with_context(|| "Cannot create the TLS configuration for webtransport")?;
+
+            Some(Arc::new(
+                WebTransportEndpoint::new(tls_config, config.socket_so_mark, config.websocket_ping_frequency)
+                    .with_context(|| "Cannot create the webtransport endpoint")?,
+            ))
+        } else {
+            None
+        };
+
         let cnx = WsConnection::new(config.clone());
         let tls_reloader = TlsReloader::new_for_client(config.clone()).with_context(|| "Cannot create tls reloader")?;
         let cnx_pool = bb8::Pool::builder()
@@ -54,6 +93,7 @@ impl<E: TokioExecutorRef> WsClient<E> {
         Ok(Self {
             config,
             cnx_pool,
+            webtransport,
             reverse_tunnel_connection_retry_max_backoff,
             _tls_reloader: Arc::new(tls_reloader),
             executor,
@@ -82,6 +122,15 @@ impl<E: TokioExecutorRef> WsClient<E> {
                     .await
                     .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
             }
+            TransportScheme::Wts => tunnel::transport::webtransport::connect(request_id, self, remote_cfg)
+                .await
+                .map(|(r, w, response)| {
+                    (
+                        TunnelReader::WebTransport(Box::new(r)),
+                        TunnelWriter::WebTransport(Box::new(w)),
+                        response,
+                    )
+                })?,
         };
 
         debug!("Server response: {response:?}");
@@ -182,6 +231,24 @@ impl<E: TokioExecutorRef> WsClient<E> {
                         .await
                     {
                         Ok((r, w, response)) => (TunnelReader::Http2(r), TunnelWriter::Http2(w), response),
+                        Err(err) => {
+                            let reconnect_delay = reconnect_delay();
+                            event!(parent: &span, Level::ERROR, "Retrying in {:?}, cannot connect to remote server: {:?}", reconnect_delay, err);
+                            tokio::time::sleep(reconnect_delay).await;
+                            continue;
+                        }
+                    }
+                }
+                TransportScheme::Wts => {
+                    match tunnel::transport::webtransport::connect(request_id, &client, &remote_addr)
+                        .instrument(span.clone())
+                        .await
+                    {
+                        Ok((r, w, response)) => (
+                            TunnelReader::WebTransport(Box::new(r)),
+                            TunnelWriter::WebTransport(Box::new(w)),
+                            response,
+                        ),
                         Err(err) => {
                             let reconnect_delay = reconnect_delay();
                             event!(parent: &span, Level::ERROR, "Retrying in {:?}, cannot connect to remote server: {:?}", reconnect_delay, err);

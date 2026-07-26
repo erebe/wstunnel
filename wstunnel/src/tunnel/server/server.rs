@@ -9,6 +9,7 @@ use crate::tunnel::connectors::{TcpTunnelConnector, TunnelConnector, UdpTunnelCo
 use crate::tunnel::listeners::{HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener};
 use crate::tunnel::server::handler_http2::http_server_upgrade;
 use crate::tunnel::server::handler_websocket::ws_server_upgrade;
+use crate::tunnel::server::handler_webtransport;
 use crate::tunnel::server::reverse_tunnel::ReverseTunnelServer;
 use crate::tunnel::server::utils::{
     HttpResponse, bad_request, extract_authorization, extract_path_prefix, extract_tunnel_info,
@@ -64,6 +65,9 @@ pub struct WsServerConfig {
     pub restriction_config: Option<PathBuf>,
     pub http_proxy: Option<Url>,
     pub remote_server_idle_timeout: Duration,
+    /// Additionally serve WebTransport over UDP on the same port as the TCP listener.
+    /// Requires TLS, since QUIC mandates TLS 1.3.
+    pub enable_webtransport: bool,
 }
 
 #[derive(Clone)]
@@ -80,12 +84,17 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
         }
     }
 
-    pub(super) async fn handle_tunnel_request(
+    /// Validate an incoming tunnel request and open the tunnel to its destination.
+    ///
+    /// Generic over the body type because only the headers and uri are read: the websocket and
+    /// http2 handlers pass a `Request<Incoming>`, while the webtransport handler rebuilds a
+    /// `Request<()>` from the HTTP/3 CONNECT request, which has no hyper body.
+    pub(super) async fn handle_tunnel_request<B>(
         &self,
         restrictions: Arc<RestrictionsRules>,
         restrict_path_prefix: Option<String>,
         mut client_addr: SocketAddr,
-        req: &Request<Incoming>,
+        req: &Request<B>,
     ) -> Result<
         (
             RemoteAddr,
@@ -331,6 +340,8 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
     }
 
     pub async fn serve(self, restrictions: RestrictionsRules) -> anyhow::Result<()> {
+        info!("Starting wstunnel server listening on {}", self.config.bind);
+
         // setup upgrade request handler
         let mk_websocket_upgrade_fn = |server: WsServer<_>,
                                        restrictions: Arc<ArcSwap<RestrictionsRules>>,
@@ -422,7 +433,23 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
             .await
             .with_context(|| format!("Failed to bind to socket on {}", self.config.bind))?;
 
-        info!("Starting wstunnel server listening on {}", listener.local_addr().unwrap_or(self.config.bind));
+        // WebTransport needs its own UDP socket, so it runs as a sibling of the TCP accept loop
+        // below. One server process then answers websocket, http2 and webtransport clients.
+        if self.config.enable_webtransport {
+            if self.config.tls.is_none() {
+                return Err(anyhow!(
+                    "--enable-webtransport requires TLS: QUIC mandates TLS 1.3, so it cannot be served on a cleartext ws:// or http:// endpoint. Use wss:// or wts://."
+                ));
+            }
+
+            let server = self.clone();
+            let restrictions = restrictions.restrictions_rules().clone();
+            self.executor.spawn(async move {
+                if let Err(err) = handler_webtransport::run_webtransport_server(server, restrictions).await {
+                    error!("Webtransport server stopped: {err:?}");
+                }
+            });
+        }
 
         loop {
             let (stream, peer_addr) = match listener.accept().await {
@@ -550,6 +577,7 @@ impl Debug for WsServerConfig {
             .field("restriction_config", &self.restriction_config)
             .field("tls", &self.tls.is_some())
             .field("remote_server_idle_timeout", &self.remote_server_idle_timeout)
+            .field("enable_webtransport", &self.enable_webtransport)
             .field(
                 "mTLS",
                 &self

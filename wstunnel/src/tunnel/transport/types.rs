@@ -9,12 +9,13 @@ pub enum TransportScheme {
     Wss,
     Http,
     Https,
+    Wts,
 }
 
 impl TransportScheme {
     #[cfg(feature = "clap")] // this is only used inside a clap value parser
     pub const fn values() -> &'static [Self] {
-        &[Self::Ws, Self::Wss, Self::Http, Self::Https]
+        &[Self::Ws, Self::Wss, Self::Http, Self::Https, Self::Wts]
     }
     pub const fn to_str(self) -> &'static str {
         match self {
@@ -22,6 +23,7 @@ impl TransportScheme {
             Self::Wss => "wss",
             Self::Http => "http",
             Self::Https => "https",
+            Self::Wts => "wts",
         }
     }
 
@@ -31,7 +33,14 @@ impl TransportScheme {
             Self::Wss => vec![b"http/1.1".to_vec()],
             Self::Http => vec![],
             Self::Https => vec![b"h2".to_vec()],
+            // WebTransport rides HTTP/3, whose ALPN is "h3"
+            Self::Wts => vec![web_transport_quinn::ALPN.as_bytes().to_vec()],
         }
+    }
+
+    /// WebTransport runs over QUIC, which mandates TLS 1.3. There is no cleartext variant.
+    pub const fn is_webtransport(self) -> bool {
+        matches!(self, Self::Wts)
     }
 }
 impl FromStr for TransportScheme {
@@ -43,6 +52,7 @@ impl FromStr for TransportScheme {
             "http" => Ok(Self::Http),
             "wss" => Ok(Self::Wss),
             "ws" => Ok(Self::Ws),
+            "wts" => Ok(Self::Wts),
             _ => Err(()),
         }
     }
@@ -75,6 +85,12 @@ pub enum TransportAddr {
     },
     Http {
         scheme: TransportScheme,
+        host: Host,
+        port: u16,
+    },
+    WebTransport {
+        scheme: TransportScheme,
+        tls: TlsClientConfig,
         host: Host,
         port: u16,
     },
@@ -111,6 +127,12 @@ impl TransportAddr {
                 host,
                 port,
             }),
+            TransportScheme::Wts => Some(Self::WebTransport {
+                scheme: TransportScheme::Wts,
+                tls: tls?,
+                host,
+                port,
+            }),
         }
     }
 
@@ -118,6 +140,7 @@ impl TransportAddr {
         match self {
             Self::Wss { tls, .. } => Some(tls),
             Self::Https { tls, .. } => Some(tls),
+            Self::WebTransport { tls, .. } => Some(tls),
             Self::Ws { .. } => None,
             Self::Http { .. } => None,
         }
@@ -129,6 +152,7 @@ impl TransportAddr {
             Self::Ws { host, .. } => host,
             Self::Https { host, .. } => host,
             Self::Http { host, .. } => host,
+            Self::WebTransport { host, .. } => host,
         }
     }
 
@@ -138,6 +162,7 @@ impl TransportAddr {
             Self::Ws { port, .. } => *port,
             Self::Https { port, .. } => *port,
             Self::Http { port, .. } => *port,
+            Self::WebTransport { port, .. } => *port,
         }
     }
 
@@ -147,6 +172,7 @@ impl TransportAddr {
             Self::Ws { scheme, .. } => scheme,
             Self::Https { scheme, .. } => scheme,
             Self::Http { scheme, .. } => scheme,
+            Self::WebTransport { scheme, .. } => scheme,
         }
     }
 }

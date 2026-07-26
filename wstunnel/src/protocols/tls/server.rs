@@ -15,6 +15,7 @@ use crate::tunnel::transport::TransportAddr;
 use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
+use tokio_rustls::rustls::server::danger::ClientCertVerifier;
 use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, Error, KeyLogFile, RootCertStore, SignatureScheme};
 use tokio_rustls::{TlsAcceptor, TlsConnector, rustls};
 use tracing::info;
@@ -144,21 +145,27 @@ pub fn tls_connector(
     Ok(tls_connector)
 }
 
-pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsAcceptor> {
-    let client_cert_verifier = if let Some(tls_client_ca_certificates) = &tls_cfg.tls_client_ca_certificates {
-        let mut root_store = RootCertStore::empty();
-        for tls_client_ca_certificate in tls_client_ca_certificates.lock().iter() {
-            root_store
-                .add(tls_client_ca_certificate.clone())
-                .with_context(|| "Failed to add mTLS client CA certificate")?;
-        }
-
-        WebPkiClientVerifier::builder(Arc::new(root_store))
-            .build()
-            .map_err(|err| anyhow!("Failed to build mTLS client verifier: {err:?}"))?
-    } else {
-        WebPkiClientVerifier::no_client_auth()
+/// Build the mTLS client certificate verifier for a server config, or a no-op verifier when
+/// the server is not configured to authenticate clients.
+fn client_cert_verifier(tls_cfg: &TlsServerConfig) -> anyhow::Result<Arc<dyn ClientCertVerifier>> {
+    let Some(tls_client_ca_certificates) = &tls_cfg.tls_client_ca_certificates else {
+        return Ok(WebPkiClientVerifier::no_client_auth());
     };
+
+    let mut root_store = RootCertStore::empty();
+    for tls_client_ca_certificate in tls_client_ca_certificates.lock().iter() {
+        root_store
+            .add(tls_client_ca_certificate.clone())
+            .with_context(|| "Failed to add mTLS client CA certificate")?;
+    }
+
+    WebPkiClientVerifier::builder(Arc::new(root_store))
+        .build()
+        .map_err(|err| anyhow!("Failed to build mTLS client verifier: {err:?}"))
+}
+
+pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8>>>) -> anyhow::Result<TlsAcceptor> {
+    let client_cert_verifier = client_cert_verifier(tls_cfg)?;
 
     let mut config = rustls::ServerConfig::builder()
         .with_client_cert_verifier(client_cert_verifier)
@@ -172,11 +179,82 @@ pub fn tls_acceptor(tls_cfg: &TlsServerConfig, alpn_protocols: Option<Vec<Vec<u8
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
+/// TLS config for a QUIC/WebTransport **server**.
+///
+/// QUIC mandates TLS 1.3 and negotiates the HTTP/3 ALPN, so this cannot reuse
+/// [`tls_acceptor`]'s config, which allows TLS 1.2 and advertises `h2`/`http/1.1`. The mTLS
+/// client verifier and certificate material are shared with the TCP path.
+pub fn quic_server_config(tls_cfg: &TlsServerConfig) -> anyhow::Result<rustls::ServerConfig> {
+    let crypto_provider = rustls::crypto::CryptoProvider::get_default()
+        .ok_or_else(|| anyhow!("No default crypto provider installed for rustls"))?
+        .clone();
+
+    let mut config = rustls::ServerConfig::builder_with_provider(crypto_provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .with_context(|| "QUIC requires TLS 1.3 support")?
+        .with_client_cert_verifier(client_cert_verifier(tls_cfg)?)
+        .with_single_cert(tls_cfg.tls_certificate.lock().clone(), tls_cfg.tls_key.lock().clone_key())
+        .with_context(|| "invalid tls certificate or private key")?;
+
+    config.key_log = Arc::new(KeyLogFile::new());
+    config.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
+
+    Ok(config)
+}
+
+/// TLS config for a QUIC/WebTransport **client**.
+///
+/// Mirrors [`tls_connector`] — same root store, same mTLS client certificate handling, same
+/// opt-out of certificate verification — but restricted to TLS 1.3 with the HTTP/3 ALPN.
+///
+/// ECH is not plumbed here: it is only wired for the TCP transports.
+pub fn quic_client_config(
+    tls_verify_certificate: bool,
+    tls_client_certificate: Option<Vec<CertificateDer<'static>>>,
+    tls_client_key: Option<PrivateKeyDer<'static>>,
+) -> anyhow::Result<ClientConfig> {
+    let root_store = crate::tunnel::ca_reloader::get_root_store();
+    let crypto_provider = rustls::crypto::CryptoProvider::get_default()
+        .ok_or_else(|| anyhow!("No default crypto provider installed for rustls"))?
+        .clone();
+
+    let config_builder = ClientConfig::builder_with_provider(crypto_provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .with_context(|| "QUIC requires TLS 1.3 support")?
+        .with_root_certificates(root_store);
+
+    let mut config = match (tls_client_certificate, tls_client_key) {
+        (Some(tls_client_certificate), Some(tls_client_key)) => config_builder
+            .with_client_auth_cert(tls_client_certificate, tls_client_key)
+            .with_context(|| "Error setting up mTLS")?,
+        _ => config_builder.with_no_client_auth(),
+    };
+
+    config.key_log = Arc::new(KeyLogFile::new());
+
+    // To bypass certificate verification
+    if !tls_verify_certificate {
+        config.dangerous().set_certificate_verifier(Arc::new(NullVerifier));
+    }
+
+    config.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
+
+    Ok(config)
+}
+
 pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
     let sni = client_cfg.tls_server_name();
     let tls_config = match &client_cfg.remote_addr {
         TransportAddr::Wss { tls, .. } => tls,
         TransportAddr::Https { tls, .. } => tls,
+        // WebTransport does its own TLS 1.3 handshake inside QUIC, over UDP. It never goes
+        // through the TCP connection pool, so it must not reach this function.
+        TransportAddr::WebTransport { .. } => {
+            return Err(anyhow!(
+                "WebTransport does not use a TCP TLS stream, it handshakes inside QUIC: {}",
+                client_cfg.remote_addr.scheme()
+            ));
+        }
         TransportAddr::Http { .. } | TransportAddr::Ws { .. } => {
             return Err(anyhow!("Transport does not support TLS: {}", client_cfg.remote_addr.scheme()));
         }

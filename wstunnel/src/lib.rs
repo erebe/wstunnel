@@ -89,8 +89,52 @@ pub async fn create_client(
     .expect("cannot create dns resolver");
 
     let transport_scheme = TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
+    if transport_scheme.is_webtransport() {
+        // QUIC runs over UDP, so an HTTP CONNECT proxy cannot carry it.
+        if http_proxy.is_some() {
+            return Err(anyhow!(
+                "--http-proxy cannot be used with wts:// (webtransport): QUIC runs over UDP and cannot traverse an HTTP CONNECT proxy. Use wss:// or https:// instead."
+            ));
+        }
+        // SNI is mandatory to validate the server certificate over QUIC.
+        if args.tls_sni_disable {
+            return Err(anyhow!(
+                "--tls-sni-disable cannot be used with wts:// (webtransport): the QUIC handshake requires a server name. Use wss:// or https:// instead."
+            ));
+        }
+        if args.tls_ech_enable {
+            return Err(anyhow!(
+                "--tls-ech-enable cannot be used with wts:// (webtransport): ECH is only wired for the TCP transports. Use wss:// or https:// instead."
+            ));
+        }
+    }
+
     let tls = match transport_scheme {
         TransportScheme::Ws | TransportScheme::Http => None,
+        TransportScheme::Wts => {
+            // Webtransport builds its own TLS 1.3 config inside `WsClient::new`, via
+            // `tls::quic_client_config`. This `TlsClientConfig` only carries the settings it
+            // reads from (verification, SNI override, certificate paths); the `tls_connector`
+            // here is never used by the QUIC path.
+            let tls_connector = tls::tls_connector(
+                args.tls_verify_certificate,
+                transport_scheme.alpn_protocols(),
+                !args.tls_sni_disable,
+                None,
+                tls_certificate,
+                tls_key,
+            )
+            .expect("Cannot create tls connector");
+
+            Some(TlsClientConfig {
+                tls_connector: Arc::new(RwLock::new(tls_connector)),
+                tls_sni_override: args.tls_sni_override,
+                tls_verify_certificate: args.tls_verify_certificate,
+                tls_sni_disabled: args.tls_sni_disable,
+                tls_certificate_path: args.tls_certificate.clone(),
+                tls_key_path: args.tls_private_key.clone(),
+            })
+        }
         TransportScheme::Wss | TransportScheme::Https => {
             let ech_config = if args.tls_ech_enable {
                 #[cfg(not(feature = "aws-lc-rs"))]
@@ -446,7 +490,9 @@ pub async fn run_server(args: Server, executor: impl TokioExecutor) -> anyhow::R
 }
 
 async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyhow::Result<()> {
-    let tls_config = if args.remote_addr.scheme() == "wss" {
+    // wts:// binds TLS on TCP exactly like wss://, and additionally serves webtransport over UDP.
+    let is_webtransport = args.remote_addr.scheme() == "wts";
+    let tls_config = if args.remote_addr.scheme() == "wss" || is_webtransport {
         let tls_certificate = if let Some(cert_path) = &args.tls_certificate {
             tls::load_certificates_from_pem(cert_path).expect("Cannot load tls certificate")
         } else {
@@ -522,6 +568,9 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyho
         restriction_config: args.restrict_config,
         http_proxy,
         remote_server_idle_timeout: args.remote_to_local_server_idle_timeout,
+        // wts:// on the server means "TLS, and also serve webtransport", so it implies the flag.
+        // The TCP listener still runs, serving websocket and http2 as usual.
+        enable_webtransport: args.enable_webtransport || is_webtransport,
     };
     let server = WsServer::new(server_config, executor);
 

@@ -194,9 +194,10 @@ pub struct Client {
     pub http_headers_file: Option<PathBuf>,
 
     /// Address of the wstunnel server
-    /// You can either use websocket or http2 as transport protocol. Use websocket if you are unsure.
+    /// You can use websocket, http2 or webtransport as transport protocol. Use websocket if you are unsure.
     /// Example: For websocket with TLS wss://wstunnel.example.com or without ws://wstunnel.example.com
     ///          For http2 with TLS https://wstunnel.example.com or without http://wstunnel.example.com
+    ///          For webtransport wts://wstunnel.example.com (always TLS)
     ///
     /// *WARNING* HTTP2 as transport protocol is harder to make it works because:
     ///   - If you are behind a (reverse) proxy/CDN they are going to buffer the whole request before forwarding it to the server
@@ -204,7 +205,15 @@ pub struct Client {
     ///   - if you have wstunnel behind a reverse proxy, most of them (i.e: nginx) are going to turn http2 request into http1
     ///     This is not going to work, because http1 does not support streaming naturally
     ///   - The only way to make it works with http2 is to have wstunnel directly exposed to the internet without any reverse proxy in front of it
-    #[cfg_attr(feature = "clap", arg(value_name = "ws[s]|http[s]://wstunnel.server.com[:port]", value_parser = parsers::parse_server_url, verbatim_doc_comment))]
+    ///
+    /// *WARNING* WEBTRANSPORT (wts://) runs on HTTP/3 over QUIC, so:
+    ///   - It needs UDP to be reachable end to end on that port. Firewalls and container port
+    ///     mappings that only forward TCP make the handshake time out after 10s. This is by far
+    ///     the most common cause of a wts:// tunnel not connecting
+    ///   - The server must be started with --enable-webtransport (or with the wts:// scheme)
+    ///   - TLS is always used, as QUIC mandates TLS 1.3. There is no cleartext variant
+    ///   - --http-proxy, --tls-sni-disable and --tls-ech-enable are not supported with it
+    #[cfg_attr(feature = "clap", arg(value_name = "ws[s]|http[s]|wts://wstunnel.server.com[:port]", value_parser = parsers::parse_server_url, verbatim_doc_comment))]
     pub remote_addr: Url,
 
     /// [Optional] Certificate (pem) to present to the server when connecting over TLS (HTTPS).
@@ -254,8 +263,21 @@ pub struct Server {
     /// Example: With TLS wss://0.0.0.0:8080 or without ws://[::]:8080
     ///
     /// The server is capable of detecting by itself if the request is websocket or http2. So you don't need to specify it.
-    #[cfg_attr(feature = "clap", arg(value_name = "ws[s]://0.0.0.0[:port]", value_parser = parsers::parse_server_url, verbatim_doc_comment))]
+    ///
+    /// Use wts://0.0.0.0:8080 to additionally serve WebTransport. It is equivalent to
+    /// wss://0.0.0.0:8080 --enable-webtransport: the TCP listener still serves websocket and http2.
+    #[cfg_attr(feature = "clap", arg(value_name = "ws[s]|wts://0.0.0.0[:port]", value_parser = parsers::parse_server_url, verbatim_doc_comment))]
     pub remote_addr: Url,
+
+    /// Also serve WebTransport (HTTP/3 over QUIC), by binding UDP on the same port as the TCP listener.
+    /// One server then serves websocket, http2 and webtransport clients at the same time.
+    ///
+    /// Requires TLS (wss://), as QUIC mandates TLS 1.3. Implied by the wts:// scheme.
+    ///
+    /// *WARNING* This opens a UDP port. Make sure your firewall and, if containerized, your port
+    /// mapping forward UDP as well as TCP, else wts:// clients time out during the handshake.
+    #[cfg_attr(feature = "clap", arg(long, default_value = "false", verbatim_doc_comment))]
+    pub enable_webtransport: bool,
 
     /// (linux only) Mark network packet with SO_MARK sockoption with the specified value.
     /// You need to use {root, sudo, capabilities} to run wstunnel when using this option
