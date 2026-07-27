@@ -30,8 +30,10 @@ docker_release $TAG:
     --push .
   docker buildx rm builder
 
+# Not --all-features: it turns on both `aws-lc-rs` and `ring`, which forward the two mutually
+# exclusive crypto providers of jsonwebtoken, and the tests then panic at runtime.
 test:
-   cargo nextest run --all-features
+   cargo nextest run
 
 bump_deps:
   cargo upgrade  --recursive true --incompatible allow
