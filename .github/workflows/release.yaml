@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# A new push to a pull request supersedes the run still in flight. Pushes to branches and tags
+# are never cancelled, as they are what feeds the release.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   RUST_VERSION: 1.95.0
   BIN_NAME: "wstunnel"
@@ -31,6 +37,9 @@ jobs:
         with:
           tool: taplo-cli,cargo-nextest
 
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
@@ -42,8 +51,13 @@ jobs:
 
       # Not --all-features: it turns on both `aws-lc-rs` and `ring`, which forward the two
       # mutually exclusive crypto providers of jsonwebtoken, and the tests then panic at runtime.
-      - name: Test
+      # Each provider gets its own run instead, as they are compiled in, never side by side.
+      - name: Test with aws-lc-rs
         run: cargo nextest run --locked
+
+      # What the armv7, armv6, freebsd and windows-x86 builds ship with.
+      - name: Test with ring
+        run: cargo nextest run --locked --no-default-features --features ring
 
   build:
     name: Build - ${{ matrix.platform.name }}
