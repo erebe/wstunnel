@@ -42,7 +42,8 @@ rustls-native-certs = { version = "0.8.4", features = [] }
 rustls-pemfile = { version = "2.2.0", features = [] }
 # WebTransport (HTTP/3 over QUIC) transport. Takes our own rustls config, so the
 # crypto provider follows from the aws-lc-rs/ring features below. Re-exports quinn.
-web-transport-quinn = { version = "0.11.12", features = [] }
+# Its default feature is aws-lc-rs, which would pull aws-lc-sys into the ring builds.
+web-transport-quinn = { version = "0.11.12", default-features = false, features = [] }
 x509-parser = "0.18.1"
 serde = { version = "1.0.229", features = ["derive"] }
 socket2 = { version = "0.6.5", features = ["all"] }
@@ -57,10 +58,7 @@ derive_more = { version = "2.1.1", features = ["display", "error"] }
 
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["logging", "tls12"] }
 rcgen = { version = "0.14.8", default-features = false, features = [] }
-hickory-resolver = { version = "0.26.1", default-features = false, features = [
-  "system-config",
-  "tokio",
-] }
+hickory-resolver = { version = "0.26.1", default-features = false, features = ["system-config", "tokio"] }
 aws-lc-rs = { version = "*", optional = true }
 
 [target.'cfg(not(target_family = "unix"))'.dependencies]
@@ -87,7 +85,15 @@ aws-lc-rs = [
   "rcgen/aws_lc_rs",
   "hickory-resolver/tls-aws-lc-rs",
   "hickory-resolver/https-aws-lc-rs",
-  "jsonwebtoken/aws_lc_rs"
+  "jsonwebtoken/aws_lc_rs",
+  "web-transport-quinn/aws-lc-rs",
 ]
 aws-lc-rs-bindgen = ["dep:aws-lc-rs", "aws-lc-rs/bindgen"]
-ring = ["tokio-rustls/ring", "rcgen/ring", "hickory-resolver/tls-ring", "hickory-resolver/https-ring", "jsonwebtoken/rust_crypto"]
+ring = [
+  "tokio-rustls/ring",
+  "rcgen/ring",
+  "hickory-resolver/tls-ring",
+  "hickory-resolver/https-ring",
+  "jsonwebtoken/rust_crypto",
+  "web-transport-quinn/ring",
+]

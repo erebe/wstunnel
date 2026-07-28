@@ -3,8 +3,10 @@
 #rust = "1.93"
 
 [tasks.test]
-description = "Run all the tests with features. Requires docker"
-run = "cargo nextest run --all-features"
+description = "Run all the tests. Requires docker"
+# Not --all-features: it turns on both `aws-lc-rs` and `ring`, which forward the two mutually
+# exclusive crypto providers of jsonwebtoken, and the tests then panic at runtime.
+run = "cargo nextest run"
 
 [tasks.bump-deps]
 description = "Upgrade all libs versions for all packages"

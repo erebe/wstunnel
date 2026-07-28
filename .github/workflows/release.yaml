@@ -6,11 +6,59 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# A new push to a pull request supersedes the run still in flight. Pushes to branches and tags
+# are never cancelled, as they are what feeds the release.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   RUST_VERSION: 1.95.0
   BIN_NAME: "wstunnel"
 
 jobs:
+  # Runs alongside the build matrix, so a formatting or test failure is reported without
+  # waiting on the cross-compilation of every platform.
+  check:
+    name: Check - format, lint & tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Git repo
+        uses: actions/checkout@v4
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "${{ env.RUST_VERSION }}"
+          components: rustfmt, clippy
+
+      - name: Install taplo-cli and cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: taplo-cli,cargo-nextest
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check TOML formatting
+        run: taplo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all --all-features --locked -- -D warnings
+
+      # Not --all-features: it turns on both `aws-lc-rs` and `ring`, which forward the two
+      # mutually exclusive crypto providers of jsonwebtoken, and the tests then panic at runtime.
+      # Each provider gets its own run instead, as they are compiled in, never side by side.
+      - name: Test with aws-lc-rs
+        run: cargo nextest run --locked
+
+      # What the armv7, armv6, freebsd and windows-x86 builds ship with.
+      - name: Test with ring
+        run: cargo nextest run --locked --no-default-features --features ring
+
   build:
     name: Build - ${{ matrix.platform.name }}
     # By default, runs on Ubuntu, otherwise, override with the desired os
@@ -132,10 +180,8 @@ jobs:
         run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Install bindgen-cli
+        if: contains(matrix.platform.build-args, 'aws-lc-rs-bindgen')
         run: cargo install bindgen-cli
-
-      - name: Install taplo-cli
-        run: cargo install taplo-cli --locked
 
       - name: Show command used for Cargo
         run: |
