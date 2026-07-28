@@ -140,6 +140,12 @@ jobs:
             target: i686-pc-windows-msvc
             build-args: "--profile release-with-symbols --no-default-features --features ring"
 
+          # ring rather than aws-lc-rs, as aws-lc-sys needs NASM, which has no aarch64 backend.
+          - name: Windows aarch64
+            os: windows-2022
+            target: aarch64-pc-windows-msvc
+            build-args: "--profile release-with-symbols --no-default-features --features ring"
+
     steps:
 
       - name: Install package for linux
