@@ -140,6 +140,11 @@ jobs:
             target: i686-pc-windows-msvc
             build-args: "--profile release-with-symbols --no-default-features --features ring"
 
+          - name: Windows aarch64
+            os: windows-2022
+            target: aarch64-pc-windows-msvc
+            build-args: "--profile release-with-symbols"
+
     steps:
 
       - name: Install package for linux
@@ -195,7 +200,7 @@ jobs:
         # We use cross-rs if not running on x86_64 architecture on Linux
         with:
           command: build
-          use-cross: ${{ !contains(matrix.platform.target, 'x86_64') || contains(matrix.platform.target, 'freebsd') }}
+          use-cross: ${{ (!contains(matrix.platform.target, 'x86_64') && !contains(matrix.platform.target, 'windows')) || contains(matrix.platform.target, 'freebsd') }}
           args: ${{ matrix.platform.build-args }} --bin wstunnel --target ${{ matrix.platform.target }}
 
       - name: Store artifact
