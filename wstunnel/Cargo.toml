@@ -42,7 +42,8 @@ rustls-native-certs = { version = "0.8.4", features = [] }
 rustls-pemfile = { version = "2.2.0", features = [] }
 # WebTransport (HTTP/3 over QUIC) transport. Takes our own rustls config, so the
 # crypto provider follows from the aws-lc-rs/ring features below. Re-exports quinn.
-web-transport-quinn = { version = "0.11.12", features = [] }
+# Its default feature is aws-lc-rs, which would pull aws-lc-sys into the ring builds.
+web-transport-quinn = { version = "0.11.12", default-features = false, features = [] }
 x509-parser = "0.18.1"
 serde = { version = "1.0.229", features = ["derive"] }
 socket2 = { version = "0.6.5", features = ["all"] }
@@ -85,6 +86,7 @@ aws-lc-rs = [
   "hickory-resolver/tls-aws-lc-rs",
   "hickory-resolver/https-aws-lc-rs",
   "jsonwebtoken/aws_lc_rs",
+  "web-transport-quinn/aws-lc-rs",
 ]
 aws-lc-rs-bindgen = ["dep:aws-lc-rs", "aws-lc-rs/bindgen"]
 ring = [
@@ -93,4 +95,5 @@ ring = [
   "hickory-resolver/tls-ring",
   "hickory-resolver/https-ring",
   "jsonwebtoken/rust_crypto",
+  "web-transport-quinn/ring",
 ]
