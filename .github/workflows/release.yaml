@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  RUST_VERSION: 1.95.0
+  RUST_VERSION: 1.97
   BIN_NAME: "wstunnel"
 
 jobs:
