@@ -1,7 +1,10 @@
 use crate::executor::TokioExecutorRef;
 use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
+use crate::tunnel::LocalProtocol;
+use crate::tunnel::reverse_socks5::{ReverseSocks5ConnectResult, read_reverse_socks5_connect_result};
 use crate::tunnel::server::WsServer;
+use crate::tunnel::server::send_socks5_reply_if_needed;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport;
 use crate::tunnel::transport::tunnel_to_jwt_token;
@@ -10,6 +13,7 @@ use crate::tunnel::transport::webtransport::{
 };
 use anyhow::{Context, anyhow};
 use arc_swap::ArcSwap;
+use fast_socks5::ReplyError;
 use hyper::{Request, StatusCode};
 use std::any::Any;
 use std::sync::Arc;
@@ -136,11 +140,9 @@ async fn handle_session(
         .handle_tunnel_request(restrictions, restrict_path, client_addr, &http_request)
         .await;
 
-    // `reverse_socks5` gates the deferred SOCKS5 reply on the reverse connect
-    // handshake. WebTransport has no equivalent of the handshake byte read used
-    // by the websocket and http2 handlers, so reverse SOCKS5 over WebTransport
-    // keeps its existing behaviour rather than being half-gated here.
-    let (remote_addr, local_rx, local_tx, need_preamble, _reverse_socks5) = match tunnel {
+    // `reverse_socks5` gates the deferred SOCKS5 reply on the reverse connect handshake, the same
+    // way the websocket and http2 handlers do.
+    let (remote_addr, local_rx, mut local_tx, need_preamble, reverse_socks5) = match tunnel {
         Ok(tunnel) => tunnel,
         Err(response) => {
             let status = response.status();
@@ -183,15 +185,38 @@ async fn handle_session(
         }
     }
 
+    let mut tunnel_rx = WebTransportTunnelRead::new(recv, session.clone());
+
+    // Wait for the client to report the outcome of its local connect before answering the SOCKS
+    // client, so a refused target is reported as a failure instead of a premature success. The
+    // preamble above travels the other way, on `send`, so the two never interleave.
+    if reverse_socks5 && matches!(&remote_addr.protocol, LocalProtocol::Tcp { .. }) {
+        match read_reverse_socks5_connect_result(tunnel_rx.read_handshake_byte(), server.config.timeout_connect).await {
+            Ok(ReverseSocks5ConnectResult::Connected) => {
+                if let Err(err) = send_socks5_reply_if_needed(&mut local_tx, ReplyError::Succeeded).await {
+                    error!("Cannot reply to socks5 client: {err:?}");
+                    session.close(StatusCode::INTERNAL_SERVER_ERROR.as_u16() as u32, b"socks5 reply failed");
+                    return Err(err);
+                }
+            }
+            Ok(ReverseSocks5ConnectResult::Failed) => {
+                let _ = send_socks5_reply_if_needed(&mut local_tx, ReplyError::GeneralFailure).await;
+                session.close(StatusCode::BAD_GATEWAY.as_u16() as u32, b"reverse socks5 connect failed");
+                return Ok(());
+            }
+            Err(err) => {
+                warn!("Reverse socks5 handshake failed: {err}");
+                let _ = send_socks5_reply_if_needed(&mut local_tx, ReplyError::GeneralFailure).await;
+                session.close(StatusCode::GATEWAY_TIMEOUT.as_u16() as u32, b"reverse socks5 handshake failed");
+                return Err(err.into());
+            }
+        }
+    }
+
     let (close_tx, close_rx) = oneshot::channel::<()>();
-    server.executor.spawn(
-        transport::io::propagate_remote_to_local(
-            local_tx,
-            WebTransportTunnelRead::new(recv, session.clone()),
-            close_rx,
-        )
-        .instrument(Span::current()),
-    );
+    server
+        .executor
+        .spawn(transport::io::propagate_remote_to_local(local_tx, tunnel_rx, close_rx).instrument(Span::current()));
 
     server.executor.spawn(
         transport::io::propagate_local_to_remote(local_rx, WebTransportTunnelWrite::new(send, session), close_tx, None)

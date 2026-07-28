@@ -398,6 +398,67 @@ async fn test_tcp_tunnel_webtransport(
 }
 
 #[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_socks5_tunnel_connect_success_webtransport(
+    server_webtransport: WsServer,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let tunnel_listen = free_addr().0;
+    let endpoint_listen = free_addr().0;
+
+    let server_port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let client = client_webtransport(server_port, dns_resolver).await;
+    let socks_listener = Socks5TunnelListener::new(tunnel_listen, None, None).await.unwrap();
+    tokio::spawn(async move { client.run_tunnel(socks_listener).await.unwrap() });
+
+    let mut endpoint_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+    let (mut socks_client, connect_status) = socks5_connect(tunnel_listen, endpoint_listen).await.unwrap();
+    assert_eq!(connect_status, 0x00, "SOCKS CONNECT should succeed");
+
+    socks_client.write_all(b"Hello").await.unwrap();
+    let mut endpoint = endpoint_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    endpoint.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..5], b"Hello");
+    buf.clear();
+
+    endpoint.write_all(b"world!").await.unwrap();
+    socks_client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..6], b"world!");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_socks5_tunnel_connect_failure_webtransport(
+    server_webtransport: WsServer,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let tunnel_listen = free_addr().0;
+    // Reserved but never bound, so the connect is guaranteed to be refused.
+    let unreachable_target = free_addr().0;
+
+    let server_port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let client = client_webtransport(server_port, dns_resolver).await;
+    let socks_listener = Socks5TunnelListener::new(tunnel_listen, None, None).await.unwrap();
+    tokio::spawn(async move { client.run_tunnel(socks_listener).await.unwrap() });
+
+    let (_client, connect_status) = socks5_connect(tunnel_listen, unreachable_target).await.unwrap();
+    assert_eq!(connect_status, 0x01, "SOCKS CONNECT should report failure");
+}
+
+#[rstest]
 #[timeout(Duration::from_secs(10))]
 #[tokio::test]
 #[serial]

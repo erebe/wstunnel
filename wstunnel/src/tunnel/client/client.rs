@@ -159,15 +159,19 @@ impl<E: TokioExecutorRef> WsClient<E> {
                     }
                 }
             }
-            TransportScheme::Wts => tunnel::transport::webtransport::connect(request_id, self, remote_cfg)
-                .await
-                .map(|(r, w, response)| {
-                    (
+            TransportScheme::Wts => {
+                match tunnel::transport::webtransport::connect(request_id, self, remote_cfg).await {
+                    Ok((r, w, response)) => (
                         TunnelReader::WebTransport(Box::new(r)),
                         TunnelWriter::WebTransport(Box::new(w)),
                         response,
-                    )
-                })?,
+                    ),
+                    Err(err) => {
+                        let _ = Self::send_socks5_reply_if_needed(&mut local_tx, ReplyError::GeneralFailure).await;
+                        return Err(err);
+                    }
+                }
+            }
         };
 
         debug!("Server response: {response:?}");

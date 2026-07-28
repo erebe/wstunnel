@@ -153,6 +153,19 @@ impl WebTransportTunnelRead {
             _session: session,
         }
     }
+
+    /// Read the single reverse SOCKS5 connect-result byte.
+    ///
+    /// Unlike the websocket and http2 tunnels, which read a whole frame at a time and have to
+    /// stash its remainder, a QUIC stream is a byte stream: taking one byte leaves the rest of
+    /// the payload queued, so no prefetch buffer is needed here.
+    pub async fn read_handshake_byte(&mut self) -> Result<u8, io::Error> {
+        let mut byte = [0u8; 1];
+        match self.inner.read_exact(&mut byte).await {
+            Ok(()) => Ok(byte[0]),
+            Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
+        }
+    }
 }
 
 impl TunnelRead for WebTransportTunnelRead {
