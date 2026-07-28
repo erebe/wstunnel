@@ -112,7 +112,9 @@ impl TunnelWrite for Http2TunnelWrite {
     }
 
     fn pending_operations_notify(&mut self) -> Arc<Notify> {
-        Arc::new(Notify::new())
+        // HTTP2 doesn't use pending operations, so return a static Arc to avoid allocation
+        static DUMMY_NOTIFY: std::sync::LazyLock<Arc<Notify>> = std::sync::LazyLock::new(|| Arc::new(Notify::new()));
+        Arc::clone(&DUMMY_NOTIFY)
     }
 
     fn handle_pending_operations(&mut self) -> impl Future<Output = Result<(), io::Error>> + Send {
