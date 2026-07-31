@@ -2,6 +2,7 @@ pub mod ca_reloader;
 pub mod client;
 pub mod connectors;
 pub mod listeners;
+pub(crate) mod reverse_socks5;
 pub mod server;
 mod tls_reloader;
 pub mod transport;

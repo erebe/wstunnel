@@ -6,7 +6,7 @@ use crate::restrictions::types;
 use crate::restrictions::types::{AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules};
 use crate::somark::SoMark;
 use crate::tunnel::client::{TlsClientConfig, WsClient, WsClientConfig};
-use crate::tunnel::listeners::{TcpTunnelListener, UdpTunnelListener};
+use crate::tunnel::listeners::{Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener};
 use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
 use bytes::BytesMut;
@@ -18,6 +18,7 @@ use rstest::{fixture, rstest};
 use scopeguard::defer;
 use serial_test::serial;
 use std::collections::{BTreeSet, HashMap};
+use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -216,6 +217,46 @@ fn no_restrictions() -> RestrictionsRules {
     }
 }
 
+async fn socks5_connect(
+    proxy_addr: SocketAddr,
+    target_addr: SocketAddr,
+) -> std::io::Result<(tokio::net::TcpStream, u8)> {
+    let mut stream = tokio::net::TcpStream::connect(proxy_addr).await?;
+    stream.write_all(&[0x05, 0x01, 0x00]).await?;
+
+    let mut auth_reply = [0u8; 2];
+    stream.read_exact(&mut auth_reply).await?;
+    if auth_reply != [0x05, 0x00] {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("unexpected socks auth reply: {auth_reply:?}"),
+        ));
+    }
+
+    let SocketAddr::V4(target_addr) = target_addr else {
+        return Err(Error::new(ErrorKind::InvalidInput, "test helper only supports IPv4 targets"));
+    };
+    let mut connect_req = [0u8; 10];
+    connect_req[0] = 0x05;
+    connect_req[1] = 0x01;
+    connect_req[2] = 0x00;
+    connect_req[3] = 0x01;
+    connect_req[4..8].copy_from_slice(&target_addr.ip().octets());
+    connect_req[8..10].copy_from_slice(&target_addr.port().to_be_bytes());
+
+    stream.write_all(&connect_req).await?;
+    let mut reply = [0u8; 10];
+    stream.read_exact(&mut reply).await?;
+    if reply[0] != 0x05 {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("unexpected socks connect reply: {reply:?}"),
+        ));
+    }
+
+    Ok((stream, reply[1]))
+}
+
 #[rstest]
 #[timeout(Duration::from_secs(10))]
 #[tokio::test]
@@ -360,6 +401,103 @@ async fn test_tcp_tunnel_webtransport(
 #[timeout(Duration::from_secs(15))]
 #[tokio::test]
 #[serial]
+async fn test_socks5_tunnel_connect_success_webtransport(
+    server_webtransport: WsServer,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let tunnel_listen = free_addr().0;
+    let endpoint_listen = free_addr().0;
+
+    let server_port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let client = client_webtransport(server_port, dns_resolver).await;
+    let socks_listener = Socks5TunnelListener::new(tunnel_listen, None, None).await.unwrap();
+    tokio::spawn(async move { client.run_tunnel(socks_listener).await.unwrap() });
+
+    let mut endpoint_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+    let (mut socks_client, connect_status) = socks5_connect(tunnel_listen, endpoint_listen).await.unwrap();
+    assert_eq!(connect_status, 0x00, "SOCKS CONNECT should succeed");
+
+    socks_client.write_all(b"Hello").await.unwrap();
+    let mut endpoint = endpoint_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    endpoint.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..5], b"Hello");
+    buf.clear();
+
+    endpoint.write_all(b"world!").await.unwrap();
+    socks_client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..6], b"world!");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_socks5_tunnel_connect_failure_webtransport(
+    server_webtransport: WsServer,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let tunnel_listen = free_addr().0;
+    // Reserved but never bound, so the connect is guaranteed to be refused.
+    let unreachable_target = free_addr().0;
+
+    let server_port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let client = client_webtransport(server_port, dns_resolver).await;
+    let socks_listener = Socks5TunnelListener::new(tunnel_listen, None, None).await.unwrap();
+    tokio::spawn(async move { client.run_tunnel(socks_listener).await.unwrap() });
+
+    let (_client, connect_status) = socks5_connect(tunnel_listen, unreachable_target).await.unwrap();
+    assert_eq!(connect_status, 0x01, "SOCKS CONNECT should report failure");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(10))]
+#[tokio::test]
+#[serial]
+async fn test_socks5_tunnel_connect_success(
+    server_no_tls: WsServer,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let tunnel_listen = free_addr().0;
+    let endpoint_listen = free_addr().0;
+
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let client_ws = client_ws(server_port, dns_resolver).await;
+    let socks_listener = Socks5TunnelListener::new(tunnel_listen, None, None).await.unwrap();
+    tokio::spawn(async move { client_ws.run_tunnel(socks_listener).await.unwrap() });
+
+    let mut endpoint_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+    let (mut socks_client, connect_status) = socks5_connect(tunnel_listen, endpoint_listen).await.unwrap();
+    assert_eq!(connect_status, 0x00, "SOCKS CONNECT should succeed");
+
+    socks_client.write_all(b"Hello").await.unwrap();
+    let mut endpoint = endpoint_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    endpoint.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..5], b"Hello");
+    buf.clear();
+
+    endpoint.write_all(b"world!").await.unwrap();
+    socks_client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..6], b"world!");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
 async fn test_udp_tunnel_webtransport(
     server_webtransport: WsServer,
     no_restrictions: RestrictionsRules,
@@ -441,3 +579,28 @@ async fn test_udp_tunnel_webtransport(
 //    client.read_buf(&mut buf).await.unwrap();
 //    assert_eq!(&buf[..6], b"world!");
 //}
+
+#[rstest]
+#[timeout(Duration::from_secs(10))]
+#[tokio::test]
+#[serial]
+async fn test_socks5_tunnel_connect_failure(
+    server_no_tls: WsServer,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let tunnel_listen = free_addr().0;
+    // Reserved but never bound, so the connect is guaranteed to be refused.
+    let unreachable_target = free_addr().0;
+
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let client_ws = client_ws(server_port, dns_resolver).await;
+    let socks_listener = Socks5TunnelListener::new(tunnel_listen, None, None).await.unwrap();
+    tokio::spawn(async move { client_ws.run_tunnel(socks_listener).await.unwrap() });
+
+    let (_client, connect_status) = socks5_connect(tunnel_listen, unreachable_target).await.unwrap();
+    assert_eq!(connect_status, 0x01, "SOCKS CONNECT should report failure");
+}
