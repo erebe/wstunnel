@@ -303,11 +303,7 @@ pub async fn connect(
 
     // The SNI name is independent of the address we dial, so --tls-sni-override is just a
     // different name here.
-    let sni = client_cfg
-        .remote_addr
-        .tls()
-        .and_then(|tls| tls.tls_sni_override.as_ref())
-        .map_or_else(|| host.to_string(), |sni| sni.as_ref().to_string());
+    let sni = client_cfg.quic_server_name();
 
     let authority = match host {
         Host::Ipv6(ip) => format!("[{ip}]:{port}"),

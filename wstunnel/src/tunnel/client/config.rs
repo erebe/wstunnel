@@ -29,6 +29,19 @@ pub struct WsClientConfig {
 }
 
 impl WsClientConfig {
+    pub fn quic_server_name(&self) -> String {
+        self.remote_addr
+            .tls()
+            .and_then(|tls| tls.tls_sni_override.as_ref())
+            .map_or_else(
+                || match &self.remote_addr.host() {
+                    Host::Domain(domain) => domain.clone(),
+                    Host::Ipv4(ip) => ip.to_string(),
+                    Host::Ipv6(ip) => ip.to_string(),
+                },
+                |sni_override| sni_override.as_ref().to_string(),
+            )
+    }
     pub fn tls_server_name(&self) -> ServerName<'static> {
         static INVALID_DNS_NAME: LazyLock<DnsName> =
             LazyLock::new(|| DnsName::try_from("dns-name-invalid.com").unwrap());
