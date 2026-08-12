@@ -1,6 +1,8 @@
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
-use crate::tunnel::transport::webtransport::{WebTransportTunnelRead, WebTransportTunnelWrite};
+use crate::tunnel::transport::webtransport::{
+    WebTransportTunnelRead, WebTransportTunnelReadUdpStream, WebTransportTunnelWrite, WebTransportTunnelWriteUdpStream,
+};
 use bytes::{BufMut, BytesMut};
 use futures_util::{FutureExt, pin_mut};
 use std::future::Future;
@@ -39,6 +41,7 @@ pub enum TunnelReader {
     // Boxed: a quinn RecvStream plus the session handle is several times the size of the other
     // variants, and would otherwise inflate the enum for every tunnel.
     WebTransport(Box<WebTransportTunnelRead>),
+    WebTransportUdpStream(Box<WebTransportTunnelReadUdpStream>),
 }
 
 impl TunnelRead for TunnelReader {
@@ -47,6 +50,7 @@ impl TunnelRead for TunnelReader {
             Self::Websocket(s) => s.copy(writer).await,
             Self::Http2(s) => s.copy(writer).await,
             Self::WebTransport(s) => s.copy(writer).await,
+            Self::WebTransportUdpStream(s) => s.copy(writer).await,
         }
     }
 }
@@ -56,6 +60,7 @@ pub enum TunnelWriter {
     Http2(Http2TunnelWrite),
     // Boxed for the same reason as `TunnelReader::WebTransport`.
     WebTransport(Box<WebTransportTunnelWrite>),
+    WebTransportUdpStream(Box<WebTransportTunnelWriteUdpStream>),
 }
 
 impl TunnelWrite for TunnelWriter {
@@ -64,6 +69,7 @@ impl TunnelWrite for TunnelWriter {
             Self::Websocket(s) => s.buf_mut(),
             Self::Http2(s) => s.buf_mut(),
             Self::WebTransport(s) => s.buf_mut(),
+            Self::WebTransportUdpStream(s) => s.buf_mut(),
         }
     }
 
@@ -72,6 +78,7 @@ impl TunnelWrite for TunnelWriter {
             Self::Websocket(s) => s.write().await,
             Self::Http2(s) => s.write().await,
             Self::WebTransport(s) => s.write().await,
+            Self::WebTransportUdpStream(s) => s.write().await,
         }
     }
 
@@ -80,6 +87,7 @@ impl TunnelWrite for TunnelWriter {
             Self::Websocket(s) => s.ping().await,
             Self::Http2(s) => s.ping().await,
             Self::WebTransport(s) => s.ping().await,
+            Self::WebTransportUdpStream(s) => s.ping().await,
         }
     }
 
@@ -88,6 +96,7 @@ impl TunnelWrite for TunnelWriter {
             Self::Websocket(s) => s.close().await,
             Self::Http2(s) => s.close().await,
             Self::WebTransport(s) => s.close().await,
+            Self::WebTransportUdpStream(s) => s.close().await,
         }
     }
 
@@ -96,6 +105,7 @@ impl TunnelWrite for TunnelWriter {
             Self::Websocket(s) => s.pending_operations_notify(),
             Self::Http2(s) => s.pending_operations_notify(),
             Self::WebTransport(s) => s.pending_operations_notify(),
+            Self::WebTransportUdpStream(s) => s.pending_operations_notify(),
         }
     }
 
@@ -104,6 +114,7 @@ impl TunnelWrite for TunnelWriter {
             Self::Websocket(s) => s.handle_pending_operations().await,
             Self::Http2(s) => s.handle_pending_operations().await,
             Self::WebTransport(s) => s.handle_pending_operations().await,
+            Self::WebTransportUdpStream(s) => s.handle_pending_operations().await,
         }
     }
 }

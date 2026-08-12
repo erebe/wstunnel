@@ -1,7 +1,6 @@
 use crate::executor::{DefaultTokioExecutor, TokioExecutorRef};
 use crate::protocols::tls;
 use crate::tunnel;
-use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::client::cnx_pool::WsConnection;
 use crate::tunnel::connectors::TunnelConnector;
@@ -10,6 +9,7 @@ use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::io::{TunnelReader, TunnelWriter};
 use crate::tunnel::transport::webtransport::WebTransportEndpoint;
 use crate::tunnel::transport::{TransportScheme, jwt_token_to_tunnel};
+use crate::tunnel::{LocalProtocol, RemoteAddr};
 use anyhow::{Context, anyhow};
 use futures_util::pin_mut;
 use hyper::header::COOKIE;
@@ -125,11 +125,19 @@ impl<E: TokioExecutorRef> WsClient<E> {
             TransportScheme::Wts => tunnel::transport::webtransport::connect(request_id, self, remote_cfg)
                 .await
                 .map(|(r, w, response)| {
-                    (
-                        TunnelReader::WebTransport(Box::new(r)),
-                        TunnelWriter::WebTransport(Box::new(w)),
-                        response,
-                    )
+                    if matches!(remote_cfg.protocol, LocalProtocol::Udp { .. } | LocalProtocol::TProxyUdp { .. }) {
+                        (
+                            TunnelReader::WebTransportUdpStream(Box::new(r.into_udp_stream())),
+                            TunnelWriter::WebTransportUdpStream(Box::new(w.into_udp_stream())),
+                            response,
+                        )
+                    } else {
+                        (
+                            TunnelReader::WebTransport(Box::new(r)),
+                            TunnelWriter::WebTransport(Box::new(w)),
+                            response,
+                        )
+                    }
                 })?,
         };
 

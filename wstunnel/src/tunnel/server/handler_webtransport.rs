@@ -1,12 +1,14 @@
 use crate::executor::TokioExecutorRef;
 use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
+use crate::tunnel::LocalProtocol;
 use crate::tunnel::server::WsServer;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport;
 use crate::tunnel::transport::tunnel_to_jwt_token;
 use crate::tunnel::transport::webtransport::{
-    WebTransportTunnelRead, WebTransportTunnelWrite, bind_udp_socket, mk_transport_config, write_jwt_preamble,
+    WebTransportTunnelRead, WebTransportTunnelReadUdpStream, WebTransportTunnelWrite, WebTransportTunnelWriteUdpStream,
+    bind_udp_socket, mk_transport_config, write_jwt_preamble,
 };
 use anyhow::{Context, anyhow};
 use arc_swap::ArcSwap;
@@ -180,19 +182,46 @@ async fn handle_session(
     }
 
     let (close_tx, close_rx) = oneshot::channel::<()>();
-    server.executor.spawn(
-        transport::io::propagate_remote_to_local(
-            local_tx,
-            WebTransportTunnelRead::new(recv, session.clone()),
-            close_rx,
-        )
-        .instrument(Span::current()),
-    );
-
-    server.executor.spawn(
-        transport::io::propagate_local_to_remote(local_rx, WebTransportTunnelWrite::new(send, session), close_tx, None)
+    if matches!(
+        remote_addr.protocol,
+        LocalProtocol::Udp { .. } | LocalProtocol::TProxyUdp { .. }
+    ) {
+        server.executor.spawn(
+            transport::io::propagate_remote_to_local(
+                local_tx,
+                WebTransportTunnelReadUdpStream::new(recv, session.clone()),
+                close_rx,
+            )
             .instrument(Span::current()),
-    );
+        );
+        server.executor.spawn(
+            transport::io::propagate_local_to_remote(
+                local_rx,
+                WebTransportTunnelWriteUdpStream::new(send, session),
+                close_tx,
+                None,
+            )
+            .instrument(Span::current()),
+        );
+    } else {
+        server.executor.spawn(
+            transport::io::propagate_remote_to_local(
+                local_tx,
+                WebTransportTunnelRead::new(recv, session.clone()),
+                close_rx,
+            )
+            .instrument(Span::current()),
+        );
+        server.executor.spawn(
+            transport::io::propagate_local_to_remote(
+                local_rx,
+                WebTransportTunnelWrite::new(send, session),
+                close_tx,
+                None,
+            )
+            .instrument(Span::current()),
+        );
+    }
 
     Ok(())
 }

@@ -153,6 +153,10 @@ impl WebTransportTunnelRead {
             _session: session,
         }
     }
+
+    pub fn into_udp_stream(self) -> WebTransportTunnelReadUdpStream {
+        WebTransportTunnelReadUdpStream::new(self.inner, self._session)
+    }
 }
 
 impl TunnelRead for WebTransportTunnelRead {
@@ -174,6 +178,102 @@ pub struct WebTransportTunnelWrite {
     _session: Session,
 }
 
+/// WebTransport stream transport for UDP tunnels. QUIC streams do not preserve message
+/// boundaries, so UDP payloads need an explicit length prefix before they enter the stream.
+pub struct WebTransportTunnelReadUdpStream {
+    inner: RecvStream,
+    _session: Session,
+}
+
+impl WebTransportTunnelReadUdpStream {
+    pub fn new(inner: RecvStream, session: Session) -> Self {
+        Self {
+            inner,
+            _session: session,
+        }
+    }
+}
+
+impl TunnelRead for WebTransportTunnelReadUdpStream {
+    async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> Result<(), io::Error> {
+        let mut length = [0u8; 2];
+        self.inner
+            .read_exact(&mut length)
+            .await
+            .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))?;
+        let length = u16::from_be_bytes(length) as usize;
+        let mut packet = vec![0u8; length];
+        self.inner
+            .read_exact(&mut packet)
+            .await
+            .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))?;
+        writer
+            .write_all(&packet)
+            .await
+            .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))
+    }
+}
+
+pub struct WebTransportTunnelWriteUdpStream {
+    inner: SendStream,
+    buf: BytesMut,
+    _session: Session,
+}
+
+impl WebTransportTunnelWriteUdpStream {
+    pub fn new(inner: SendStream, session: Session) -> Self {
+        Self {
+            inner,
+            buf: BytesMut::with_capacity(MAX_PACKET_LENGTH),
+            _session: session,
+        }
+    }
+}
+
+impl TunnelWrite for WebTransportTunnelWriteUdpStream {
+    fn buf_mut(&mut self) -> &mut BytesMut {
+        &mut self.buf
+    }
+
+    async fn write(&mut self) -> Result<(), io::Error> {
+        let result = match u16::try_from(self.buf.len()) {
+            Ok(length) => {
+                let result = self.inner.write_all(&length.to_be_bytes()).await;
+                match result {
+                    Ok(()) => self.inner.write_all(&self.buf).await,
+                    Err(err) => Err(err),
+                }
+            }
+            Err(_) => {
+                self.buf.clear();
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "UDP packet is too large for webtransport stream framing",
+                ));
+            }
+        };
+        self.buf.clear();
+        if self.buf.capacity() < MAX_PACKET_LENGTH {
+            self.buf.reserve(MAX_PACKET_LENGTH);
+        }
+        result.map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))
+    }
+
+    async fn ping(&mut self) -> Result<(), io::Error> {
+        Ok(())
+    }
+    async fn close(&mut self) -> Result<(), io::Error> {
+        let _ = self.inner.finish();
+        Ok(())
+    }
+    fn pending_operations_notify(&mut self) -> Arc<Notify> {
+        Arc::new(Notify::new())
+    }
+    async fn handle_pending_operations(&mut self) -> Result<(), io::Error> {
+        Ok(())
+    }
+}
+
 impl WebTransportTunnelWrite {
     pub fn new(inner: SendStream, session: Session) -> Self {
         Self {
@@ -181,6 +281,10 @@ impl WebTransportTunnelWrite {
             buf: BytesMut::with_capacity(MAX_PACKET_LENGTH),
             _session: session,
         }
+    }
+
+    pub fn into_udp_stream(self) -> WebTransportTunnelWriteUdpStream {
+        WebTransportTunnelWriteUdpStream::new(self.inner, self._session)
     }
 }
 
