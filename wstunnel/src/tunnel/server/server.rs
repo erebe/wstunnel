@@ -265,7 +265,7 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                 let local_srv = (remote.host, remote_port);
                 let bind = try_to_sock_addr(local_srv.clone())?;
                 let listening_server = async { Socks5TunnelListener::new(bind, timeout, credentials).await };
-                let ((local_rx, local_tx), remote) = SERVERS
+                let ((local_rx, mut local_tx), remote) = SERVERS
                     .run_listening_server(
                         &self.executor,
                         bind,
@@ -273,6 +273,14 @@ impl<E: crate::TokioExecutorRef> WsServer<E> {
                         listening_server,
                     )
                     .await?;
+
+                // Send the deferred SOCKS5 reply now that a reverse-tunnel client has picked up the
+                // connection. On the reverse path the actual target connection happens on the far
+                // wstunnel client side, so the server cannot know whether the target was reached;
+                // acknowledging success here is the best achievable (and mandatory, otherwise the
+                // write half stays pending forever).
+                use crate::tunnel::listeners::TunnelConnectorWrite;
+                let _ = local_tx.on_tunnel_ready(Ok(())).await;
 
                 Ok((remote, Box::pin(local_rx), Box::pin(local_tx)))
             }

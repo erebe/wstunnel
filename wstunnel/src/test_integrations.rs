@@ -6,7 +6,7 @@ use crate::restrictions::types;
 use crate::restrictions::types::{AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules};
 use crate::somark::SoMark;
 use crate::tunnel::client::{TlsClientConfig, WsClient, WsClientConfig};
-use crate::tunnel::listeners::{TcpTunnelListener, UdpTunnelListener};
+use crate::tunnel::listeners::{Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener};
 use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
 use bytes::BytesMut;
@@ -408,36 +408,126 @@ async fn test_udp_tunnel_webtransport(
     assert_eq!(&buf[..6], b"world!");
 }
 
-//#[rstest]
-//#[timeout(Duration::from_secs(10))]
-//#[tokio::test]
-//async fn test_socks5_tunnel(
-//    #[future] client_ws: WsClient,
-//    server_no_tls: WsServer,
-//    no_restrictions: RestrictionsRules,
-//    dns_resolver: DnsResolver,
-//) {
-//    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
-//    defer! { server_h.abort(); };
-//
-//    let client_ws = client_ws.await;
-//
-//    let server = Socks5TunnelListener::new(TUNNEL_LISTEN.0, None, None).await.unwrap();
-//    tokio::spawn(async move { client_ws.run_tunnel(server).await.unwrap(); });
-//
-//    let socks5_listener = protocols::socks5::run_server(ENDPOINT_LISTEN.0, None, None).await.unwrap();
-//    let mut client = protocols::tcp::connect(&TUNNEL_LISTEN.1, TUNNEL_LISTEN.0.port(), None, Duration::from_secs(10), &dns_resolver).await.unwrap();
-//
-//    client.write_all(b"Hello").await.unwrap();
-//    pin!(socks5_listener);
-//    let (dd, _) = socks5_listener.next().await.unwrap().unwrap();
-//    let (mut read, mut write) = dd.into_split();
-//    let mut buf = BytesMut::new();
-//    read.read_buf(&mut buf).await.unwrap();
-//    assert_eq!(&buf[..5], b"Hello");
-//    buf.clear();
-//
-//    write.write_all(b"world!").await.unwrap();
-//    client.read_buf(&mut buf).await.unwrap();
-//    assert_eq!(&buf[..6], b"world!");
-//}
+/// Perform a SOCKS5 no-auth greeting + CONNECT to `dst`, and return the reply code byte (0x00 =
+/// success, non-zero = failure per RFC 1928). Drains the full reply, including the bound address.
+async fn socks5_handshake_connect(
+    stream: &mut (impl AsyncReadExt + AsyncWriteExt + Unpin),
+    dst_ip: Ipv4Addr,
+    dst_port: u16,
+) -> u8 {
+    // Greeting: version 5, one method offered: no-auth (0x00).
+    stream.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+    let mut method = [0u8; 2];
+    stream.read_exact(&mut method).await.unwrap();
+    assert_eq!(method, [0x05, 0x00], "server must select no-auth");
+
+    // CONNECT (0x01) to an IPv4 destination.
+    let mut req = vec![0x05, 0x01, 0x00, 0x01];
+    req.extend_from_slice(&dst_ip.octets());
+    req.extend_from_slice(&dst_port.to_be_bytes());
+    stream.write_all(&req).await.unwrap();
+
+    // Reply: VER REP RSV ATYP BND.ADDR BND.PORT.
+    let mut head = [0u8; 4];
+    stream.read_exact(&mut head).await.unwrap();
+    assert_eq!(head[0], 0x05, "reply must be SOCKS5");
+    let addr_len = match head[3] {
+        0x01 => 4,
+        0x04 => 16,
+        0x03 => {
+            let mut len = [0u8; 1];
+            stream.read_exact(&mut len).await.unwrap();
+            len[0] as usize
+        }
+        other => panic!("unexpected ATYP in reply: {other}"),
+    };
+    let mut rest = vec![0u8; addr_len + 2];
+    stream.read_exact(&mut rest).await.unwrap();
+    head[1]
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(10))]
+#[tokio::test]
+#[serial]
+async fn test_socks5_tunnel(server_no_tls: WsServer, no_restrictions: RestrictionsRules, dns_resolver: DnsResolver) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    let (endpoint_listen, _endpoint_host) = free_addr();
+
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let client_ws = client_ws(server_port, dns_resolver.clone()).await;
+
+    let server = Socks5TunnelListener::new(tunnel_listen, None, None).await.unwrap();
+    tokio::spawn(async move {
+        client_ws.run_tunnel(server).await.unwrap();
+    });
+
+    // Reachable endpoint: the wstunnel server must connect to it before the SOCKS5 reply is sent.
+    let mut tcp_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+    let mut client = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    let rep = socks5_handshake_connect(&mut client, Ipv4Addr::LOCALHOST, endpoint_listen.port()).await;
+    assert_eq!(rep, 0x00, "reply must be success once the tunnel is established");
+
+    client.write_all(b"Hello").await.unwrap();
+    let mut dd = tcp_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    dd.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..5], b"Hello");
+    buf.clear();
+
+    dd.write_all(b"world!").await.unwrap();
+    client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..6], b"world!");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(10))]
+#[tokio::test]
+#[serial]
+async fn test_socks5_tunnel_unreachable_target_replies_error(
+    server_no_tls: WsServer,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    // A reserved-but-unbound port: the wstunnel server's connect to it is refused.
+    let (dead_endpoint, _) = free_addr();
+
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let client_ws = client_ws(server_port, dns_resolver.clone()).await;
+
+    let server = Socks5TunnelListener::new(tunnel_listen, None, None).await.unwrap();
+    tokio::spawn(async move {
+        client_ws.run_tunnel(server).await.unwrap();
+    });
+
+    let mut client = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    // The target is unreachable, so the reply must report failure (not a premature success).
+    let rep = socks5_handshake_connect(&mut client, Ipv4Addr::LOCALHOST, dead_endpoint.port()).await;
+    assert_ne!(rep, 0x00, "reply must report failure when the target is unreachable");
+    assert_eq!(rep, 0x01, "expected GeneralFailure reply code");
+}

@@ -4,7 +4,7 @@ use crate::tunnel;
 use crate::tunnel::client::WsClientConfig;
 use crate::tunnel::client::cnx_pool::WsConnection;
 use crate::tunnel::connectors::TunnelConnector;
-use crate::tunnel::listeners::TunnelListener;
+use crate::tunnel::listeners::{TunnelConnectorRead, TunnelConnectorWrite, TunnelListener};
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::io::{TunnelReader, TunnelWriter};
 use crate::tunnel::transport::webtransport::WebTransportEndpoint;
@@ -107,20 +107,22 @@ impl<E: TokioExecutorRef> WsClient<E> {
         duplex_stream: (R, W),
     ) -> anyhow::Result<()>
     where
-        R: AsyncRead + Send + 'static,
-        W: AsyncWrite + Send + 'static,
+        R: TunnelConnectorRead,
+        W: TunnelConnectorWrite,
     {
-        // Connect to server with the correct protocol
-        let (ws_rx, ws_tx, response) = match self.config.remote_addr.scheme() {
+        // Connect to server with the correct protocol. Capture the result instead of `?`-ing it: on
+        // failure we must still acknowledge the local handshake (e.g. send a SOCKS5 error reply)
+        // before bubbling the error up.
+        let connect_result = match self.config.remote_addr.scheme() {
             TransportScheme::Ws | TransportScheme::Wss => {
                 tunnel::transport::websocket::connect(request_id, self, remote_cfg)
                     .await
-                    .map(|(r, w, response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response))?
+                    .map(|(r, w, response)| (TunnelReader::Websocket(r), TunnelWriter::Websocket(w), response))
             }
             TransportScheme::Http | TransportScheme::Https => {
                 tunnel::transport::http2::connect(request_id, self, remote_cfg)
                     .await
-                    .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))?
+                    .map(|(r, w, response)| (TunnelReader::Http2(r), TunnelWriter::Http2(w), response))
             }
             TransportScheme::Wts => tunnel::transport::webtransport::connect(request_id, self, remote_cfg)
                 .await
@@ -138,11 +140,28 @@ impl<E: TokioExecutorRef> WsClient<E> {
                             response,
                         )
                     }
-                })?,
+                }),
+        };
+
+        let (local_rx, mut local_tx) = duplex_stream;
+
+        // Acknowledge the tunnel outcome to the local client (no-op for protocols without a
+        // handshake). A successful transport connect means the server accepted the request and
+        // reached the target, so this is the moment to reply success; otherwise reply failure.
+        let (ws_rx, ws_tx, response) = match connect_result {
+            Ok(tunnel) => {
+                if let Err(err) = local_tx.on_tunnel_ready(Ok(())).await {
+                    return Err(anyhow::Error::new(err).context("failed to acknowledge local tunnel handshake"));
+                }
+                tunnel
+            }
+            Err(err) => {
+                let _ = local_tx.on_tunnel_ready(Err(&err)).await;
+                return Err(err);
+            }
         };
 
         debug!("Server response: {response:?}");
-        let (local_rx, local_tx) = duplex_stream;
         let (close_tx, close_rx) = oneshot::channel::<()>();
 
         // Forward local tx to websocket tx

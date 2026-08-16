@@ -1,11 +1,14 @@
 use super::udp_server::{Socks5UdpStream, Socks5UdpStreamWriter};
 use crate::tunnel::LocalProtocol;
+use crate::tunnel::listeners::TunnelConnectorWrite;
 use anyhow::Context;
-use fast_socks5::Socks5Command;
 use fast_socks5::server::Socks5ServerProtocol;
+use fast_socks5::server::states::CommandRead;
 use fast_socks5::util::target_addr::TargetAddr;
+use fast_socks5::{ReplyError, Socks5Command};
 use futures_util::{Stream, StreamExt, stream};
-use std::io::{Error, IoSlice};
+use std::future::Future;
+use std::io::{Error, ErrorKind, IoSlice};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::task::Poll;
@@ -14,6 +17,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
+use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 use tracing::{info, warn};
 use url::Host;
@@ -30,23 +34,41 @@ pub struct Socks5Listener {
 
 pub enum Socks5ReadHalf {
     Tcp(OwnedReadHalf),
+    /// Before the tunnel is confirmed we don't yet own the read half; it arrives over the oneshot
+    /// once the write half has replied success and split the socket. A closed/`None` receiver means
+    /// the write half replied an error (or was dropped) => treat as EOF.
+    TcpPending(Option<oneshot::Receiver<OwnedReadHalf>>),
     Udp(Socks5UdpStream),
 }
 
 pub enum Socks5WriteHalf {
     Tcp(OwnedWriteHalf),
+    /// Carries the whole client socket (via the `CommandRead` proto) plus the reply address until
+    /// the tunnel outcome is known. [`Socks5WriteHalf::on_tunnel_ready`] consumes the proto to send
+    /// the SOCKS5 reply, then splits the socket and hands the read half to
+    /// [`Socks5ReadHalf::TcpPending`].
+    TcpPending {
+        proto: Option<Socks5ServerProtocol<TcpStream, CommandRead>>,
+        reply_addr: SocketAddr,
+        read_half_tx: Option<oneshot::Sender<OwnedReadHalf>>,
+    },
     Udp(Socks5UdpStreamWriter),
 }
 
 pub enum Socks5Stream {
-    Tcp(TcpStream),
+    /// The SOCKS5 command has been read but not yet replied to: `proto` still owns the whole client
+    /// socket. The reply (`reply_addr`) is deferred until the tunnel is known to be up or down.
+    Tcp {
+        proto: Socks5ServerProtocol<TcpStream, CommandRead>,
+        reply_addr: SocketAddr,
+    },
     Udp((Socks5UdpStream, Socks5UdpStreamWriter)),
 }
 
 impl Socks5Stream {
     pub fn local_protocol(&self) -> LocalProtocol {
         match self {
-            Self::Tcp(_) => LocalProtocol::Tcp { proxy_protocol: false }, // TODO: Implement proxy protocol
+            Self::Tcp { .. } => LocalProtocol::Tcp { proxy_protocol: false }, // TODO: Implement proxy protocol
             Self::Udp(s) => LocalProtocol::Udp {
                 timeout: s.0.watchdog_deadline.as_ref().map(|x| x.period()),
             },
@@ -55,11 +77,60 @@ impl Socks5Stream {
 
     pub fn into_split(self) -> (Socks5ReadHalf, Socks5WriteHalf) {
         match self {
-            Self::Tcp(s) => {
-                let (r, w) = s.into_split();
-                (Socks5ReadHalf::Tcp(r), Socks5WriteHalf::Tcp(w))
+            Self::Tcp { proto, reply_addr } => {
+                let (read_half_tx, rx) = oneshot::channel();
+                (
+                    Socks5ReadHalf::TcpPending(Some(rx)),
+                    Socks5WriteHalf::TcpPending {
+                        proto: Some(proto),
+                        reply_addr,
+                        read_half_tx: Some(read_half_tx),
+                    },
+                )
             }
             Self::Udp((r, w)) => (Socks5ReadHalf::Udp(r), Socks5WriteHalf::Udp(w)),
+        }
+    }
+}
+
+impl TunnelConnectorWrite for Socks5WriteHalf {
+    /// Send the deferred SOCKS5 reply now that the end-to-end tunnel outcome is known, then split the
+    /// client socket for data forwarding. Called exactly once per connection.
+    async fn on_tunnel_ready(&mut self, result: Result<(), &anyhow::Error>) -> std::io::Result<()> {
+        let Self::TcpPending {
+            proto,
+            reply_addr,
+            read_half_tx,
+        } = self
+        else {
+            // UDP, or an already-finalized TCP write half: nothing to acknowledge.
+            return Ok(());
+        };
+
+        let Some(proto) = proto.take() else {
+            panic!("on_tunnel_ready called twice on a TcpPending half");
+        };
+
+        match result {
+            Ok(()) => {
+                let stream = proto.reply_success(*reply_addr).await.map_err(Error::other)?;
+                let (read_half, write_half) = stream.into_split();
+                // Hand the read half to the paired `Socks5ReadHalf::TcpPending`. If the receiver is
+                // gone (read half dropped) there is nothing to read anyway, so ignore the error.
+                if let Some(tx) = read_half_tx.take() {
+                    let _ = tx.send(read_half);
+                }
+                *self = Self::Tcp(write_half);
+                Ok(())
+            }
+            Err(_) => {
+                // Tell the local SOCKS5 client the connection failed. The upstream error is opaque
+                // (any target failure collapses to a rejected tunnel request), so report the generic
+                // failure code. Dropping `read_half_tx` signals EOF to the read half.
+                let _ = proto.reply_error(&ReplyError::GeneralFailure).await;
+                *read_half_tx = None;
+                Err(Error::new(ErrorKind::ConnectionRefused, "socks5: upstream tunnel failed"))
+            }
         }
     }
 }
@@ -199,19 +270,12 @@ pub async fn run_server(
                     continue;
                 };
 
-                let cnx = match proto
-                    .reply_success(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0))
-                    .await
-                {
-                    Ok(cnx) => cnx,
-                    Err(err) => {
-                        warn!("Cannot reply to socks5 client: {}", err);
-                        continue;
-                    }
-                };
-
+                // Defer the SOCKS5 reply: it is sent by `Socks5WriteHalf::on_tunnel_ready` only once
+                // the tunnel to the remote endpoint (and onward to the target) is confirmed up, or
+                // an error reply is sent if it failed.
+                let reply_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
                 return Some((
-                    Ok((Socks5Stream::Tcp(cnx), (host, port))),
+                    Ok((Socks5Stream::Tcp { proto, reply_addr }, (host, port))),
                     (listener, udp_server, tasks, credentials),
                 ));
             }
@@ -228,13 +292,35 @@ pub async fn run_server(
 impl Unpin for Socks5Stream {}
 impl AsyncRead for Socks5ReadHalf {
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            Self::Tcp(s) => Pin::new(s).poll_read(cx, buf),
-            Self::Udp(s) => Pin::new(s).poll_read(cx, buf),
+        loop {
+            match self.as_mut().get_mut() {
+                Self::Tcp(s) => return Pin::new(s).poll_read(cx, buf),
+                Self::Udp(s) => return Pin::new(s).poll_read(cx, buf),
+                Self::TcpPending(rx_opt) => {
+                    let Some(rx) = rx_opt.as_mut() else {
+                        // The write half already replied an error (or was dropped): stable EOF.
+                        return Poll::Ready(Ok(()));
+                    };
+                    // A compliant SOCKS5 client sends no payload until it receives our reply, which
+                    // is exactly when the read half is delivered over this channel, so parking here
+                    // cannot drop client bytes.
+                    match Pin::new(rx).poll(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Ok(read_half)) => {
+                            *self.as_mut().get_mut() = Self::Tcp(read_half);
+                            // Loop around to read from the now-available half.
+                        }
+                        Poll::Ready(Err(_)) => {
+                            *rx_opt = None;
+                            return Poll::Ready(Ok(()));
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -244,6 +330,11 @@ impl AsyncWrite for Socks5WriteHalf {
         match self.get_mut() {
             Self::Tcp(s) => Pin::new(s).poll_write(cx, buf),
             Self::Udp(s) => Pin::new(s).poll_write(cx, buf),
+            // Unreachable by design: the client waits for our reply before sending, and forwarding
+            // only starts after `on_tunnel_ready` has finalized this half.
+            Self::TcpPending { .. } => {
+                Poll::Ready(Err(Error::other("socks5: write before tunnel handshake completed")))
+            }
         }
     }
 
@@ -251,6 +342,7 @@ impl AsyncWrite for Socks5WriteHalf {
         match self.get_mut() {
             Self::Tcp(s) => Pin::new(s).poll_flush(cx),
             Self::Udp(s) => Pin::new(s).poll_flush(cx),
+            Self::TcpPending { .. } => Poll::Ready(Ok(())),
         }
     }
 
@@ -258,6 +350,7 @@ impl AsyncWrite for Socks5WriteHalf {
         match self.get_mut() {
             Self::Tcp(s) => Pin::new(s).poll_shutdown(cx),
             Self::Udp(s) => Pin::new(s).poll_shutdown(cx),
+            Self::TcpPending { .. } => Poll::Ready(Ok(())),
         }
     }
 
@@ -269,6 +362,9 @@ impl AsyncWrite for Socks5WriteHalf {
         match self.get_mut() {
             Self::Tcp(s) => Pin::new(s).poll_write_vectored(cx, bufs),
             Self::Udp(s) => Pin::new(s).poll_write_vectored(cx, bufs),
+            Self::TcpPending { .. } => {
+                Poll::Ready(Err(Error::other("socks5: write before tunnel handshake completed")))
+            }
         }
     }
 
@@ -276,6 +372,7 @@ impl AsyncWrite for Socks5WriteHalf {
         match self {
             Self::Tcp(s) => s.is_write_vectored(),
             Self::Udp(s) => s.is_write_vectored(),
+            Self::TcpPending { .. } => false,
         }
     }
 }

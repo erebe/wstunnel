@@ -5,14 +5,14 @@ use scopeguard::guard;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::{io, thread};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::oneshot;
 use tokio::task::LocalSet;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::io::StreamReader;
 use tracing::info;
 
-pub async fn run_server() -> Result<((impl AsyncRead, impl AsyncWrite), oneshot::Sender<()>), anyhow::Error> {
+pub async fn run_server() -> Result<((impl AsyncRead, tokio::io::DuplexStream), oneshot::Sender<()>), anyhow::Error> {
     info!("Starting STDIO server. Press ctrl+c twice to exit");
 
     crossterm::terminal::enable_raw_mode()?;
