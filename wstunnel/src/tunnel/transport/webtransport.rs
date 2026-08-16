@@ -16,7 +16,7 @@ use std::io::ErrorKind;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Notify;
 use tracing::warn;
 use url::{Host, Url};
@@ -78,6 +78,10 @@ impl WebTransportEndpoint {
 pub(crate) fn mk_transport_config(keep_alive_interval: Option<Duration>) -> anyhow::Result<quinn::TransportConfig> {
     let mut transport = quinn::TransportConfig::default();
 
+    // TODO: Check performance impact
+    transport.send_fairness(false);
+    transport.datagram_send_buffer_size(4 * 1024 * 1024);
+    transport.datagram_receive_buffer_size(Some(4 * 1024 * 1024));
     let Some(interval) = keep_alive_interval else {
         transport.keep_alive_interval(None);
         transport.max_idle_timeout(None);
@@ -139,7 +143,6 @@ pub(crate) fn bind_udp_socket(bind: Option<SocketAddr>, so_mark: SoMark) -> anyh
 
 pub struct WebTransportTunnelRead {
     inner: RecvStream,
-    buf: Box<[u8]>,
     // Keep the session alive: it owns the QUIC connection, which is closed when the last
     // handle is dropped.
     _session: Session,
@@ -149,7 +152,6 @@ impl WebTransportTunnelRead {
     pub fn new(inner: RecvStream, session: Session) -> Self {
         Self {
             inner,
-            buf: vec![0; MAX_PACKET_LENGTH].into_boxed_slice(),
             _session: session,
         }
     }
@@ -161,12 +163,14 @@ impl WebTransportTunnelRead {
 
 impl TunnelRead for WebTransportTunnelRead {
     async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> Result<(), io::Error> {
-        match self.inner.read(&mut self.buf).await {
-            Ok(Some(0)) | Ok(None) => Err(io::Error::new(ErrorKind::BrokenPipe, "closed")),
-            Ok(Some(read_len)) => match writer.write_all(&self.buf[..read_len]).await {
+        // read_chunk hands back quinn's internal `Bytes` directly, so we forward it to the writer
+        // without the extra copy into an intermediate buffer that `read` would require.
+        match self.inner.read_chunk(MAX_PACKET_LENGTH, true).await {
+            Ok(Some(chunk)) => match writer.write_all(&chunk.bytes).await {
                 Ok(_) => Ok(()),
                 Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
             },
+            Ok(None) => Err(io::Error::new(ErrorKind::BrokenPipe, "closed")),
             Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
         }
     }
@@ -196,21 +200,51 @@ impl WebTransportUdpTunnelRead {
 
 impl TunnelRead for WebTransportUdpTunnelRead {
     async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> Result<(), io::Error> {
-        let mut length = [0u8; 2];
-        self.inner
-            .read_exact(&mut length)
+        let length = self
+            .inner
+            .read_u16()
             .await
             .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))?;
-        let length = u16::from_be_bytes(length) as usize;
-        let mut packet = vec![0u8; length];
-        self.inner
-            .read_exact(&mut packet)
-            .await
-            .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))?;
-        writer
-            .write_all(&packet)
-            .await
-            .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))
+
+        // The payload must reach the local socket as a single write, since `UdpStreamWriter` turns
+        // each write into exactly one datagram. read_chunk lets us forward quinn's own buffer
+        // without a copy when the whole datagram lands in one chunk (the common case); a datagram
+        // split across QUIC frames is reassembled once before the single write.
+        let mut remaining = length as usize;
+        let mut assembled: Option<BytesMut> = None;
+        while remaining > 0 {
+            let mut chunk = self
+                .inner
+                .read_chunk(remaining, true)
+                .await
+                .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))?
+                .ok_or_else(|| io::Error::new(ErrorKind::UnexpectedEof, "webtransport stream closed mid-datagram"))?;
+            remaining -= chunk.bytes.len();
+
+            // Fast path: the whole datagram arrived in the first chunk, forward it without a copy.
+            if assembled.is_none() && remaining == 0 {
+                return writer
+                    .write_all_buf(&mut chunk.bytes)
+                    .await
+                    .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err));
+            }
+            // A vectored write can't avoid this copy: the datagram has to reach the local socket as
+            // a single write (one `send`), but a UDP socket has no scatter-gather send — it takes a
+            // contiguous `&[u8]`, and the default `poll_write_vectored` emits one datagram per
+            // slice. So a datagram split across QUIC frames must be reassembled first.
+            assembled
+                .get_or_insert_with(|| BytesMut::with_capacity(length as usize))
+                .extend_from_slice(&chunk.bytes);
+        }
+
+        match assembled {
+            Some(mut buf) => writer
+                .write_all_buf(&mut buf)
+                .await
+                .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err)),
+            // A zero-length datagram carries nothing to forward (matches the previous behaviour).
+            None => Ok(()),
+        }
     }
 }
 
@@ -228,6 +262,18 @@ impl WebTransportUdpTunnelWrite {
             _session: session,
         }
     }
+
+    /// Frame the buffered datagram (`u16` length prefix + payload) onto the QUIC stream.
+    async fn send_framed(&mut self) -> Result<(), io::Error> {
+        self.inner
+            .write_u16(self.buf.len() as u16)
+            .await
+            .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))?;
+        self.inner
+            .write_all_buf(&mut self.buf)
+            .await
+            .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))
+    }
 }
 
 impl TunnelWrite for WebTransportUdpTunnelWrite {
@@ -236,27 +282,14 @@ impl TunnelWrite for WebTransportUdpTunnelWrite {
     }
 
     async fn write(&mut self) -> Result<(), io::Error> {
-        let result = match u16::try_from(self.buf.len()) {
-            Ok(length) => {
-                let result = self.inner.write_all(&length.to_be_bytes()).await;
-                match result {
-                    Ok(()) => self.inner.write_all(&self.buf).await,
-                    Err(err) => Err(err),
-                }
-            }
-            Err(_) => {
-                self.buf.clear();
-                return Err(io::Error::new(
-                    ErrorKind::InvalidInput,
-                    "UDP packet is too large for webtransport stream framing",
-                ));
-            }
-        };
+        let result = self.send_framed().await;
+
+        // Reset the buffer for the next datagram regardless of the outcome.
         self.buf.clear();
         if self.buf.capacity() < MAX_PACKET_LENGTH {
             self.buf.reserve(MAX_PACKET_LENGTH);
         }
-        result.map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))
+        result
     }
 
     async fn ping(&mut self) -> Result<(), io::Error> {
@@ -294,7 +327,7 @@ impl TunnelWrite for WebTransportTunnelWrite {
     }
 
     async fn write(&mut self) -> Result<(), io::Error> {
-        let ret = match self.inner.write_all(&self.buf).await {
+        let ret = match self.inner.write_all_buf(&mut self.buf).await {
             Ok(_) => Ok(()),
             Err(err) => Err(io::Error::new(ErrorKind::ConnectionAborted, err)),
         };
@@ -502,6 +535,13 @@ pub async fn connect(
         }
     };
 
+    // FIXME
+    // Each tunnel opens its own QUIC session instead of multiplexing streams over a shared one.
+    // The destination and request id travel in the CONNECT request (session level, see the JWT
+    // cookie above) and the server accepts exactly one stream per session, so a session is bound to
+    // a single tunnel. Reusing one connection across tunnels to skip the per-tunnel handshake would
+    // require moving the destination to a per-stream preamble and a server-side `accept_bi` loop —
+    // a wire-protocol change rather than a local tweak.
     let (send, mut recv) = session
         .open_bi()
         .await

@@ -1,7 +1,7 @@
 use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
 use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
 use crate::tunnel::transport::webtransport::{
-    WebTransportTunnelRead, WebTransportUdpTunnelRead, WebTransportTunnelWrite, WebTransportUdpTunnelWrite,
+    WebTransportTunnelRead, WebTransportTunnelWrite, WebTransportUdpTunnelRead, WebTransportUdpTunnelWrite,
 };
 use bytes::{BufMut, BytesMut};
 use futures_util::{FutureExt, pin_mut};

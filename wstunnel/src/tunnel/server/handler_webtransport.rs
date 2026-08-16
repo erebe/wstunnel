@@ -7,7 +7,7 @@ use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport;
 use crate::tunnel::transport::tunnel_to_jwt_token;
 use crate::tunnel::transport::webtransport::{
-    WebTransportTunnelRead, WebTransportUdpTunnelRead, WebTransportTunnelWrite, WebTransportUdpTunnelWrite,
+    WebTransportTunnelRead, WebTransportTunnelWrite, WebTransportUdpTunnelRead, WebTransportUdpTunnelWrite,
     bind_udp_socket, mk_transport_config, write_jwt_preamble,
 };
 use anyhow::{Context, anyhow};
