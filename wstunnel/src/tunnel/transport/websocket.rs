@@ -25,6 +25,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_rustls::server::TlsStream;
 use tracing::trace;
@@ -35,20 +36,21 @@ pub struct WebsocketTunnelWrite {
     buf: BytesMut,
     pending_operations: Receiver<Frame<'static>>,
     pending_ops_notify: Arc<Notify>,
-    in_flight_ping: AtomicUsize,
+    in_flight_ping: Arc<AtomicUsize>,
 }
 
 impl WebsocketTunnelWrite {
     pub fn new(
         ws: WebSocketWrite<TransportWriteHalf>,
         (pending_operations, notify): (Receiver<Frame<'static>>, Arc<Notify>),
+        in_flight_ping: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             inner: ws,
             buf: BytesMut::with_capacity(MAX_PACKET_LENGTH),
             pending_operations,
             pending_ops_notify: notify,
-            in_flight_ping: AtomicUsize::new(0),
+            in_flight_ping,
         }
     }
 }
@@ -147,7 +149,7 @@ impl TunnelWrite for WebsocketTunnelWrite {
                 }
                 OpCode::Pong => {
                     debug!("received pong frame");
-                    self.in_flight_ping.fetch_sub(1, Relaxed);
+                    self.in_flight_ping.store(0, Relaxed);
                 }
                 OpCode::Continuation | OpCode::Text | OpCode::Binary => unreachable!(),
             }
@@ -161,10 +163,14 @@ pub struct WebsocketTunnelRead {
     inner: WebSocketRead<TransportReadHalf>,
     pending_operations: Sender<Frame<'static>>,
     notify_pending_ops: Arc<Notify>,
+    in_flight_ping: Arc<AtomicUsize>,
 }
 
 impl WebsocketTunnelRead {
-    pub fn new(ws: WebSocketRead<TransportReadHalf>) -> (Self, (Receiver<Frame<'static>>, Arc<Notify>)) {
+    pub fn new(
+        ws: WebSocketRead<TransportReadHalf>,
+        in_flight_ping: Arc<AtomicUsize>,
+    ) -> (Self, (Receiver<Frame<'static>>, Arc<Notify>)) {
         let (tx, rx) = tokio::sync::mpsc::channel(10);
         let notify = Arc::new(Notify::new());
         (
@@ -172,6 +178,7 @@ impl WebsocketTunnelRead {
                 inner: ws,
                 pending_operations: tx,
                 notify_pending_ops: notify.clone(),
+                in_flight_ping,
             },
             (rx, notify),
         )
@@ -192,6 +199,7 @@ impl TunnelRead for WebsocketTunnelRead {
             };
 
             trace!("receive ws frame {:?} {:?}", msg.opcode, msg.payload);
+            self.in_flight_ping.store(0, Relaxed);
             match msg.opcode {
                 OpCode::Continuation | OpCode::Text | OpCode::Binary => {
                     return match writer.write_all(msg.payload.as_ref()).await {
@@ -208,26 +216,35 @@ impl TunnelRead for WebsocketTunnelRead {
                     return Err(io::Error::new(ErrorKind::NotConnected, "websocket close"));
                 }
                 OpCode::Ping => {
-                    if self
-                        .pending_operations
-                        .send(Frame::new(true, msg.opcode, None, Payload::Owned(msg.payload.to_owned())))
-                        .await
-                        .is_err()
-                    {
-                        return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send ping"));
+                    match self.pending_operations.try_send(Frame::new(
+                        true,
+                        msg.opcode,
+                        None,
+                        Payload::Owned(msg.payload.to_owned()),
+                    )) {
+                        Ok(()) => {
+                            self.notify_pending_ops.notify_waiters();
+                        }
+                        Err(TrySendError::Full(_)) => {
+                            // Queue full due to TX write congestion; drop pong to avoid blocking RX
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send ping"));
+                        }
                     }
-                    self.notify_pending_ops.notify_waiters();
                 }
                 OpCode::Pong => {
-                    if self
-                        .pending_operations
-                        .send(Frame::pong(Payload::Borrowed(&[])))
-                        .await
-                        .is_err()
-                    {
-                        return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send pong"));
+                    match self.pending_operations.try_send(Frame::pong(Payload::Borrowed(&[]))) {
+                        Ok(()) => {
+                            self.notify_pending_ops.notify_waiters();
+                        }
+                        Err(TrySendError::Full(_)) => {
+                            // Queue full; in_flight_ping is already reset by RX
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            return Err(io::Error::new(ErrorKind::ConnectionAborted, "cannot send pong"));
+                        }
                     }
-                    self.notify_pending_ops.notify_waiters();
                 }
             };
         }
@@ -344,6 +361,7 @@ pub fn mk_websocket_tunnel(
     ws.set_auto_apply_mask(mask_frame);
     let (ws_rx, ws_tx) = ws.split(|x| x.into_split());
 
-    let (ws_rx, pending_ops) = WebsocketTunnelRead::new(ws_rx);
-    Ok((ws_rx, WebsocketTunnelWrite::new(ws_tx, pending_ops)))
+    let in_flight_ping = Arc::new(AtomicUsize::new(0));
+    let (ws_rx, pending_ops) = WebsocketTunnelRead::new(ws_rx, in_flight_ping.clone());
+    Ok((ws_rx, WebsocketTunnelWrite::new(ws_tx, pending_ops, in_flight_ping)))
 }
