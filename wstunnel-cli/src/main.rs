@@ -29,7 +29,6 @@ pub struct Wstunnel {
     #[arg(long, global = true, verbatim_doc_comment, env = "NO_COLOR")]
     no_color: bool,
 
-    /// *WARNING* The flag does nothing, you need to set the env variable *WARNING*
     /// Control the number of threads that will be used.
     /// By default, it is equal the number of cpus
     #[arg(
@@ -60,8 +59,7 @@ pub enum Commands {
     Server(Box<Server>),
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     let args = Wstunnel::parse();
 
     // Setup logging
@@ -93,25 +91,39 @@ async fn main() -> anyhow::Result<()> {
         warn!("Failed to set soft file limit to hard file limit: {}", err)
     }
 
-    // Start system CA reloader
-    SystemCaReloader::start(None);
-
-    match args.commands {
-        Commands::Client(args) => {
-            run_client(*args, DefaultTokioExecutor::default())
-                .await
-                .unwrap_or_else(|err| {
-                    panic!("Cannot start wstunnel client: {err:?}");
-                });
+    // Build the Tokio runtime
+    let mut builder = match args.nb_worker_threads {
+        Some(1) => tokio::runtime::Builder::new_current_thread(),
+        Some(n) => {
+            let mut b = tokio::runtime::Builder::new_multi_thread();
+            b.worker_threads(n as usize);
+            b
         }
-        Commands::Server(args) => {
-            run_server(*args, DefaultTokioExecutor::default())
-                .await
-                .unwrap_or_else(|err| {
-                    panic!("Cannot start wstunnel server: {err:?}");
-                });
-        }
-    }
+        None => tokio::runtime::Builder::new_multi_thread(),
+    };
+    let rt = builder.enable_all().build()?;
 
-    Ok(())
+    rt.block_on(async move {
+        // Start system CA reloader
+        SystemCaReloader::start(None);
+
+        match args.commands {
+            Commands::Client(args) => {
+                run_client(*args, DefaultTokioExecutor::default())
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("Cannot start wstunnel client: {err:?}");
+                    });
+            }
+            Commands::Server(args) => {
+                run_server(*args, DefaultTokioExecutor::default())
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("Cannot start wstunnel server: {err:?}");
+                    });
+            }
+        }
+
+        Ok(())
+    })
 }

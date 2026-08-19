@@ -166,7 +166,6 @@ Options:
           [default: 0]
 
       --nb-worker-threads <INT>
-          *WARNING* The flag does nothing, you need to set the env variable *WARNING*
           Control the number of threads that will be used.
           By default, it is equal the number of cpus
           
@@ -329,7 +328,6 @@ Options:
           [default: 30s]
 
       --nb-worker-threads <INT>
-          *WARNING* The flag does nothing, you need to set the env variable *WARNING*
           Control the number of threads that will be used.
           By default, it is equal the number of cpus
           
