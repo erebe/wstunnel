@@ -80,22 +80,9 @@ impl TunnelWrite for WebsocketTunnelWrite {
             return Err(io::Error::new(ErrorKind::ConnectionAborted, err));
         }
 
-        // If the buffer has been completely filled with previous read, Grows it !
-        // For the buffer to not be a bottleneck when the TCP window scale.
-        // We clamp it to 32Mb to avoid unbounded growth and as websocket max frame size is 64Mb by default
-        // For udp, the buffer will never grow.
-        const _32_MB: usize = 32 * 1024 * 1024;
         buf.clear();
-        if buf.capacity() == read_len && buf.capacity() < _32_MB {
-            let new_size = buf.capacity() + (buf.capacity() / 4); // grow buffer by 1.25 %
-            buf.reserve(new_size);
-            trace!(
-                "Buffer {} Mb {} {} {}",
-                buf.capacity() as f64 / 1024.0 / 1024.0,
-                new_size,
-                buf.len(),
-                buf.capacity()
-            )
+        if buf.capacity() < MAX_PACKET_LENGTH {
+            buf.reserve(MAX_PACKET_LENGTH);
         }
 
         Ok(())
