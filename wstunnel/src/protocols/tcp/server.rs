@@ -245,7 +245,7 @@ mod tests {
         }
 
         fn tag(&self) -> &str {
-            "10.1.1"
+            "12.2.3"
         }
 
         fn ready_conditions(&self) -> Vec<WaitFor> {
