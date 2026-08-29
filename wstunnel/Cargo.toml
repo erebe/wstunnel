@@ -58,6 +58,9 @@ derive_more = { version = "2.1.1", features = ["display", "error"] }
 
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["logging", "tls12"] }
 rcgen = { version = "0.14.9", default-features = false, features = [] }
+# Already compiled in the tree (rcgen, x509-parser -> asn1-rs, which also turns on `std`);
+# declared directly so embedded_certificate can read the current year.
+time = { version = "0.3.55", default-features = false, features = ["std"] }
 hickory-resolver = { version = "0.26.1", default-features = false, features = ["system-config", "tokio"] }
 aws-lc-rs = { version = "*", optional = true }
 
