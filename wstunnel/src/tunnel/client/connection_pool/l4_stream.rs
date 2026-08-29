@@ -7,6 +7,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
+/// A byte stream to the wstunnel server, as used by the TCP transports (`ws`, `wss`, `http`,
+/// `https`), optionally wrapped in TLS.
 pub struct L4Stream {
     read: L4ReadHalf,
     write: L4WriteHalf,

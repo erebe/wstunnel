@@ -55,6 +55,9 @@ url = "2.5.8"
 urlencoding = "2.1.3"
 uuid = { version = "1.26.0", features = ["v7", "serde"] }
 derive_more = { version = "2.1.1", features = ["display", "error"] }
+# Already compiled in the tree (hickory-resolver -> prefix-trie); declared directly for the
+# connection pool, whose connection is either a TCP stream or a webtransport session.
+either = { version = "1.18.0", default-features = false, features = ["use_std"] }
 
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["logging", "tls12"] }
 rcgen = { version = "0.14.9", default-features = false, features = [] }

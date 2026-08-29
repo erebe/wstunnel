@@ -6,6 +6,7 @@ use crate::tunnel::transport::headers_from_file;
 use crate::tunnel::transport::jwt::{JWT_HEADER_PREFIX, tunnel_to_jwt_token};
 use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
+use either::Either;
 use fastwebsockets::{CloseCode, Frame, OpCode, Payload, Role, WebSocket, WebSocketRead, WebSocketWrite};
 use http_body_util::Empty;
 use hyper::Request;
@@ -18,7 +19,6 @@ use hyper_util::rt::TokioIo;
 use log::debug;
 use std::io;
 use std::io::ErrorKind;
-use std::ops::DerefMut;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
@@ -315,7 +315,11 @@ pub async fn connect(
         )
     })?;
     debug!("with HTTP upgrade request {req:?}");
-    let transport = pooled_cnx.deref_mut().take().unwrap();
+    let transport = pooled_cnx
+        .take()
+        .and_then(Either::left)
+        .ok_or_else(|| anyhow!("the connection pool did not return a TCP stream"))?;
+
     let (ws, response) = fastwebsockets::handshake::client(&TokioExecutor::new(), req, transport)
         .await
         .with_context(|| format!("failed to do websocket handshake with the server {:?}", client_cfg.remote_addr))?;

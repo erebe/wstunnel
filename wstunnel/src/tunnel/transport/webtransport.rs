@@ -2,6 +2,7 @@ use super::io::{MAX_PACKET_LENGTH, TransportRead, TransportWrite};
 use crate::somark::SoMark;
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::Client;
+use crate::tunnel::client::ClientConfig;
 use crate::tunnel::transport::headers_from_file;
 use crate::tunnel::transport::jwt::tunnel_to_jwt_token;
 use anyhow::{Context, anyhow};
@@ -18,7 +19,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Notify;
-use tracing::warn;
 use url::{Host, Url};
 use uuid::Uuid;
 use web_transport_quinn::proto::ConnectRequest;
@@ -40,8 +40,8 @@ const MAX_JWT_PREAMBLE_LEN: usize = 8 * 1024;
 /// `--tls-sni-override` work.
 #[derive(Debug)]
 pub struct WebTransportEndpoint {
-    endpoint: quinn::Endpoint,
-    config: quinn::ClientConfig,
+    pub(crate) endpoint: quinn::Endpoint,
+    pub(crate) config: quinn::ClientConfig,
 }
 
 impl WebTransportEndpoint {
@@ -413,35 +413,14 @@ pub async fn read_jwt_preamble(stream: &mut RecvStream) -> anyhow::Result<String
     String::from_utf8(jwt).with_context(|| "tunnel JWT is not valid utf-8")
 }
 
-pub async fn connect(
-    request_id: Uuid,
-    client: &Client<impl crate::TokioExecutorRef>,
-    dest_addr: &RemoteAddr,
-) -> anyhow::Result<(WebTransportRead, WebTransportWrite, Parts)> {
-    let client_cfg = &client.config;
-    let Some(webtransport) = client.config.webtransport.as_ref() else {
-        return Err(anyhow!(
-            "no webtransport endpoint configured, the server url scheme must be wts://"
-        ));
-    };
-
+/// Build the session-level CONNECT request for a `wts://` server.
+///
+/// This carries only what every tunnel on the session shares — url, custom headers, upgrade
+/// credentials. The per-tunnel destination travels as a stream preamble instead (see
+/// [`write_jwt_preamble`]), because one session serves many tunnels.
+pub(crate) fn mk_connect_request(client_cfg: &ClientConfig) -> anyhow::Result<ConnectRequest> {
     let host = client_cfg.remote_addr.host();
     let port = client_cfg.remote_addr.port();
-
-    // Resolve with wstunnel's resolver so --dns-resolver is honoured.
-    let addrs: Vec<SocketAddr> = match host {
-        Host::Domain(domain) => client_cfg
-            .dns_resolver
-            .lookup_host(domain.as_str(), port)
-            .await
-            .with_context(|| format!("cannot resolve domain: {domain}"))?,
-        Host::Ipv4(ip) => vec![SocketAddr::from((*ip, port))],
-        Host::Ipv6(ip) => vec![SocketAddr::from((*ip, port))],
-    };
-
-    // The SNI name is independent of the address we dial, so --tls-sni-override is just a
-    // different name here.
-    let sni = client_cfg.quic_server_name();
 
     let authority = match host {
         Host::Ipv6(ip) => format!("[{ip}]:{port}"),
@@ -457,10 +436,7 @@ pub async fn connect(
         },
     )?;
 
-    let mut request = ConnectRequest::new(url).with_header(COOKIE, {
-        let jwt = tunnel_to_jwt_token(request_id, dest_addr);
-        HeaderValue::from_str(&jwt).with_context(|| "cannot use the tunnel jwt as a header value")?
-    });
+    let mut request = ConnectRequest::new(url);
 
     for (k, v) in &client_cfg.http_headers {
         request.headers.remove(k);
@@ -485,68 +461,44 @@ pub async fn connect(
     }
 
     debug!("with webtransport connect request {request:?}");
+    Ok(request)
+}
 
-    let mut last_err = None;
-    let mut session = None;
-    for addr in &addrs {
-        // Bound the handshake like the TCP transports do, so a server that never answers on UDP
-        // fails with a clear error instead of hanging until the QUIC idle timeout. This is the
-        // common symptom of a firewall or port mapping that only forwards TCP.
-        let handshake = async {
-            let cnx = webtransport
-                .endpoint
-                .connect_with(webtransport.config.clone(), *addr, &sni)
-                .with_context(|| format!("cannot start a QUIC connection to {addr}"))?
-                .await
-                .with_context(|| format!("cannot establish a QUIC connection to {addr}"))?;
+pub async fn connect(
+    request_id: Uuid,
+    client: &Client<impl crate::TokioExecutorRef>,
+    dest_addr: &RemoteAddr,
+) -> anyhow::Result<(WebTransportRead, WebTransportWrite, Parts)> {
+    let client_cfg = &client.config;
 
-            Session::connect(cnx, request.clone())
-                .await
-                .with_context(|| format!("webtransport handshake with {addr} failed"))
-        };
-
-        match tokio::time::timeout(client_cfg.timeout_connect, handshake).await {
-            Ok(Ok(s)) => {
-                session = Some(s);
-                break;
-            }
-            Ok(Err(err)) => {
-                warn!("{err:?}");
-                last_err = Some(err);
-            }
-            Err(_) => {
-                let timeout = client_cfg.timeout_connect;
-                warn!("timed out after {timeout:?} doing the webtransport handshake with {addr}");
-                last_err = Some(anyhow!(
-                    "timed out after {timeout:?} doing the webtransport handshake with {addr}. Is UDP reachable on that port?"
-                ));
-            }
-        }
-    }
-
-    let session = match session {
-        Some(session) => session,
-        None => {
-            return Err(last_err
-                .unwrap_or_else(|| anyhow!("no address to connect to"))
-                .context(format!(
-                    "failed to open a webtransport session with the server {:?}",
-                    client_cfg.remote_addr
-                )));
-        }
+    // The pool hands out an established webtransport session: QUIC handshake, HTTP/3 SETTINGS and
+    // CONNECT are all already done, and with --connection-min-idle they happened before this tunnel
+    // was even requested. The session is cloned rather than taken, so it stays in the pool and
+    // every later tunnel multiplexes another stream over the same one.
+    let session = {
+        let pooled_cnx = match client.cnx_pool.get().await {
+            Ok(cnx) => Ok(cnx),
+            Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
+        }?;
+        pooled_cnx
+            .as_ref()
+            .and_then(|cnx| cnx.as_ref().right())
+            .cloned()
+            .ok_or_else(|| anyhow!("the connection pool did not return a webtransport session for a wts:// server"))?
     };
 
-    // FIXME
-    // Each tunnel opens its own QUIC session instead of multiplexing streams over a shared one.
-    // The destination and request id travel in the CONNECT request (session level, see the JWT
-    // cookie above) and the server accepts exactly one stream per session, so a session is bound to
-    // a single tunnel. Reusing one connection across tunnels to skip the per-tunnel handshake would
-    // require moving the destination to a per-stream preamble and a server-side `accept_bi` loop —
-    // a wire-protocol change rather than a local tweak.
-    let (send, mut recv) = session
+    let (mut send, mut recv) = session
         .open_bi()
         .await
         .with_context(|| format!("failed to open a webtransport stream with {:?}", client_cfg.remote_addr))?;
+
+    // The session-level CONNECT is shared by every tunnel on this session, so it cannot carry the
+    // destination. Each stream announces its own with a JWT preamble instead, which the server
+    // reads before it opens anything upstream.
+    let jwt = tunnel_to_jwt_token(request_id, dest_addr);
+    write_jwt_preamble(&mut send, &jwt)
+        .await
+        .with_context(|| format!("failed to send the tunnel jwt to {:?}", client_cfg.remote_addr))?;
 
     // For dynamic reverse tunnels the server tells us the destination it resolved, via the
     // preamble. Surfacing it as a Cookie header keeps `run_reverse_tunnel` unchanged.

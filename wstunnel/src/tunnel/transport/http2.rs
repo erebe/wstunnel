@@ -5,6 +5,7 @@ use crate::tunnel::transport::jwt::tunnel_to_jwt_token;
 use crate::tunnel::transport::{TransportScheme, headers_from_file};
 use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
+use either::Either;
 use http_body_util::{BodyExt, BodyStream, StreamBody};
 use hyper::Request;
 use hyper::body::{Frame, Incoming};
@@ -15,7 +16,6 @@ use log::{debug, error, warn};
 use std::future::Future;
 use std::io;
 use std::io::ErrorKind;
-use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -202,7 +202,10 @@ pub async fn connect(
         )
     })?;
     debug!("with HTTP upgrade request {req:?}");
-    let transport = pooled_cnx.deref_mut().take().unwrap();
+    let transport = pooled_cnx
+        .take()
+        .and_then(Either::left)
+        .ok_or_else(|| anyhow!("the connection pool did not return a TCP stream"))?;
     let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
         .timer(TokioTimer::new())
         .adaptive_window(true)

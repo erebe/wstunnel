@@ -207,6 +207,23 @@ pub(super) fn validate_tunnel<'a>(
         .find(|restriction| restriction.allow.iter().any(|allow| allow.is_allowed(remote)))
 }
 
+/// Whether any restriction could allow a tunnel for this path prefix and authorization.
+///
+/// This is the destination-independent half of [`validate_tunnel`]: it answers "may this client
+/// talk to us at all", without knowing where it wants to go. Webtransport checks it when accepting
+/// a session, since one session is shared by every tunnel the client opens on it and the
+/// destination only arrives per stream. Streams are still validated in full afterwards.
+pub(super) fn matches_any_restriction(
+    path_prefix: &str,
+    authorization: Option<&str>,
+    restrictions: &RestrictionsRules,
+) -> bool {
+    restrictions
+        .restrictions
+        .iter()
+        .any(|restriction| restriction.filter(path_prefix, authorization))
+}
+
 pub(super) fn inject_cookie(response: &mut http::Response<impl Body>, remote_addr: &RemoteAddr) -> Result<(), ()> {
     let Ok(header_val) = HeaderValue::from_str(&tunnel_to_jwt_token(Uuid::from_u128(0), remote_addr)) else {
         error!("Bad header value for reverse socks5: {} {}", remote_addr.host, remote_addr.port);

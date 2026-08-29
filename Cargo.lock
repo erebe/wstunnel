@@ -4681,6 +4681,7 @@ dependencies = [
  "collection_macros",
  "crossterm",
  "derive_more",
+ "either",
  "fast-socks5",
  "fastwebsockets",
  "futures-util",

@@ -40,15 +40,6 @@ impl<E: TokioExecutorRef> Client<E> {
     ) -> anyhow::Result<Self> {
         let config = Arc::new(config);
 
-        // Webtransport runs over QUIC/UDP and never borrows a stream from the TCP pool, so keep
-        // the pool empty. Otherwise --connection-min-idle would dial the server's TCP port,
-        // which may not even be listening.
-        let connection_min_idle = if config.remote_addr.scheme().is_webtransport() {
-            0
-        } else {
-            connection_min_idle
-        };
-
         let cnx = L4StreamManager::new(config.clone());
         let tls_reloader = TlsReloader::new_for_client(config.clone()).with_context(|| "Cannot create tls reloader")?;
         let cnx_pool = bb8::Pool::builder()
