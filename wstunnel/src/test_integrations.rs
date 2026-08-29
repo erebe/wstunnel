@@ -141,6 +141,14 @@ async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> Cli
         websocket_mask_frame: false,
         dns_resolver,
         http_proxy: None,
+        webtransport: Some(Arc::new(
+            crate::tunnel::transport::webtransport::WebTransportEndpoint::new(
+                crate::protocols::tls::quic_client_config(false, None, None).unwrap(),
+                SoMark::new(None),
+                Some(Duration::from_secs(10)),
+            )
+            .unwrap(),
+        )),
     };
 
     Client::new(
@@ -170,6 +178,7 @@ async fn client_ws(server_port: u16, dns_resolver: DnsResolver) -> Client {
         websocket_mask_frame: false,
         dns_resolver,
         http_proxy: None,
+        webtransport: None,
     };
 
     Client::new(

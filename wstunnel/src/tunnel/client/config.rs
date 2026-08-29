@@ -1,6 +1,7 @@
 use crate::protocols::dns::DnsResolver;
 use crate::somark::SoMark;
 use crate::tunnel::transport::TransportAddr;
+use crate::tunnel::transport::webtransport::WebTransportEndpoint;
 use hyper::header::{HeaderName, HeaderValue};
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -26,6 +27,10 @@ pub struct ClientConfig {
     pub websocket_mask_frame: bool,
     pub http_proxy: Option<Url>,
     pub dns_resolver: DnsResolver,
+    /// QUIC endpoint, only for the webtransport transport. `None` for every other scheme.
+    /// Built in `create_client`, so a bad TLS setup fails at startup rather than on the
+    /// first tunnel.
+    pub webtransport: Option<Arc<WebTransportEndpoint>>,
 }
 
 impl ClientConfig {

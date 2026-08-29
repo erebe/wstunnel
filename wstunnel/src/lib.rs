@@ -21,6 +21,7 @@ use crate::tunnel::downstream_listeners::{
     new_stdio_listener,
 };
 use crate::tunnel::server::{Server, ServerConfig, TlsServerConfig};
+use crate::tunnel::transport::webtransport::WebTransportEndpoint;
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
 use crate::tunnel::upstream_connectors::{Socks5UpstreamConnector, TcpUpstreamConnector, UdpUpstreamConnector};
 use crate::tunnel::{RemoteAddr, to_host_port};
@@ -112,31 +113,7 @@ pub async fn create_client(
 
     let tls = match transport_scheme {
         TransportScheme::Ws | TransportScheme::Http => None,
-        TransportScheme::Wts => {
-            // Webtransport builds its own TLS 1.3 config inside `Client::new`, via
-            // `tls::quic_client_config`. This `TlsClientConfig` only carries the settings it
-            // reads from (verification, SNI override, certificate paths); the `tls_connector`
-            // here is never used by the QUIC path.
-            let tls_connector = tls::tls_connector(
-                args.tls_verify_certificate,
-                transport_scheme.alpn_protocols(),
-                !args.tls_sni_disable,
-                None,
-                tls_certificate,
-                tls_key,
-            )
-            .expect("Cannot create tls connector");
-
-            Some(TlsClientConfig {
-                tls_connector: Arc::new(RwLock::new(tls_connector)),
-                tls_sni_override: args.tls_sni_override,
-                tls_verify_certificate: args.tls_verify_certificate,
-                tls_sni_disabled: args.tls_sni_disable,
-                tls_certificate_path: args.tls_certificate.clone(),
-                tls_key_path: args.tls_private_key.clone(),
-            })
-        }
-        TransportScheme::Wss | TransportScheme::Https => {
+        TransportScheme::Wts | TransportScheme::Wss | TransportScheme::Https => {
             let ech_config = if args.tls_ech_enable {
                 #[cfg(not(feature = "aws-lc-rs"))]
                 return Err(anyhow!(
@@ -188,6 +165,40 @@ pub async fn create_client(
         panic!("http headers file does not exists: {}", path.display());
     }
 
+    let websocket_ping_frequency = args
+        .websocket_ping_frequency
+        .or(Some(Duration::from_secs(30)))
+        .filter(|d| d.as_secs() > 0);
+
+    // Webtransport rides QUIC, so it gets its own endpoint instead of a stream from the TCP
+    // pool. Built here rather than in `Client::new` so a broken TLS setup fails at startup.
+    let webtransport = if transport_scheme.is_webtransport() {
+        let tls = tls
+            .as_ref()
+            .ok_or_else(|| anyhow!("webtransport requires TLS, which is missing from the configuration"))?;
+        let tls_config = tls::quic_client_config(
+            tls.tls_verify_certificate,
+            tls.tls_certificate_path
+                .as_deref()
+                .map(tls::load_certificates_from_pem)
+                .transpose()
+                .with_context(|| "Cannot load client TLS certificate (mTLS)")?,
+            tls.tls_key_path
+                .as_deref()
+                .map(tls::load_private_key_from_file)
+                .transpose()
+                .with_context(|| "Cannot load client TLS private key (mTLS)")?,
+        )
+        .with_context(|| "Cannot create the TLS configuration for webtransport")?;
+
+        Some(Arc::new(
+            WebTransportEndpoint::new(tls_config, SoMark::new(args.socket_so_mark), websocket_ping_frequency)
+                .with_context(|| "Cannot create the webtransport endpoint")?,
+        ))
+    } else {
+        None
+    };
+
     let client_config = ClientConfig {
         remote_addr: TransportAddr::new(
             TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
@@ -203,13 +214,11 @@ pub async fn create_client(
         http_headers_file: args.http_headers_file,
         http_header_host: host_header,
         timeout_connect: Duration::from_secs(10),
-        websocket_ping_frequency: args
-            .websocket_ping_frequency
-            .or(Some(Duration::from_secs(30)))
-            .filter(|d| d.as_secs() > 0),
+        websocket_ping_frequency,
         websocket_mask_frame: args.websocket_mask_frame,
         dns_resolver,
         http_proxy,
+        webtransport,
     };
 
     let client = Client::new(

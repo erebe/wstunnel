@@ -38,6 +38,7 @@ const MAX_JWT_PREAMBLE_LEN: usize = 8 * 1024;
 /// bypass wstunnel's `--dns-resolver`. Driving `quinn::Endpoint::connect_with` ourselves also
 /// lets us pass the SNI name independently of the address we dial, which is what makes
 /// `--tls-sni-override` work.
+#[derive(Debug)]
 pub struct WebTransportEndpoint {
     endpoint: quinn::Endpoint,
     config: quinn::ClientConfig,
@@ -418,7 +419,7 @@ pub async fn connect(
     dest_addr: &RemoteAddr,
 ) -> anyhow::Result<(WebTransportRead, WebTransportWrite, Parts)> {
     let client_cfg = &client.config;
-    let Some(webtransport) = client.webtransport.as_ref() else {
+    let Some(webtransport) = client.config.webtransport.as_ref() else {
         return Err(anyhow!(
             "no webtransport endpoint configured, the server url scheme must be wts://"
         ));
