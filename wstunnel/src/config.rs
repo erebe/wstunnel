@@ -10,7 +10,7 @@ pub const DEFAULT_CLIENT_UPGRADE_PATH_PREFIX: &str = "v1";
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
-pub struct Client {
+pub struct ClientCreationRequest {
     /// Listen on local and forwards traffic from remote. Can be specified multiple times
     /// examples:
     /// 'tcp://1212:google.com:443'      =>       listen locally on tcp on port 1212 and forward to google.com on port 443
@@ -258,7 +258,7 @@ pub struct Client {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
-pub struct Server {
+pub struct ServerCreationRequest {
     /// Address of the wstunnel server to bind to
     /// Example: With TLS wss://0.0.0.0:8080 or without ws://[::]:8080
     ///

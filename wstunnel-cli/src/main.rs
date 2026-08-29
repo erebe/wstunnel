@@ -5,7 +5,7 @@ use tracing::warn;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::Directive;
 use wstunnel::LocalProtocol;
-use wstunnel::config::{Client, Server};
+use wstunnel::config::{ClientCreationRequest, ServerCreationRequest};
 use wstunnel::executor::DefaultTokioExecutor;
 use wstunnel::tunnel::ca_reloader::SystemCaReloader;
 use wstunnel::{run_client, run_server};
@@ -55,8 +55,8 @@ pub struct Wstunnel {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum Commands {
-    Client(Box<Client>),
-    Server(Box<Server>),
+    Client(Box<ClientCreationRequest>),
+    Server(Box<ServerCreationRequest>),
 }
 
 fn main() -> anyhow::Result<()> {

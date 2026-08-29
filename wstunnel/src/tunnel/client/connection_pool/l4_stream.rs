@@ -7,33 +7,33 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
-pub struct TransportStream {
-    read: TransportReadHalf,
-    write: TransportWriteHalf,
+pub struct L4Stream {
+    read: L4ReadHalf,
+    write: L4WriteHalf,
 }
 
-impl TransportStream {
+impl L4Stream {
     pub fn from_tcp(tcp: TcpStream, read_buf: Bytes) -> Self {
         let (read, write) = tcp.into_split();
         Self {
-            read: TransportReadHalf::Plain(read, read_buf),
-            write: TransportWriteHalf::Plain(write),
+            read: L4ReadHalf::Plain(read, read_buf),
+            write: L4WriteHalf::Plain(write),
         }
     }
 
     pub fn from_client_tls(tls: tokio_rustls::client::TlsStream<TcpStream>, read_buf: Bytes) -> Self {
         let (read, write) = tokio::io::split(tls);
         Self {
-            read: TransportReadHalf::Tls(read, read_buf),
-            write: TransportWriteHalf::Tls(write),
+            read: L4ReadHalf::Tls(read, read_buf),
+            write: L4WriteHalf::Tls(write),
         }
     }
 
     pub fn from_server_tls(tls: tokio_rustls::server::TlsStream<TcpStream>, read_buf: Bytes) -> Self {
         let (read, write) = tokio::io::split(tls);
         Self {
-            read: TransportReadHalf::TlsSrv(read, read_buf),
-            write: TransportWriteHalf::TlsSrv(write),
+            read: L4ReadHalf::TlsSrv(read, read_buf),
+            write: L4WriteHalf::TlsSrv(write),
         }
     }
 
@@ -46,18 +46,18 @@ impl TransportStream {
         }
     }
 
-    pub fn into_split(self) -> (TransportReadHalf, TransportWriteHalf) {
+    pub fn into_split(self) -> (L4ReadHalf, L4WriteHalf) {
         (self.read, self.write)
     }
 }
 
-pub enum TransportReadHalf {
+pub enum L4ReadHalf {
     Plain(OwnedReadHalf, Bytes),
     Tls(ReadHalf<tokio_rustls::client::TlsStream<TcpStream>>, Bytes),
     TlsSrv(ReadHalf<tokio_rustls::server::TlsStream<TcpStream>>, Bytes),
 }
 
-impl TransportReadHalf {
+impl L4ReadHalf {
     fn read_buf_mut(&mut self) -> &mut Bytes {
         match self {
             Self::Plain(_, buf) => buf,
@@ -67,20 +67,20 @@ impl TransportReadHalf {
     }
 }
 
-pub enum TransportWriteHalf {
+pub enum L4WriteHalf {
     Plain(OwnedWriteHalf),
     Tls(WriteHalf<tokio_rustls::client::TlsStream<TcpStream>>),
     TlsSrv(WriteHalf<tokio_rustls::server::TlsStream<TcpStream>>),
 }
 
-impl AsyncRead for TransportStream {
+impl AsyncRead for L4Stream {
     #[inline]
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.read).poll_read(cx, buf) }
     }
 }
 
-impl AsyncWrite for TransportStream {
+impl AsyncWrite for L4Stream {
     #[inline]
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.write).poll_write(cx, buf) }
@@ -111,7 +111,7 @@ impl AsyncWrite for TransportStream {
     }
 }
 
-impl AsyncRead for TransportReadHalf {
+impl AsyncRead for L4ReadHalf {
     #[inline]
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
@@ -135,7 +135,7 @@ impl AsyncRead for TransportReadHalf {
     }
 }
 
-impl AsyncWrite for TransportWriteHalf {
+impl AsyncWrite for L4WriteHalf {
     #[inline]
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
         match self.get_mut() {

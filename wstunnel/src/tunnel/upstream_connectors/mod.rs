@@ -2,17 +2,17 @@ use anyhow::anyhow;
 use tokio::io::{AsyncRead, AsyncWrite};
 use url::Url;
 
-pub use sock5::Socks5TunnelConnector;
-pub use tcp::TcpTunnelConnector;
-pub use udp::UdpTunnelConnector;
+pub use socks5::Socks5UpstreamConnector;
+pub use tcp::TcpUpstreamConnector;
+pub use udp::UdpUpstreamConnector;
 
 use crate::tunnel::RemoteAddr;
 
-mod sock5;
+mod socks5;
 mod tcp;
 mod udp;
 
-pub trait TunnelConnector {
+pub trait UpstreamConnector {
     type Reader: AsyncRead + Send + 'static;
     type Writer: AsyncWrite + Send + 'static;
 

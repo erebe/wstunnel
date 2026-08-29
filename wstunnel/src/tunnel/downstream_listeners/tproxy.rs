@@ -12,12 +12,12 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio_stream::Stream;
 use tokio_stream::wrappers::TcpListenerStream;
 
-pub struct TproxyTcpTunnelListener {
+pub struct TProxyTcpDownstreamListener {
     listener: TcpListenerStream,
     proxy_protocol: bool,
 }
 
-impl TproxyTcpTunnelListener {
+impl TProxyTcpDownstreamListener {
     pub async fn new(bind_addr: SocketAddr, proxy_protocol: bool) -> anyhow::Result<Self> {
         let listener = protocols::tcp::run_server(bind_addr, true)
             .await
@@ -30,7 +30,7 @@ impl TproxyTcpTunnelListener {
     }
 }
 
-impl Stream for TproxyTcpTunnelListener {
+impl Stream for TProxyTcpDownstreamListener {
     type Item = anyhow::Result<((OwnedReadHalf, OwnedWriteHalf), RemoteAddr)>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
@@ -58,7 +58,7 @@ impl Stream for TproxyTcpTunnelListener {
 }
 
 // TPROXY UDP
-pub struct TProxyUdpTunnelListener<S>
+pub struct TProxyUdpDownstreamListener<S>
 where
     S: Stream<Item = io::Result<UdpStream>>,
 {
@@ -69,15 +69,15 @@ where
 pub async fn new_tproxy_udp(
     bind_addr: SocketAddr,
     timeout: Option<Duration>,
-) -> anyhow::Result<TProxyUdpTunnelListener<impl Stream<Item = io::Result<UdpStream>>>> {
+) -> anyhow::Result<TProxyUdpDownstreamListener<impl Stream<Item = io::Result<UdpStream>>>> {
     let listener = udp::run_server(bind_addr, timeout, udp::configure_tproxy, udp::mk_send_socket_tproxy)
         .await
         .with_context(|| anyhow!("Cannot start TProxy UDP server on {bind_addr}"))?;
 
-    Ok(TProxyUdpTunnelListener { listener, timeout })
+    Ok(TProxyUdpDownstreamListener { listener, timeout })
 }
 
-impl<S> Stream for TProxyUdpTunnelListener<S>
+impl<S> Stream for TProxyUdpDownstreamListener<S>
 where
     S: Stream<Item = io::Result<UdpStream>>,
 {

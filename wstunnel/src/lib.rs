@@ -8,20 +8,21 @@ mod somark;
 mod test_integrations;
 pub mod tunnel;
 
-use crate::config::{Client, DEFAULT_CLIENT_UPGRADE_PATH_PREFIX, Server};
+use crate::config::{ClientCreationRequest, DEFAULT_CLIENT_UPGRADE_PATH_PREFIX, ServerCreationRequest};
 use crate::executor::{TokioExecutor, TokioExecutorRef};
 use crate::protocols::dns::DnsResolver;
 use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
 use crate::somark::SoMark;
 pub use crate::tunnel::LocalProtocol;
-pub use crate::tunnel::client::{TlsClientConfig, WsClient, WsClientConfig};
-use crate::tunnel::connectors::{Socks5TunnelConnector, TcpTunnelConnector, UdpTunnelConnector};
-use crate::tunnel::listeners::{
-    HttpProxyTunnelListener, Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener, new_stdio_listener,
+pub use crate::tunnel::client::{Client, ClientConfig, TlsClientConfig};
+use crate::tunnel::downstream_listeners::{
+    HttpProxyDownstreamListener, Socks5DownstreamListener, TcpDownstreamListener, UdpDownstreamListener,
+    new_stdio_listener,
 };
-use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
+use crate::tunnel::server::{Server, ServerConfig, TlsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
+use crate::tunnel::upstream_connectors::{Socks5UpstreamConnector, TcpUpstreamConnector, UdpUpstreamConnector};
 use crate::tunnel::{RemoteAddr, to_host_port};
 use anyhow::{Context, anyhow};
 use futures_util::future::BoxFuture;
@@ -38,7 +39,7 @@ use tokio::task::JoinSet;
 use tracing::{error, info};
 use url::Url;
 
-pub async fn run_client(args: Client, executor: impl TokioExecutor) -> anyhow::Result<()> {
+pub async fn run_client(args: ClientCreationRequest, executor: impl TokioExecutor) -> anyhow::Result<()> {
     let tunnels = create_client_tunnels(args, executor.ref_clone()).await?;
 
     // Start all tunnels
@@ -54,9 +55,9 @@ pub async fn run_client(args: Client, executor: impl TokioExecutor) -> anyhow::R
 }
 
 pub async fn create_client(
-    args: Client,
+    args: ClientCreationRequest,
     executor: impl TokioExecutorRef,
-) -> anyhow::Result<WsClient<impl TokioExecutorRef>> {
+) -> anyhow::Result<Client<impl TokioExecutorRef>> {
     let (tls_certificate, tls_key) = if let (Some(cert), Some(key)) =
         (args.tls_certificate.as_ref(), args.tls_private_key.as_ref())
     {
@@ -112,7 +113,7 @@ pub async fn create_client(
     let tls = match transport_scheme {
         TransportScheme::Ws | TransportScheme::Http => None,
         TransportScheme::Wts => {
-            // Webtransport builds its own TLS 1.3 config inside `WsClient::new`, via
+            // Webtransport builds its own TLS 1.3 config inside `Client::new`, via
             // `tls::quic_client_config`. This `TlsClientConfig` only carries the settings it
             // reads from (verification, SNI override, certificate paths); the `tls_connector`
             // here is never used by the QUIC path.
@@ -187,7 +188,7 @@ pub async fn create_client(
         panic!("http headers file does not exists: {}", path.display());
     }
 
-    let client_config = WsClientConfig {
+    let client_config = ClientConfig {
         remote_addr: TransportAddr::new(
             TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
             args.remote_addr.host().unwrap().to_owned(),
@@ -211,7 +212,7 @@ pub async fn create_client(
         http_proxy,
     };
 
-    let client = WsClient::new(
+    let client = Client::new(
         client_config,
         args.connection_min_idle,
         args.connection_retry_max_backoff,
@@ -225,7 +226,7 @@ pub async fn create_client(
 }
 
 async fn create_client_tunnels(
-    mut args: Client,
+    mut args: ClientCreationRequest,
     executor: impl TokioExecutorRef,
 ) -> anyhow::Result<Vec<BoxFuture<'static, ()>>> {
     let remote_to_local = std::mem::take(&mut args.remote_to_local);
@@ -249,7 +250,7 @@ async fn create_client_tunnels(
             LocalProtocol::ReverseTcp => {
                 spawn_tunnel! {
                     let cfg = client.config.clone();
-                    let tcp_connector = TcpTunnelConnector::new(
+                    let tcp_connector = TcpUpstreamConnector::new(
                         &tunnel.remote.0,
                         tunnel.remote.1,
                         cfg.socket_so_mark,
@@ -277,7 +278,7 @@ async fn create_client_tunnels(
                         host,
                         port,
                     };
-                    let udp_connector = UdpTunnelConnector::new(
+                    let udp_connector = UdpUpstreamConnector::new(
                         &tunnel.remote.0,
                         tunnel.remote.1,
                         cfg.socket_so_mark,
@@ -302,7 +303,7 @@ async fn create_client_tunnels(
                         port,
                     };
                     let socks_connector =
-                        Socks5TunnelConnector::new(cfg.socket_so_mark, cfg.timeout_connect, &cfg.dns_resolver);
+                        Socks5UpstreamConnector::new(cfg.socket_so_mark, cfg.timeout_connect, &cfg.dns_resolver);
 
                     if let Err(err) = client.run_reverse_tunnel(remote, socks_connector).await {
                         error!("{:?}", err);
@@ -320,7 +321,7 @@ async fn create_client_tunnels(
                         host,
                         port,
                     };
-                    let tcp_connector = TcpTunnelConnector::new(
+                    let tcp_connector = TcpUpstreamConnector::new(
                         &tunnel.remote.0,
                         tunnel.remote.1,
                         cfg.socket_so_mark,
@@ -338,7 +339,7 @@ async fn create_client_tunnels(
                 info!("Connecting to unix socket {:?}", tunnel);
                 spawn_tunnel! {
                     let cfg = client.config.clone();
-                    let tcp_connector = TcpTunnelConnector::new(
+                    let tcp_connector = TcpUpstreamConnector::new(
                         &tunnel.remote.0,
                         tunnel.remote.1,
                         cfg.socket_so_mark,
@@ -375,7 +376,7 @@ async fn create_client_tunnels(
 
         match &tunnel.local_protocol {
             LocalProtocol::Tcp { proxy_protocol } => {
-                let server = TcpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *proxy_protocol).await?;
+                let server = TcpDownstreamListener::new(tunnel.local, tunnel.remote.clone(), *proxy_protocol).await?;
                 spawn_tunnel! {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
@@ -384,8 +385,8 @@ async fn create_client_tunnels(
             }
             #[cfg(target_os = "linux")]
             LocalProtocol::TProxyTcp => {
-                use crate::tunnel::listeners::TproxyTcpTunnelListener;
-                let server = TproxyTcpTunnelListener::new(tunnel.local, false).await?;
+                use crate::tunnel::downstream_listeners::TProxyTcpDownstreamListener;
+                let server = TProxyTcpDownstreamListener::new(tunnel.local, false).await?;
 
                 spawn_tunnel! {
                     if let Err(err) = client.run_tunnel(server).await {
@@ -395,8 +396,8 @@ async fn create_client_tunnels(
             }
             #[cfg(unix)]
             LocalProtocol::Unix { path, proxy_protocol } => {
-                use crate::tunnel::listeners::UnixTunnelListener;
-                let server = UnixTunnelListener::new(path, tunnel.remote.clone(), *proxy_protocol).await?;
+                use crate::tunnel::downstream_listeners::UnixDownstreamListener;
+                let server = UnixDownstreamListener::new(path, tunnel.remote.clone(), *proxy_protocol).await?;
                 spawn_tunnel! {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
@@ -410,7 +411,7 @@ async fn create_client_tunnels(
 
             #[cfg(target_os = "linux")]
             LocalProtocol::TProxyUdp { timeout } => {
-                use crate::tunnel::listeners::new_tproxy_udp;
+                use crate::tunnel::downstream_listeners::new_tproxy_udp;
                 let server = new_tproxy_udp(tunnel.local, *timeout).await?;
                 spawn_tunnel! {
                     if let Err(err) = client.run_tunnel(server).await {
@@ -423,7 +424,7 @@ async fn create_client_tunnels(
                 panic!("Transparent proxy is not available for non Linux platform")
             }
             LocalProtocol::Udp { timeout } => {
-                let server = UdpTunnelListener::new(tunnel.local, tunnel.remote.clone(), *timeout).await?;
+                let server = UdpDownstreamListener::new(tunnel.local, tunnel.remote.clone(), *timeout).await?;
                 spawn_tunnel! {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
@@ -431,7 +432,7 @@ async fn create_client_tunnels(
                 }
             }
             LocalProtocol::Socks5 { timeout, credentials } => {
-                let server = Socks5TunnelListener::new(tunnel.local, *timeout, credentials.clone()).await?;
+                let server = Socks5DownstreamListener::new(tunnel.local, *timeout, credentials.clone()).await?;
                 spawn_tunnel! {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
@@ -444,7 +445,8 @@ async fn create_client_tunnels(
                 proxy_protocol,
             } => {
                 let server =
-                    HttpProxyTunnelListener::new(tunnel.local, *timeout, credentials.clone(), *proxy_protocol).await?;
+                    HttpProxyDownstreamListener::new(tunnel.local, *timeout, credentials.clone(), *proxy_protocol)
+                        .await?;
                 spawn_tunnel! {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);
@@ -478,7 +480,7 @@ async fn create_client_tunnels(
     Ok(tunnels)
 }
 
-pub async fn run_server(args: Server, executor: impl TokioExecutor) -> anyhow::Result<()> {
+pub async fn run_server(args: ServerCreationRequest, executor: impl TokioExecutor) -> anyhow::Result<()> {
     let (tx, rx) = oneshot::channel();
     let exec = executor.ref_clone();
     executor.spawn(async move {
@@ -489,7 +491,7 @@ pub async fn run_server(args: Server, executor: impl TokioExecutor) -> anyhow::R
     rx.await?
 }
 
-async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyhow::Result<()> {
+async fn run_server_impl(args: ServerCreationRequest, executor: impl TokioExecutorRef) -> anyhow::Result<()> {
     // wts:// binds TLS on TCP exactly like wss://, and additionally serves webtransport over UDP.
     let is_webtransport = args.remote_addr.scheme() == "wts";
     let tls_config = if args.remote_addr.scheme() == "wss" || is_webtransport {
@@ -548,7 +550,7 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyho
     };
 
     let http_proxy = mk_http_proxy(args.http_proxy, args.http_proxy_login, args.http_proxy_password)?;
-    let server_config = WsServerConfig {
+    let server_config = ServerConfig {
         socket_so_mark: SoMark::new(args.socket_so_mark),
         bind: args.remote_addr.socket_addrs(|| Some(8080))?[0],
         websocket_ping_frequency: args
@@ -572,7 +574,7 @@ async fn run_server_impl(args: Server, executor: impl TokioExecutorRef) -> anyho
         // The TCP listener still runs, serving websocket and http2 as usual.
         enable_webtransport: args.enable_webtransport || is_webtransport,
     };
-    let server = WsServer::new(server_config, executor);
+    let server = Server::new(server_config, executor);
 
     info!(
         "Starting wstunnel server v{} with config {:?}",

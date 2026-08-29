@@ -1,6 +1,6 @@
 use super::udp_server::{Socks5UdpStream, Socks5UdpStreamWriter};
 use crate::tunnel::LocalProtocol;
-use crate::tunnel::listeners::TunnelConnectorWrite;
+use crate::tunnel::downstream_listeners::DownstreamWrite;
 use anyhow::Context;
 use fast_socks5::server::Socks5ServerProtocol;
 use fast_socks5::server::states::CommandRead;
@@ -93,7 +93,7 @@ impl Socks5Stream {
     }
 }
 
-impl TunnelConnectorWrite for Socks5WriteHalf {
+impl DownstreamWrite for Socks5WriteHalf {
     /// Send the deferred SOCKS5 reply now that the end-to-end tunnel outcome is known, then split the
     /// client socket for data forwarding. Called exactly once per connection.
     async fn on_tunnel_ready(&mut self, result: Result<(), &anyhow::Error>) -> std::io::Result<()> {

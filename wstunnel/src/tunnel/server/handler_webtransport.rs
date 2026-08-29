@@ -2,13 +2,13 @@ use crate::executor::TokioExecutorRef;
 use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
 use crate::tunnel::LocalProtocol;
-use crate::tunnel::server::WsServer;
+use crate::tunnel::server::Server;
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport;
 use crate::tunnel::transport::tunnel_to_jwt_token;
 use crate::tunnel::transport::webtransport::{
-    WebTransportTunnelRead, WebTransportTunnelWrite, WebTransportUdpTunnelRead, WebTransportUdpTunnelWrite,
-    bind_udp_socket, mk_transport_config, write_jwt_preamble,
+    WebTransportRead, WebTransportUdpRead, WebTransportUdpWrite, WebTransportWrite, bind_udp_socket,
+    mk_transport_config, write_jwt_preamble,
 };
 use anyhow::{Context, anyhow};
 use arc_swap::ArcSwap;
@@ -19,15 +19,15 @@ use tokio::sync::oneshot;
 use tokio_rustls::rustls::pki_types::CertificateDer;
 use tracing::{Instrument, Level, Span, error, info, span, warn};
 use uuid::Uuid;
+use web_transport_quinn::quinn;
 use web_transport_quinn::quinn::crypto::rustls::QuicServerConfig;
-use web_transport_quinn::{Server, quinn};
 
 /// Serve WebTransport (HTTP/3 over QUIC) on the same port as the TCP listener, over UDP.
 ///
-/// This runs alongside [`WsServer::serve`]'s TCP accept loop rather than replacing it, so one
+/// This runs alongside [`Server::serve`]'s TCP accept loop rather than replacing it, so one
 /// server process answers websocket, http2 and webtransport clients.
 pub(super) async fn run_webtransport_server(
-    server: WsServer<impl TokioExecutorRef>,
+    server: Server<impl TokioExecutorRef>,
     restrictions: Arc<ArcSwap<RestrictionsRules>>,
 ) -> anyhow::Result<()> {
     let Some(tls_config) = server.config.tls.as_ref() else {
@@ -37,7 +37,7 @@ pub(super) async fn run_webtransport_server(
     };
 
     let bind = server.config.bind;
-    let mut endpoint = Server::new(mk_quic_endpoint(&server, tls_config)?);
+    let mut endpoint = web_transport_quinn::Server::new(mk_quic_endpoint(&server, tls_config)?);
     let tls_reloader = TlsReloader::new_for_server(server.config.clone())
         .with_context(|| "Cannot create the tls reloader for webtransport")?;
 
@@ -78,7 +78,7 @@ pub(super) async fn run_webtransport_server(
 }
 
 fn mk_quic_server_config(
-    server: &WsServer<impl TokioExecutorRef>,
+    server: &Server<impl TokioExecutorRef>,
     tls_config: &crate::tunnel::server::TlsServerConfig,
 ) -> anyhow::Result<quinn::ServerConfig> {
     let tls = tls::quic_server_config(tls_config).with_context(|| "Cannot create the TLS config for webtransport")?;
@@ -92,7 +92,7 @@ fn mk_quic_server_config(
 }
 
 fn mk_quic_endpoint(
-    server: &WsServer<impl TokioExecutorRef>,
+    server: &Server<impl TokioExecutorRef>,
     tls_config: &crate::tunnel::server::TlsServerConfig,
 ) -> anyhow::Result<quinn::Endpoint> {
     let socket = bind_udp_socket(Some(server.config.bind), server.config.socket_so_mark)
@@ -108,7 +108,7 @@ fn mk_quic_endpoint(
 }
 
 async fn handle_session(
-    server: WsServer<impl TokioExecutorRef>,
+    server: Server<impl TokioExecutorRef>,
     restrictions: Arc<RestrictionsRules>,
     request: web_transport_quinn::Request,
 ) -> anyhow::Result<()> {
@@ -189,7 +189,7 @@ async fn handle_session(
         server.executor.spawn(
             transport::io::propagate_remote_to_local(
                 local_tx,
-                WebTransportUdpTunnelRead::new(recv, session.clone()),
+                WebTransportUdpRead::new(recv, session.clone()),
                 close_rx,
             )
             .instrument(Span::current()),
@@ -197,7 +197,7 @@ async fn handle_session(
         server.executor.spawn(
             transport::io::propagate_local_to_remote(
                 local_rx,
-                WebTransportUdpTunnelWrite::new(send, session),
+                WebTransportUdpWrite::new(send, session),
                 close_tx,
                 None,
             )
@@ -205,21 +205,12 @@ async fn handle_session(
         );
     } else {
         server.executor.spawn(
-            transport::io::propagate_remote_to_local(
-                local_tx,
-                WebTransportTunnelRead::new(recv, session.clone()),
-                close_rx,
-            )
-            .instrument(Span::current()),
+            transport::io::propagate_remote_to_local(local_tx, WebTransportRead::new(recv, session.clone()), close_rx)
+                .instrument(Span::current()),
         );
         server.executor.spawn(
-            transport::io::propagate_local_to_remote(
-                local_rx,
-                WebTransportTunnelWrite::new(send, session),
-                close_tx,
-                None,
-            )
-            .instrument(Span::current()),
+            transport::io::propagate_local_to_remote(local_rx, WebTransportWrite::new(send, session), close_tx, None)
+                .instrument(Span::current()),
         );
     }
 

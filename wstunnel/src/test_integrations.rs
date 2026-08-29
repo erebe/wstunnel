@@ -5,9 +5,9 @@ use crate::protocols::dns::DnsResolver;
 use crate::restrictions::types;
 use crate::restrictions::types::{AllowConfig, MatchConfig, RestrictionConfig, RestrictionsRules};
 use crate::somark::SoMark;
-use crate::tunnel::client::{TlsClientConfig, WsClient, WsClientConfig};
-use crate::tunnel::listeners::{Socks5TunnelListener, TcpTunnelListener, UdpTunnelListener};
-use crate::tunnel::server::{TlsServerConfig, WsServer, WsServerConfig};
+use crate::tunnel::client::{Client, ClientConfig, TlsClientConfig};
+use crate::tunnel::downstream_listeners::{Socks5DownstreamListener, TcpDownstreamListener, UdpDownstreamListener};
+use crate::tunnel::server::{Server, ServerConfig, TlsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
 use bytes::BytesMut;
 use futures_util::StreamExt;
@@ -69,8 +69,8 @@ fn dns_resolver() -> DnsResolver {
 }
 
 #[fixture]
-fn server_no_tls(dns_resolver: DnsResolver) -> WsServer {
-    let server_config = WsServerConfig {
+fn server_no_tls(dns_resolver: DnsResolver) -> Server {
+    let server_config = ServerConfig {
         socket_so_mark: SoMark::new(None),
         bind: free_addr().0,
         websocket_ping_frequency: Some(Duration::from_secs(10)),
@@ -83,13 +83,13 @@ fn server_no_tls(dns_resolver: DnsResolver) -> WsServer {
         remote_server_idle_timeout: Duration::from_secs(30),
         enable_webtransport: false,
     };
-    WsServer::new(server_config, DefaultTokioExecutor::default())
+    Server::new(server_config, DefaultTokioExecutor::default())
 }
 
 /// Server serving webtransport over UDP, alongside websocket/http2 over TCP.
 #[fixture]
-fn server_webtransport(dns_resolver: DnsResolver) -> WsServer {
-    let server_config = WsServerConfig {
+fn server_webtransport(dns_resolver: DnsResolver) -> Server {
+    let server_config = ServerConfig {
         socket_so_mark: SoMark::new(None),
         bind: free_addr().0,
         websocket_ping_frequency: Some(Duration::from_secs(10)),
@@ -109,11 +109,11 @@ fn server_webtransport(dns_resolver: DnsResolver) -> WsServer {
         remote_server_idle_timeout: Duration::from_secs(30),
         enable_webtransport: true,
     };
-    WsServer::new(server_config, DefaultTokioExecutor::default())
+    Server::new(server_config, DefaultTokioExecutor::default())
 }
 
 /// Not a fixture, as the port to dial is only known once the server fixture has picked one.
-async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> WsClient {
+async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> Client {
     // The embedded certificate is self-signed with no SAN, so verification must be off.
     let tls_connector =
         crate::protocols::tls::tls_connector(false, TransportScheme::Wts.alpn_protocols(), true, None, None, None)
@@ -127,7 +127,7 @@ async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> WsC
         tls_key_path: None,
     };
 
-    let client_config = WsClientConfig {
+    let client_config = ClientConfig {
         remote_addr: TransportAddr::new(TransportScheme::Wts, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, Some(tls))
             .unwrap(),
         socket_so_mark: SoMark::new(None),
@@ -143,7 +143,7 @@ async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> WsC
         http_proxy: None,
     };
 
-    WsClient::new(
+    Client::new(
         client_config,
         1,
         Duration::from_secs(1),
@@ -155,8 +155,8 @@ async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> WsC
 }
 
 /// Not a fixture, as the port to dial is only known once the server fixture has picked one.
-async fn client_ws(server_port: u16, dns_resolver: DnsResolver) -> WsClient {
-    let client_config = WsClientConfig {
+async fn client_ws(server_port: u16, dns_resolver: DnsResolver) -> Client {
+    let client_config = ClientConfig {
         remote_addr: TransportAddr::new(TransportScheme::Ws, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, None)
             .unwrap(),
         socket_so_mark: SoMark::new(None),
@@ -172,7 +172,7 @@ async fn client_ws(server_port: u16, dns_resolver: DnsResolver) -> WsClient {
         http_proxy: None,
     };
 
-    WsClient::new(
+    Client::new(
         client_config,
         1,
         Duration::from_secs(1),
@@ -220,7 +220,7 @@ fn no_restrictions() -> RestrictionsRules {
 #[timeout(Duration::from_secs(10))]
 #[tokio::test]
 #[serial]
-async fn test_tcp_tunnel(server_no_tls: WsServer, no_restrictions: RestrictionsRules, dns_resolver: DnsResolver) {
+async fn test_tcp_tunnel(server_no_tls: Server, no_restrictions: RestrictionsRules, dns_resolver: DnsResolver) {
     let (tunnel_listen, tunnel_host) = free_addr();
     let (endpoint_listen, endpoint_host) = free_addr();
 
@@ -230,7 +230,7 @@ async fn test_tcp_tunnel(server_no_tls: WsServer, no_restrictions: RestrictionsR
 
     let client_ws = client_ws(server_port, dns_resolver.clone()).await;
 
-    let server = TcpTunnelListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
         .await
         .unwrap();
     tokio::spawn(async move {
@@ -264,7 +264,7 @@ async fn test_tcp_tunnel(server_no_tls: WsServer, no_restrictions: RestrictionsR
 #[timeout(Duration::from_secs(10))]
 #[tokio::test]
 #[serial]
-async fn test_udp_tunnel(server_no_tls: WsServer, no_restrictions: RestrictionsRules, dns_resolver: DnsResolver) {
+async fn test_udp_tunnel(server_no_tls: Server, no_restrictions: RestrictionsRules, dns_resolver: DnsResolver) {
     let (tunnel_listen, tunnel_host) = free_addr();
     let (endpoint_listen, endpoint_host) = free_addr();
 
@@ -274,7 +274,7 @@ async fn test_udp_tunnel(server_no_tls: WsServer, no_restrictions: RestrictionsR
 
     let client_ws = client_ws(server_port, dns_resolver.clone()).await;
 
-    let server = UdpTunnelListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), None)
+    let server = UdpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), None)
         .await
         .unwrap();
     tokio::spawn(async move {
@@ -313,7 +313,7 @@ async fn test_udp_tunnel(server_no_tls: WsServer, no_restrictions: RestrictionsR
 #[tokio::test]
 #[serial]
 async fn test_tcp_tunnel_webtransport(
-    server_webtransport: WsServer,
+    server_webtransport: Server,
     no_restrictions: RestrictionsRules,
     dns_resolver: DnsResolver,
 ) {
@@ -326,7 +326,7 @@ async fn test_tcp_tunnel_webtransport(
 
     let client = client_webtransport(server_port, dns_resolver.clone()).await;
 
-    let server = TcpTunnelListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
         .await
         .unwrap();
     tokio::spawn(async move {
@@ -361,7 +361,7 @@ async fn test_tcp_tunnel_webtransport(
 #[tokio::test]
 #[serial]
 async fn test_udp_tunnel_webtransport(
-    server_webtransport: WsServer,
+    server_webtransport: Server,
     no_restrictions: RestrictionsRules,
     dns_resolver: DnsResolver,
 ) {
@@ -374,7 +374,7 @@ async fn test_udp_tunnel_webtransport(
 
     let client = client_webtransport(server_port, dns_resolver.clone()).await;
 
-    let server = UdpTunnelListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), None)
+    let server = UdpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), None)
         .await
         .unwrap();
     tokio::spawn(async move {
@@ -450,7 +450,7 @@ async fn socks5_handshake_connect(
 #[timeout(Duration::from_secs(10))]
 #[tokio::test]
 #[serial]
-async fn test_socks5_tunnel(server_no_tls: WsServer, no_restrictions: RestrictionsRules, dns_resolver: DnsResolver) {
+async fn test_socks5_tunnel(server_no_tls: Server, no_restrictions: RestrictionsRules, dns_resolver: DnsResolver) {
     let (tunnel_listen, tunnel_host) = free_addr();
     let (endpoint_listen, _endpoint_host) = free_addr();
 
@@ -460,7 +460,7 @@ async fn test_socks5_tunnel(server_no_tls: WsServer, no_restrictions: Restrictio
 
     let client_ws = client_ws(server_port, dns_resolver.clone()).await;
 
-    let server = Socks5TunnelListener::new(tunnel_listen, None, None).await.unwrap();
+    let server = Socks5DownstreamListener::new(tunnel_listen, None, None).await.unwrap();
     tokio::spawn(async move {
         client_ws.run_tunnel(server).await.unwrap();
     });
@@ -497,7 +497,7 @@ async fn test_socks5_tunnel(server_no_tls: WsServer, no_restrictions: Restrictio
 #[tokio::test]
 #[serial]
 async fn test_socks5_tunnel_unreachable_target_replies_error(
-    server_no_tls: WsServer,
+    server_no_tls: Server,
     no_restrictions: RestrictionsRules,
     dns_resolver: DnsResolver,
 ) {
@@ -511,7 +511,7 @@ async fn test_socks5_tunnel_unreachable_target_replies_error(
 
     let client_ws = client_ws(server_port, dns_resolver.clone()).await;
 
-    let server = Socks5TunnelListener::new(tunnel_listen, None, None).await.unwrap();
+    let server = Socks5DownstreamListener::new(tunnel_listen, None, None).await.unwrap();
     tokio::spawn(async move {
         client_ws.run_tunnel(server).await.unwrap();
     });

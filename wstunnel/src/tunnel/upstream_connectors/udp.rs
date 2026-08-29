@@ -4,12 +4,12 @@ use url::Host;
 
 use crate::protocols;
 use crate::protocols::dns::DnsResolver;
-use crate::protocols::udp::WsUdpSocket;
+use crate::protocols::udp::WsUdpStream;
 use crate::somark::SoMark;
 use crate::tunnel::RemoteAddr;
-use crate::tunnel::connectors::TunnelConnector;
+use crate::tunnel::upstream_connectors::UpstreamConnector;
 
-pub struct UdpTunnelConnector<'a> {
+pub struct UdpUpstreamConnector<'a> {
     host: &'a Host,
     port: u16,
     so_mark: SoMark,
@@ -17,15 +17,15 @@ pub struct UdpTunnelConnector<'a> {
     dns_resolver: &'a DnsResolver,
 }
 
-impl<'a> UdpTunnelConnector<'a> {
+impl<'a> UdpUpstreamConnector<'a> {
     pub fn new(
         host: &'a Host,
         port: u16,
         so_mark: SoMark,
         connect_timeout: Duration,
         dns_resolver: &'a DnsResolver,
-    ) -> UdpTunnelConnector<'a> {
-        UdpTunnelConnector {
+    ) -> UdpUpstreamConnector<'a> {
+        UdpUpstreamConnector {
             host,
             port,
             so_mark,
@@ -35,9 +35,9 @@ impl<'a> UdpTunnelConnector<'a> {
     }
 }
 
-impl TunnelConnector for UdpTunnelConnector<'_> {
-    type Reader = WsUdpSocket;
-    type Writer = WsUdpSocket;
+impl UpstreamConnector for UdpUpstreamConnector<'_> {
+    type Reader = WsUdpStream;
+    type Writer = WsUdpStream;
 
     async fn connect(&self, _: &Option<RemoteAddr>) -> anyhow::Result<(Self::Reader, Self::Writer)> {
         let stream =

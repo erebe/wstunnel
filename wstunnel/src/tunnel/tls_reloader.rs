@@ -1,6 +1,6 @@
 use crate::protocols::tls;
-use crate::tunnel::client::WsClientConfig;
-use crate::tunnel::server::WsServerConfig;
+use crate::tunnel::client::ClientConfig;
+use crate::tunnel::server::ServerConfig;
 use crate::tunnel::tls_reloader::TlsReloaderState::{Client, Server};
 use anyhow::Context;
 use log::trace;
@@ -84,7 +84,7 @@ struct TlsReloaderServerState {
     fs_watcher: Mutex<RecommendedWatcher>,
     poll_watcher: Mutex<PollWatcher>,
     tls_reload_certificate: AtomicBool,
-    server_config: Arc<WsServerConfig>,
+    server_config: Arc<ServerConfig>,
     cert_path: PathBuf,
     key_path: PathBuf,
     client_ca_path: Option<PathBuf>,
@@ -128,7 +128,7 @@ struct TlsReloaderClientState {
     fs_watcher: Mutex<RecommendedWatcher>,
     poll_watcher: Mutex<PollWatcher>,
     tls_reload_certificate: AtomicBool,
-    client_config: Arc<WsClientConfig>,
+    client_config: Arc<ClientConfig>,
     cert_path: PathBuf,
     key_path: PathBuf,
 }
@@ -174,7 +174,7 @@ pub struct TlsReloader {
 }
 
 impl TlsReloader {
-    pub fn new_for_server(server_config: Arc<WsServerConfig>) -> anyhow::Result<Self> {
+    pub fn new_for_server(server_config: Arc<ServerConfig>) -> anyhow::Result<Self> {
         // If there is no custom certificate and private key, there is nothing to watch
         let Some((Some(cert_path), Some(key_path), client_ca_certs)) = server_config
             .tls
@@ -212,7 +212,7 @@ impl TlsReloader {
         Ok(Self { state: Server(this) })
     }
 
-    pub fn new_for_client(client_config: Arc<WsClientConfig>) -> anyhow::Result<Self> {
+    pub fn new_for_client(client_config: Arc<ClientConfig>) -> anyhow::Result<Self> {
         // If there is no custom certificate and private key, there is nothing to watch
         let Some((Some(cert_path), Some(key_path))) = client_config
             .remote_addr

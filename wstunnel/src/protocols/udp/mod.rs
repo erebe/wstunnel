@@ -2,7 +2,7 @@ mod server;
 
 pub use server::UdpStream;
 pub use server::UdpStreamWriter;
-pub use server::WsUdpSocket;
+pub use server::WsUdpStream;
 #[cfg(target_os = "linux")]
 pub use server::configure_tproxy;
 pub use server::connect;

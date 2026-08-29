@@ -1,7 +1,7 @@
 use crate::protocols;
 use crate::protocols::tls;
-use crate::tunnel::client::WsClientConfig;
-use crate::tunnel::client::l4_transport_stream::TransportStream;
+use crate::tunnel::client::ClientConfig;
+use crate::tunnel::client::connection_pool::l4_stream::L4Stream;
 use anyhow::anyhow;
 use bb8::ManageConnection;
 use bytes::Bytes;
@@ -10,24 +10,24 @@ use std::sync::Arc;
 use tracing::{instrument, warn};
 
 #[derive(Clone)]
-pub struct WsConnection(Arc<WsClientConfig>);
+pub struct L4StreamManager(Arc<ClientConfig>);
 
-impl WsConnection {
-    pub fn new(config: Arc<WsClientConfig>) -> Self {
+impl L4StreamManager {
+    pub fn new(config: Arc<ClientConfig>) -> Self {
         Self(config)
     }
 }
 
-impl Deref for WsConnection {
-    type Target = WsClientConfig;
+impl Deref for L4StreamManager {
+    type Target = ClientConfig;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl ManageConnection for WsConnection {
-    type Connection = Option<TransportStream>;
+impl ManageConnection for L4StreamManager {
+    type Connection = Option<L4Stream>;
     type Error = anyhow::Error;
 
     #[instrument(level = "trace", name = "cnx_server", skip_all)]
@@ -66,9 +66,9 @@ impl ManageConnection for WsConnection {
                     return Err(anyhow!("Timed out doing the TLS handshake with the server"));
                 }
             };
-            Ok(Some(TransportStream::from_client_tls(tls_stream, Bytes::default())))
+            Ok(Some(L4Stream::from_client_tls(tls_stream, Bytes::default())))
         } else {
-            Ok(Some(TransportStream::from_tcp(tcp_stream, Bytes::default())))
+            Ok(Some(L4Stream::from_tcp(tcp_stream, Bytes::default())))
         }
     }
 

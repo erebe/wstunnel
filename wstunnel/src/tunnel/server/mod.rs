@@ -6,6 +6,6 @@ mod reverse_tunnel;
 mod server;
 mod utils;
 
+pub use server::Server;
+pub use server::ServerConfig;
 pub use server::TlsServerConfig;
-pub use server::WsServer;
-pub use server::WsServerConfig;

@@ -9,14 +9,14 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
-use crate::tunnel::client::WsClientConfig;
+use crate::tunnel::client::ClientConfig;
 use crate::tunnel::server::TlsServerConfig;
 use crate::tunnel::transport::TransportAddr;
 use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use tokio_rustls::rustls::server::danger::ClientCertVerifier;
-use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, Error, KeyLogFile, RootCertStore, SignatureScheme};
+use tokio_rustls::rustls::{DigitallySignedStruct, Error, KeyLogFile, RootCertStore, SignatureScheme};
 use tokio_rustls::{TlsAcceptor, TlsConnector, rustls};
 use tracing::info;
 
@@ -116,7 +116,7 @@ pub fn tls_connector(
     let root_store = crate::tunnel::ca_reloader::get_root_store();
     let crypto_provider = rustls::crypto::CryptoProvider::get_default().unwrap().clone();
 
-    let config_builder = ClientConfig::builder_with_provider(crypto_provider);
+    let config_builder = rustls::ClientConfig::builder_with_provider(crypto_provider);
     let config_builder = if let Some(ech_config) = ech_config {
         info!("Using TLS ECH (encrypted sni) with config: {:?}", ech_config);
         config_builder.with_ech(EchMode::Enable(ech_config))?
@@ -212,13 +212,13 @@ pub fn quic_client_config(
     tls_verify_certificate: bool,
     tls_client_certificate: Option<Vec<CertificateDer<'static>>>,
     tls_client_key: Option<PrivateKeyDer<'static>>,
-) -> anyhow::Result<ClientConfig> {
+) -> anyhow::Result<rustls::ClientConfig> {
     let root_store = crate::tunnel::ca_reloader::get_root_store();
     let crypto_provider = rustls::crypto::CryptoProvider::get_default()
         .ok_or_else(|| anyhow!("No default crypto provider installed for rustls"))?
         .clone();
 
-    let config_builder = ClientConfig::builder_with_provider(crypto_provider)
+    let config_builder = rustls::ClientConfig::builder_with_provider(crypto_provider)
         .with_protocol_versions(&[&rustls::version::TLS13])
         .with_context(|| "QUIC requires TLS 1.3 support")?
         .with_root_certificates(root_store);
@@ -242,7 +242,7 @@ pub fn quic_client_config(
     Ok(config)
 }
 
-pub async fn connect(client_cfg: &WsClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
+pub async fn connect(client_cfg: &ClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
     let sni = client_cfg.tls_server_name();
     let tls_config = match &client_cfg.remote_addr {
         TransportAddr::Wss { tls, .. } => tls,

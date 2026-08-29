@@ -1,7 +1,7 @@
-use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
-use crate::tunnel::transport::websocket::{WebsocketTunnelRead, WebsocketTunnelWrite};
+use crate::tunnel::transport::http2::{Http2TransportRead, Http2TransportWrite};
+use crate::tunnel::transport::websocket::{WebsocketTransportRead, WebsocketTransportWrite};
 use crate::tunnel::transport::webtransport::{
-    WebTransportTunnelRead, WebTransportTunnelWrite, WebTransportUdpTunnelRead, WebTransportUdpTunnelWrite,
+    WebTransportRead, WebTransportUdpRead, WebTransportUdpWrite, WebTransportWrite,
 };
 use bytes::{BufMut, BytesMut};
 use futures_util::{FutureExt, pin_mut};
@@ -19,7 +19,7 @@ use tracing::{error, info, warn};
 
 pub(super) static MAX_PACKET_LENGTH: usize = 64 * 1024;
 
-pub trait TunnelWrite: Send + 'static {
+pub trait TransportWrite: Send + 'static {
     fn buf_mut(&mut self) -> &mut BytesMut;
     fn write(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
     fn ping(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
@@ -28,23 +28,23 @@ pub trait TunnelWrite: Send + 'static {
     fn handle_pending_operations(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
 }
 
-pub trait TunnelRead: Send + 'static {
+pub trait TransportRead: Send + 'static {
     fn copy(
         &mut self,
         writer: impl AsyncWrite + Unpin + Send,
     ) -> impl Future<Output = Result<(), std::io::Error>> + Send;
 }
 
-pub enum TunnelReader {
-    Websocket(WebsocketTunnelRead),
-    Http2(Http2TunnelRead),
+pub enum TransportReader {
+    Websocket(WebsocketTransportRead),
+    Http2(Http2TransportRead),
     // Boxed: a quinn RecvStream plus the session handle is several times the size of the other
     // variants, and would otherwise inflate the enum for every tunnel.
-    WebTransport(Box<WebTransportTunnelRead>),
-    WebTransportUdp(Box<WebTransportUdpTunnelRead>),
+    WebTransport(Box<WebTransportRead>),
+    WebTransportUdp(Box<WebTransportUdpRead>),
 }
 
-impl TunnelRead for TunnelReader {
+impl TransportRead for TransportReader {
     async fn copy(&mut self, writer: impl AsyncWrite + Unpin + Send) -> Result<(), std::io::Error> {
         match self {
             Self::Websocket(s) => s.copy(writer).await,
@@ -55,15 +55,15 @@ impl TunnelRead for TunnelReader {
     }
 }
 
-pub enum TunnelWriter {
-    Websocket(WebsocketTunnelWrite),
-    Http2(Http2TunnelWrite),
+pub enum TransportWriter {
+    Websocket(WebsocketTransportWrite),
+    Http2(Http2TransportWrite),
     // Boxed for the same reason as `TunnelReader::WebTransport`.
-    WebTransport(Box<WebTransportTunnelWrite>),
-    WebTransportUdp(Box<WebTransportUdpTunnelWrite>),
+    WebTransport(Box<WebTransportWrite>),
+    WebTransportUdp(Box<WebTransportUdpWrite>),
 }
 
-impl TunnelWrite for TunnelWriter {
+impl TransportWrite for TransportWriter {
     fn buf_mut(&mut self) -> &mut BytesMut {
         match self {
             Self::Websocket(s) => s.buf_mut(),
@@ -121,7 +121,7 @@ impl TunnelWrite for TunnelWriter {
 
 pub async fn propagate_local_to_remote(
     local_rx: impl AsyncRead,
-    mut ws_tx: impl TunnelWrite,
+    mut ws_tx: impl TransportWrite,
     mut close_tx: oneshot::Sender<()>,
     ping_frequency: Option<Duration>,
 ) -> anyhow::Result<()> {
@@ -200,7 +200,7 @@ pub async fn propagate_local_to_remote(
 
 pub async fn propagate_remote_to_local(
     local_tx: impl AsyncWrite + Send,
-    mut ws_rx: impl TunnelRead,
+    mut ws_rx: impl TransportRead,
     mut close_rx: oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
     let _guard = scopeguard::guard((), |_| {

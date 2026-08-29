@@ -13,7 +13,7 @@ use tokio_rustls::rustls::pki_types::{DnsName, ServerName};
 use url::{Host, Url};
 
 #[derive(Clone, Debug)]
-pub struct WsClientConfig {
+pub struct ClientConfig {
     pub remote_addr: TransportAddr,
     pub socket_so_mark: SoMark,
     pub http_upgrade_path_prefix: String,
@@ -28,7 +28,7 @@ pub struct WsClientConfig {
     pub dns_resolver: DnsResolver,
 }
 
-impl WsClientConfig {
+impl ClientConfig {
     pub fn quic_server_name(&self) -> String {
         self.remote_addr
             .tls()

@@ -1,6 +1,6 @@
 use crate::executor::TokioExecutorRef;
 use crate::tunnel::RemoteAddr;
-use crate::tunnel::listeners::TunnelListener;
+use crate::tunnel::downstream_listeners::DownstreamListener;
 use ahash::AHashMap;
 use anyhow::anyhow;
 use futures_util::{StreamExt, pin_mut};
@@ -15,34 +15,40 @@ use tokio::task::AbortHandle;
 use tokio::{select, time};
 use tracing::{Instrument, Span, info};
 
-struct ReverseTunnelItem<T: TunnelListener> {
+struct ReverseTunnelItem<T: DownstreamListener> {
     #[allow(clippy::type_complexity)]
-    receiver: async_channel::Receiver<((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr)>,
+    receiver: async_channel::Receiver<(
+        (<T as DownstreamListener>::Reader, <T as DownstreamListener>::Writer),
+        RemoteAddr,
+    )>,
     nb_seen_clients: Arc<AtomicUsize>,
     server_task: AbortHandle,
 }
 
-impl<T: TunnelListener> ReverseTunnelItem<T> {
+impl<T: DownstreamListener> ReverseTunnelItem<T> {
     #[allow(clippy::type_complexity)]
     pub fn get_cnx_awaiter(
         &self,
-    ) -> async_channel::Receiver<((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr)> {
+    ) -> async_channel::Receiver<(
+        (<T as DownstreamListener>::Reader, <T as DownstreamListener>::Writer),
+        RemoteAddr,
+    )> {
         self.nb_seen_clients.fetch_add(1, Ordering::Relaxed);
         self.receiver.clone()
     }
 }
 
-impl<T: TunnelListener> Drop for ReverseTunnelItem<T> {
+impl<T: DownstreamListener> Drop for ReverseTunnelItem<T> {
     fn drop(&mut self) {
         self.server_task.abort();
     }
 }
 
-pub struct ReverseTunnelServer<T: TunnelListener> {
+pub struct ReverseTunnelServer<T: DownstreamListener> {
     servers: Arc<Mutex<AHashMap<SocketAddr, ReverseTunnelItem<T>>>>,
 }
 
-impl<T: TunnelListener> ReverseTunnelServer<T> {
+impl<T: DownstreamListener> ReverseTunnelServer<T> {
     pub fn new() -> Self {
         Self {
             servers: Arc::new(Mutex::new(AHashMap::with_capacity(1))),
@@ -55,9 +61,12 @@ impl<T: TunnelListener> ReverseTunnelServer<T> {
         bind_addr: SocketAddr,
         idle_timeout: Duration,
         gen_listening_server: impl Future<Output = anyhow::Result<T>>,
-    ) -> anyhow::Result<((<T as TunnelListener>::Reader, <T as TunnelListener>::Writer), RemoteAddr)>
+    ) -> anyhow::Result<(
+        (<T as DownstreamListener>::Reader, <T as DownstreamListener>::Writer),
+        RemoteAddr,
+    )>
     where
-        T: TunnelListener + Send + 'static,
+        T: DownstreamListener + Send + 'static,
     {
         let listening_server = self
             .servers

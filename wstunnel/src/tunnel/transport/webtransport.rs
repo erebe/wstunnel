@@ -1,7 +1,7 @@
-use super::io::{MAX_PACKET_LENGTH, TunnelRead, TunnelWrite};
+use super::io::{MAX_PACKET_LENGTH, TransportRead, TransportWrite};
 use crate::somark::SoMark;
 use crate::tunnel::RemoteAddr;
-use crate::tunnel::client::WsClient;
+use crate::tunnel::client::Client;
 use crate::tunnel::transport::headers_from_file;
 use crate::tunnel::transport::jwt::tunnel_to_jwt_token;
 use anyhow::{Context, anyhow};
@@ -141,14 +141,14 @@ pub(crate) fn bind_udp_socket(bind: Option<SocketAddr>, so_mark: SoMark) -> anyh
     Ok(socket.into())
 }
 
-pub struct WebTransportTunnelRead {
+pub struct WebTransportRead {
     inner: RecvStream,
     // Keep the session alive: it owns the QUIC connection, which is closed when the last
     // handle is dropped.
     _session: Session,
 }
 
-impl WebTransportTunnelRead {
+impl WebTransportRead {
     pub fn new(inner: RecvStream, session: Session) -> Self {
         Self {
             inner,
@@ -156,12 +156,12 @@ impl WebTransportTunnelRead {
         }
     }
 
-    pub fn into_udp_stream(self) -> WebTransportUdpTunnelRead {
-        WebTransportUdpTunnelRead::new(self.inner, self._session)
+    pub fn into_udp_stream(self) -> WebTransportUdpRead {
+        WebTransportUdpRead::new(self.inner, self._session)
     }
 }
 
-impl TunnelRead for WebTransportTunnelRead {
+impl TransportRead for WebTransportRead {
     async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> Result<(), io::Error> {
         // read_chunk hands back quinn's internal `Bytes` directly, so we forward it to the writer
         // without the extra copy into an intermediate buffer that `read` would require.
@@ -176,7 +176,7 @@ impl TunnelRead for WebTransportTunnelRead {
     }
 }
 
-pub struct WebTransportTunnelWrite {
+pub struct WebTransportWrite {
     inner: SendStream,
     buf: BytesMut,
     _session: Session,
@@ -184,12 +184,12 @@ pub struct WebTransportTunnelWrite {
 
 /// WebTransport stream transport for UDP tunnels. QUIC streams do not preserve message
 /// boundaries, so UDP payloads need an explicit length prefix before they enter the stream.
-pub struct WebTransportUdpTunnelRead {
+pub struct WebTransportUdpRead {
     inner: RecvStream,
     _session: Session,
 }
 
-impl WebTransportUdpTunnelRead {
+impl WebTransportUdpRead {
     pub fn new(inner: RecvStream, session: Session) -> Self {
         Self {
             inner,
@@ -198,7 +198,7 @@ impl WebTransportUdpTunnelRead {
     }
 }
 
-impl TunnelRead for WebTransportUdpTunnelRead {
+impl TransportRead for WebTransportUdpRead {
     async fn copy(&mut self, mut writer: impl AsyncWrite + Unpin + Send) -> Result<(), io::Error> {
         let length = self
             .inner
@@ -248,13 +248,13 @@ impl TunnelRead for WebTransportUdpTunnelRead {
     }
 }
 
-pub struct WebTransportUdpTunnelWrite {
+pub struct WebTransportUdpWrite {
     inner: SendStream,
     buf: BytesMut,
     _session: Session,
 }
 
-impl WebTransportUdpTunnelWrite {
+impl WebTransportUdpWrite {
     pub fn new(inner: SendStream, session: Session) -> Self {
         Self {
             inner,
@@ -276,7 +276,7 @@ impl WebTransportUdpTunnelWrite {
     }
 }
 
-impl TunnelWrite for WebTransportUdpTunnelWrite {
+impl TransportWrite for WebTransportUdpWrite {
     fn buf_mut(&mut self) -> &mut BytesMut {
         &mut self.buf
     }
@@ -307,7 +307,7 @@ impl TunnelWrite for WebTransportUdpTunnelWrite {
     }
 }
 
-impl WebTransportTunnelWrite {
+impl WebTransportWrite {
     pub fn new(inner: SendStream, session: Session) -> Self {
         Self {
             inner,
@@ -316,12 +316,12 @@ impl WebTransportTunnelWrite {
         }
     }
 
-    pub fn into_udp_stream(self) -> WebTransportUdpTunnelWrite {
-        WebTransportUdpTunnelWrite::new(self.inner, self._session)
+    pub fn into_udp_stream(self) -> WebTransportUdpWrite {
+        WebTransportUdpWrite::new(self.inner, self._session)
     }
 }
 
-impl TunnelWrite for WebTransportTunnelWrite {
+impl TransportWrite for WebTransportWrite {
     fn buf_mut(&mut self) -> &mut BytesMut {
         &mut self.buf
     }
@@ -414,9 +414,9 @@ pub async fn read_jwt_preamble(stream: &mut RecvStream) -> anyhow::Result<String
 
 pub async fn connect(
     request_id: Uuid,
-    client: &WsClient<impl crate::TokioExecutorRef>,
+    client: &Client<impl crate::TokioExecutorRef>,
     dest_addr: &RemoteAddr,
-) -> anyhow::Result<(WebTransportTunnelRead, WebTransportTunnelWrite, Parts)> {
+) -> anyhow::Result<(WebTransportRead, WebTransportWrite, Parts)> {
     let client_cfg = &client.config;
     let Some(webtransport) = client.webtransport.as_ref() else {
         return Err(anyhow!(
@@ -564,8 +564,8 @@ pub async fn connect(
     };
 
     Ok((
-        WebTransportTunnelRead::new(recv, session.clone()),
-        WebTransportTunnelWrite::new(send, session),
+        WebTransportRead::new(recv, session.clone()),
+        WebTransportWrite::new(send, session),
         response,
     ))
 }

@@ -1,9 +1,8 @@
 #![allow(clippy::module_inception)]
 mod client;
-mod cnx_pool;
 mod config;
-pub mod l4_transport_stream;
+pub mod connection_pool;
 
-pub use client::WsClient;
+pub use client::Client;
+pub use config::ClientConfig;
 pub use config::TlsClientConfig;
-pub use config::WsClientConfig;

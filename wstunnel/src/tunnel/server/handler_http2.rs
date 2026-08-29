@@ -1,9 +1,9 @@
 use crate::executor::TokioExecutorRef;
 use crate::restrictions::types::RestrictionsRules;
-use crate::tunnel::server::WsServer;
+use crate::tunnel::server::Server;
 use crate::tunnel::server::utils::{HttpResponse, bad_request, inject_cookie};
 use crate::tunnel::transport;
-use crate::tunnel::transport::http2::{Http2TunnelRead, Http2TunnelWrite};
+use crate::tunnel::transport::http2::{Http2TransportRead, Http2TransportWrite};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use http_body_util::combinators::BoxBody;
@@ -18,7 +18,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{Instrument, Span};
 
 pub(super) async fn http_server_upgrade(
-    server: WsServer<impl TokioExecutorRef>,
+    server: Server<impl TokioExecutorRef>,
     restrictions: Arc<RestrictionsRules>,
     restrict_path_prefix: Option<String>,
     client_addr: SocketAddr,
@@ -46,12 +46,12 @@ pub(super) async fn http_server_upgrade(
 
     let (close_tx, close_rx) = oneshot::channel::<()>();
     server.executor.spawn(
-        transport::io::propagate_remote_to_local(local_tx, Http2TunnelRead::new(ws_rx, None), close_rx)
+        transport::io::propagate_remote_to_local(local_tx, Http2TransportRead::new(ws_rx, None), close_rx)
             .instrument(Span::current()),
     );
 
     server.executor.spawn(
-        transport::io::propagate_local_to_remote(local_rx, Http2TunnelWrite::new(ws_tx), close_tx, None)
+        transport::io::propagate_local_to_remote(local_rx, Http2TransportWrite::new(ws_tx), close_tx, None)
             .instrument(Span::current()),
     );
 

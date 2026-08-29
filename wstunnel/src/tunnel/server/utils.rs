@@ -1,7 +1,7 @@
 use crate::LocalProtocol;
 use crate::restrictions::types::{
     AllowConfig, AllowReverseTunnelConfig, AllowTunnelConfig, MatchConfig, RestrictionConfig, RestrictionsRules,
-    ReverseTunnelConfigProtocol, TunnelConfigProtocol,
+    ReverseTunnelProtocol, TunnelProtocol,
 };
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::transport::{JWT_HEADER_PREFIX, JwtTunnelConfig, jwt_token_to_tunnel, tunnel_to_jwt_token};
@@ -140,11 +140,7 @@ impl AllowReverseTunnelConfig {
             return false;
         }
 
-        if !self.protocol.is_empty()
-            && !self
-                .protocol
-                .contains(&ReverseTunnelConfigProtocol::from(&remote.protocol))
-        {
+        if !self.protocol.is_empty() && !self.protocol.contains(&ReverseTunnelProtocol::from(&remote.protocol)) {
             return false;
         }
 
@@ -167,7 +163,7 @@ impl AllowTunnelConfig {
             return false;
         }
 
-        if !self.protocol.is_empty() && !self.protocol.contains(&TunnelConfigProtocol::from(&remote.protocol)) {
+        if !self.protocol.is_empty() && !self.protocol.contains(&TunnelProtocol::from(&remote.protocol)) {
             return false;
         }
 
@@ -240,7 +236,7 @@ mod tests {
                     name: "restrict1".into(),
                     r#match: vec![MatchConfig::Any],
                     allow: vec![AllowConfig::Tunnel(AllowTunnelConfig {
-                        protocol: vec![TunnelConfigProtocol::Tcp],
+                        protocol: vec![TunnelProtocol::Tcp],
                         port: vec![80..=80],
                         cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
                         host: Regex::new("example.com").unwrap(),
@@ -251,7 +247,7 @@ mod tests {
                     name: "restrict2".into(),
                     r#match: vec![MatchConfig::Any],
                     allow: vec![AllowConfig::ReverseTunnel(AllowReverseTunnelConfig {
-                        protocol: vec![ReverseTunnelConfigProtocol::Tcp],
+                        protocol: vec![ReverseTunnelProtocol::Tcp],
                         port: vec![80..=80],
                         cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
                         port_mapping: Default::default(),
@@ -361,7 +357,7 @@ mod tests {
     #[test]
     fn test_reverse_tunnel_is_allowed() {
         let config = AllowReverseTunnelConfig {
-            protocol: vec![ReverseTunnelConfigProtocol::Tcp],
+            protocol: vec![ReverseTunnelProtocol::Tcp],
             port: vec![80..=80],
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 8).unwrap())],
             port_mapping: Default::default(),
@@ -389,7 +385,7 @@ mod tests {
     #[test]
     fn test_reverse_tunnel_is_not_allowed() {
         let config = AllowReverseTunnelConfig {
-            protocol: vec![ReverseTunnelConfigProtocol::Tcp],
+            protocol: vec![ReverseTunnelProtocol::Tcp],
             port: vec![80..=80],
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
             port_mapping: Default::default(),
@@ -454,7 +450,7 @@ mod tests {
     #[test]
     fn test_reverse_unix_tunnel_is_allowed() {
         let config = AllowReverseTunnelConfig {
-            protocol: vec![ReverseTunnelConfigProtocol::Unix],
+            protocol: vec![ReverseTunnelProtocol::Unix],
             port: vec![],
             cidr: vec![],
             port_mapping: Default::default(),
@@ -493,7 +489,7 @@ mod tests {
     #[test]
     fn test_tunnel_is_allowed() {
         let config = AllowTunnelConfig {
-            protocol: vec![TunnelConfigProtocol::Tcp],
+            protocol: vec![TunnelProtocol::Tcp],
             port: vec![80..=80],
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 8).unwrap())],
             host: Regex::new(".*").unwrap(),
@@ -529,7 +525,7 @@ mod tests {
     #[test]
     fn test_tunnel_is_not_allowed() {
         let config = AllowTunnelConfig {
-            protocol: vec![TunnelConfigProtocol::Tcp],
+            protocol: vec![TunnelProtocol::Tcp],
             port: vec![80..=80],
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
             host: Regex::new("example.com").unwrap(),

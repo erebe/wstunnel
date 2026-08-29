@@ -7,12 +7,12 @@ use std::task::Poll;
 use tokio::net::{UnixListener, UnixStream};
 use tracing::log::info;
 
-pub struct UnixListenerStream {
+pub struct UnixSockListener {
     inner: UnixListener,
     path_to_delete: bool,
 }
 
-impl UnixListenerStream {
+impl UnixSockListener {
     pub const fn new(listener: UnixListener, path_to_delete: bool) -> Self {
         Self {
             inner: listener,
@@ -21,7 +21,7 @@ impl UnixListenerStream {
     }
 }
 
-impl Drop for UnixListenerStream {
+impl Drop for UnixSockListener {
     fn drop(&mut self) {
         if self.path_to_delete {
             let Ok(addr) = &self.inner.local_addr() else {
@@ -35,7 +35,7 @@ impl Drop for UnixListenerStream {
     }
 }
 
-impl Stream for UnixListenerStream {
+impl Stream for UnixSockListener {
     type Item = io::Result<UnixStream>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<io::Result<UnixStream>>> {
@@ -47,12 +47,12 @@ impl Stream for UnixListenerStream {
     }
 }
 
-pub async fn run_server(socket_path: &Path) -> Result<UnixListenerStream, anyhow::Error> {
+pub async fn run_server(socket_path: &Path) -> Result<UnixSockListener, anyhow::Error> {
     info!("Starting Unix socket server listening cnx on {socket_path:?}");
 
     let path_to_delete = !socket_path.exists();
     let listener =
         UnixListener::bind(socket_path).with_context(|| format!("Cannot create Unix socket server {socket_path:?}"))?;
 
-    Ok(UnixListenerStream::new(listener, path_to_delete))
+    Ok(UnixSockListener::new(listener, path_to_delete))
 }

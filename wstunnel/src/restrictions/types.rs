@@ -37,7 +37,7 @@ pub enum AllowConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AllowTunnelConfig {
     #[serde(default)]
-    pub protocol: Vec<TunnelConfigProtocol>,
+    pub protocol: Vec<TunnelProtocol>,
 
     #[serde(deserialize_with = "deserialize_port_range")]
     #[serde(default)]
@@ -54,7 +54,7 @@ pub struct AllowTunnelConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AllowReverseTunnelConfig {
     #[serde(default)]
-    pub protocol: Vec<ReverseTunnelConfigProtocol>,
+    pub protocol: Vec<ReverseTunnelProtocol>,
 
     #[serde(deserialize_with = "deserialize_port_range")]
     #[serde(default)]
@@ -73,14 +73,14 @@ pub struct AllowReverseTunnelConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
-pub enum TunnelConfigProtocol {
+pub enum TunnelProtocol {
     Tcp,
     Udp,
     Unknown,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
-pub enum ReverseTunnelConfigProtocol {
+pub enum ReverseTunnelProtocol {
     Tcp,
     Udp,
     Socks5,
@@ -156,7 +156,7 @@ where
     }
 }
 
-impl From<&LocalProtocol> for ReverseTunnelConfigProtocol {
+impl From<&LocalProtocol> for ReverseTunnelProtocol {
     fn from(value: &LocalProtocol) -> Self {
         match value {
             LocalProtocol::Tcp { .. }
@@ -175,7 +175,7 @@ impl From<&LocalProtocol> for ReverseTunnelConfigProtocol {
         }
     }
 }
-impl From<&LocalProtocol> for TunnelConfigProtocol {
+impl From<&LocalProtocol> for TunnelProtocol {
     fn from(value: &LocalProtocol) -> Self {
         match value {
             LocalProtocol::ReverseTcp
