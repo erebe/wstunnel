@@ -107,22 +107,26 @@ fn main() -> anyhow::Result<()> {
         // Start system CA reloader
         SystemCaReloader::start(None);
 
-        match args.commands {
-            Commands::Client(args) => {
-                run_client(*args, DefaultTokioExecutor::default())
-                    .await
-                    .unwrap_or_else(|err| {
-                        panic!("Cannot start wstunnel client: {err:?}");
-                    });
+        let run = async {
+            match args.commands {
+                Commands::Client(args) => {
+                    run_client(*args, DefaultTokioExecutor::default())
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("Cannot start wstunnel client: {err:?}");
+                        });
+                }
+                Commands::Server(args) => {
+                    run_server(*args, DefaultTokioExecutor::default())
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("Cannot start wstunnel server: {err:?}");
+                        });
+                }
             }
-            Commands::Server(args) => {
-                run_server(*args, DefaultTokioExecutor::default())
-                    .await
-                    .unwrap_or_else(|err| {
-                        panic!("Cannot start wstunnel server: {err:?}");
-                    });
-            }
-        }
+        };
+
+        run.await;
 
         Ok(())
     })

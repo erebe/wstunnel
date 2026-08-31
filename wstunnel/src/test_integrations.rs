@@ -10,7 +10,7 @@ use crate::tunnel::downstream_listeners::{Socks5DownstreamListener, TcpDownstrea
 use crate::tunnel::server::{Server, ServerConfig, TlsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
 use bytes::BytesMut;
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
 use hyper::http::HeaderValue;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use regex::Regex;
@@ -365,6 +365,27 @@ async fn test_tcp_tunnel_webtransport(
     assert_eq!(&buf[..6], b"world!");
 }
 
+/// Read exactly one datagram from `reader`, while keeping `listener` polled.
+///
+/// The UDP server stream is what dispatches incoming datagrams to the streams it already handed
+/// out (it peeks the sender, then notifies that peer), so a read that is not raced with a poll of
+/// the listener would block forever on the second datagram. In production the listener is polled
+/// by its own accept loop; a test that holds a single stream has to drive it by hand.
+async fn read_one_datagram(
+    listener: &mut (impl Stream<Item = std::io::Result<protocols::udp::UdpStream>> + Unpin),
+    reader: &mut (impl AsyncReadExt + Unpin),
+    buf: &mut BytesMut,
+) {
+    // Reserved up front: `read_buf` only grows a `BytesMut` by a small increment, and a UDP recv
+    // truncates whatever does not fit, which would read as a boundary bug rather than a short buffer.
+    buf.reserve(64 * 1024);
+    tokio::select! {
+        biased;
+        res = reader.read_buf(buf) => { res.unwrap(); }
+        next = listener.next() => panic!("unexpected second UDP connection: {:?}", next.map(|r| r.map(|_| ()))),
+    }
+}
+
 #[rstest]
 #[timeout(Duration::from_secs(15))]
 #[tokio::test]
@@ -404,17 +425,25 @@ async fn test_udp_tunnel_webtransport(
     .unwrap();
 
     client.write_all(b"Hello").await.unwrap();
+    client.write_all(b"John").await.unwrap();
+    client.flush().await.unwrap();
     pin!(udp_listener);
     let dd = udp_listener.next().await.unwrap().unwrap();
     pin!(dd);
     let mut buf = BytesMut::new();
-    dd.read_buf(&mut buf).await.unwrap();
-    assert_eq!(&buf[..5], b"Hello");
+    // Compared on the whole buffer, not a prefix: the two datagrams were sent back to back, so a
+    // transport that lost their boundaries would hand over "HelloJohn" in one read, and a prefix
+    // comparison would accept it here and only hang on the read that follows.
+    read_one_datagram(&mut udp_listener, &mut dd, &mut buf).await;
+    assert_eq!(&buf[..], b"Hello");
+    buf.clear();
+    read_one_datagram(&mut udp_listener, &mut dd, &mut buf).await;
+    assert_eq!(&buf[..], b"John");
     buf.clear();
 
     dd.writer().write_all(b"world!").await.unwrap();
     client.read_buf(&mut buf).await.unwrap();
-    assert_eq!(&buf[..6], b"world!");
+    assert_eq!(&buf[..], b"world!");
 }
 
 /// Perform a SOCKS5 no-auth greeting + CONNECT to `dst`, and return the reply code byte (0x00 =
