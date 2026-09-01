@@ -363,8 +363,8 @@ Options:
           [env: WSTUNNEL_DNS_PREFER_IPV4=]
 
       --restrict-to <DEST:PORT>
-          Server will only accept connection from the specified tunnel information.
-          Can be specified multiple time
+          Server will only allow tunneling to the specified destination (host:port).
+          Restricts where clients can forward traffic to. Can be specified multiple times.
           Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
 
   -r, --restrict-http-upgrade-path-prefix <RESTRICT_HTTP_UPGRADE_PATH_PREFIX>
