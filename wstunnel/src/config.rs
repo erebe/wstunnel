@@ -327,8 +327,8 @@ pub struct ServerCreationRequest {
     )]
     pub dns_resolver_prefer_ipv4: bool,
 
-    /// Server will only accept connection from the specified tunnel information.
-    /// Can be specified multiple time
+    /// Server will only allow tunneling to the specified destination (host:port).
+    /// Restricts where clients can forward traffic to. Can be specified multiple times.
     /// Example: --restrict-to "google.com:443" --restrict-to "localhost:22"
     #[cfg_attr(
         feature = "clap",
