@@ -193,7 +193,7 @@ async fn handle_session(
         let span = span!(Level::INFO, "tunnel", peer = client_addr.to_string());
         server.executor.clone().spawn(
             async move {
-                if let Err(err) = handle_stream(
+                if let Err(err) = wt_server_connect(
                     server,
                     restrictions,
                     session,
@@ -215,7 +215,7 @@ async fn handle_session(
 
 /// Serve one tunnel, carried by one bidirectional stream of a webtransport session.
 #[allow(clippy::too_many_arguments)]
-async fn handle_stream(
+async fn wt_server_connect(
     server: Server<impl TokioExecutorRef>,
     restrictions: Arc<RestrictionsRules>,
     session: web_transport_quinn::Session,

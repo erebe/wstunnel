@@ -1,6 +1,6 @@
 use crate::executor::TokioExecutorRef;
 use crate::tunnel::RemoteAddr;
-use crate::tunnel::downstream_listeners::DownstreamListener;
+use crate::tunnel::downstream_listeners::{DownstreamListener, DownstreamWrite};
 use ahash::AHashMap;
 use anyhow::anyhow;
 use futures_util::{StreamExt, pin_mut};
@@ -95,7 +95,10 @@ impl<T: DownstreamListener> ReverseTunnelServer<T> {
                         biased;
                         cnx = listening_server.next() => {
                            match cnx {
-                                None => break,
+                                None => {
+                                    warn!("Error while listening for incoming connections. Server stopped");
+                                    break
+                                },
                                 Some(Err(err)) => {
                                     warn!("Error while listening for incoming connections {err:?}");
                                     continue;
@@ -132,10 +135,11 @@ impl<T: DownstreamListener> ReverseTunnelServer<T> {
             cnx_awaiter
         };
 
-        let cnx = cnx
+        let mut cnx = cnx
             .recv()
             .await
             .map_err(|_| anyhow!("listening reverse server stopped"))?;
+        let _ = cnx.0.1.on_tunnel_ready(Ok(())).await;
         Ok(cnx)
     }
 }
