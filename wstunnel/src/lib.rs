@@ -203,7 +203,7 @@ pub async fn create_client(
         remote_addr: TransportAddr::new(
             TransportScheme::from_str(args.remote_addr.scheme()).unwrap(),
             args.remote_addr.host().unwrap().to_owned(),
-            args.remote_addr.port_or_known_default().unwrap(),
+            args.remote_addr.port_or_known_default().unwrap_or(443),
             tls,
         )
         .unwrap(),
