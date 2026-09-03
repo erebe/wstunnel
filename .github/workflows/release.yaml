@@ -1,4 +1,6 @@
 on:
+  # Manual run from Actions tab (pick branch/ref in the UI)
+  workflow_dispatch:
   # Indicates I want to run this workflow on all branches, PR, and tags
   push:
     branches: [ "main", "draft" ]
