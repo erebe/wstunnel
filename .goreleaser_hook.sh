@@ -37,7 +37,7 @@ else
 fi
 
 echo "DIST_DIR: $DIST_DIR"
-rm -f ${DIST_DIR}/${project_name}*
+rm -f ${DIST_DIR}/rhtlc-wstunnel*
 
-find artifacts -type f -wholename "*${rust_arch}*${rust_os}*/${project_name}*" -exec cp {} ${DIST_DIR}/ \;
+find artifacts -type f -wholename "*${rust_arch}*${rust_os}*/rhtlc-wstunnel*" -exec cp {} ${DIST_DIR}/ \;
 

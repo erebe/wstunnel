@@ -13,7 +13,7 @@ builds:
     goarm:
       - "6"
       - "7"
-    binary: wstunnel
+    binary: rhtlc-wstunnel
     ignore:
       - goos: windows
         goarch: arm

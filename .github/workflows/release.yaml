@@ -14,7 +14,7 @@ concurrency:
 
 env:
   RUST_VERSION: 1.97
-  BIN_NAME: "wstunnel"
+  BIN_NAME: "rhtlc-wstunnel"
 
 jobs:
   # Runs alongside the build matrix, so a formatting or test failure is reported without
@@ -201,7 +201,7 @@ jobs:
         with:
           command: build
           use-cross: ${{ (!contains(matrix.platform.target, 'x86_64') && !contains(matrix.platform.target, 'windows')) || contains(matrix.platform.target, 'freebsd') }}
-          args: ${{ matrix.platform.build-args }} --bin wstunnel --target ${{ matrix.platform.target }}
+          args: ${{ matrix.platform.build-args }} --bin rhtlc-wstunnel --target ${{ matrix.platform.target }}
 
       - name: Store artifact
         uses: actions/upload-artifact@v4

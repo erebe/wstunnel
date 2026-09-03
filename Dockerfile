@@ -49,7 +49,7 @@ RUN useradd -ms /bin/bash app && \
 WORKDIR /home/app
 
 ARG PROFILE=release
-COPY --from=builder_release  /build/target/${PROFILE}/wstunnel wstunnel
+COPY --from=builder_release  /build/target/${PROFILE}/rhtlc-wstunnel rhtlc-wstunnel
 
 ENV RUST_LOG="INFO"
 ENV SERVER_PROTOCOL="wss"
@@ -60,4 +60,4 @@ EXPOSE 8080
 USER app
 
 ENTRYPOINT ["/usr/bin/dumb-init", "-v", "--"]
-CMD ["/bin/sh", "-c", "exec /home/app/wstunnel server ${SERVER_PROTOCOL}://${SERVER_LISTEN}:${SERVER_PORT}"]
+CMD ["/bin/sh", "-c", "exec /home/app/rhtlc-wstunnel server ${SERVER_PROTOCOL}://${SERVER_LISTEN}:${SERVER_PORT}"]
