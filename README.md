@@ -72,6 +72,7 @@ What to expect from previous version:
 
 ## Demo server <a name="demo"></a>
 
+==> BROKEN FOR NOW - GOING TO REPAIR <==
 If you just want to try out that you can bypass your proxy/firewall.
 You can give it a try with wstunnel demo server.
 
