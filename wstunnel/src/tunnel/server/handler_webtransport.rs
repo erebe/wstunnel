@@ -67,7 +67,7 @@ pub(super) async fn run_webtransport_server(
 
         let session_handler = {
             let server = server.clone();
-            let restrictions = restrictions.load().clone();
+            let restrictions = restrictions.clone();
             async move {
                 if let Err(err) = handle_session(server, restrictions, request).await {
                     warn!("{err:?}");
@@ -111,7 +111,7 @@ fn mk_quic_endpoint(
 
 async fn handle_session(
     server: Server<impl TokioExecutorRef>,
-    restrictions: Arc<RestrictionsRules>,
+    restrictions: Arc<ArcSwap<RestrictionsRules>>,
     request: web_transport_quinn::Request,
 ) -> anyhow::Result<()> {
     // Unlike the TCP path, the client certificate is readable before we answer the CONNECT.
@@ -159,7 +159,7 @@ async fn handle_session(
     let allowed = matches_any_restriction(
         path_prefix,
         session_headers.get(AUTHORIZATION).and_then(|auth| auth.to_str().ok()),
-        &restrictions,
+        &restrictions.load(),
     );
     if !allowed {
         warn!("Rejecting webtransport session from {client_addr}: no restriction matches path prefix '{path_prefix}'");
@@ -184,8 +184,8 @@ async fn handle_session(
             }
         };
 
+        let restrictions: Arc<RestrictionsRules> = restrictions.load().clone();
         let server = server.clone();
-        let restrictions = restrictions.clone();
         let session = session.clone();
         let session_path = session_path.clone();
         let session_headers = session_headers.clone();
