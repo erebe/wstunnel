@@ -1,6 +1,9 @@
 use crate::protocols;
+use crate::protocols::tcp::configure_socket;
+use crate::somark::SoMark;
 use crate::tunnel::{LocalProtocol, RemoteAddr};
 use anyhow::{Context, anyhow};
+use socket2::SockRef;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Poll, ready};
@@ -36,10 +39,12 @@ impl Stream for TcpDownstreamListener {
         let this = self.get_mut();
         let ret = ready!(Pin::new(&mut this.listener).poll_next(cx));
         let ret = match ret {
-            Some(Ok(strean)) => {
+            Some(Ok(stream)) => {
+                let _ = configure_socket(SockRef::from(&stream), SoMark::new(None))
+                    .inspect_err(|e| log::error!("TCP Downstream listener error: {e}"));
                 let (host, port) = this.dest.clone();
                 Some(anyhow::Ok((
-                    strean.into_split(),
+                    stream.into_split(),
                     RemoteAddr {
                         protocol: LocalProtocol::Tcp {
                             proxy_protocol: this.proxy_protocol,

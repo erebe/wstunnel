@@ -13,6 +13,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::task::Poll;
 use std::time::Duration;
+use socket2::SockRef;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
@@ -21,6 +22,8 @@ use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 use tracing::{info, warn};
 use url::Host;
+use crate::protocols::tcp::configure_socket;
+use crate::somark::SoMark;
 
 /// Max time a client has to send its SOCKS5 greeting and command once connected.
 /// The accept loop handles connections one at a time, so an idle client must not
@@ -114,6 +117,7 @@ impl DownstreamWrite for Socks5WriteHalf {
         match result {
             Ok(()) => {
                 let stream = proto.reply_success(*reply_addr).await.map_err(Error::other)?;
+                let _ = configure_socket(SockRef::from(&stream), SoMark::new(None));
                 let (read_half, write_half) = stream.into_split();
                 // Hand the read half to the paired `Socks5ReadHalf::TcpPending`. If the receiver is
                 // gone (read half dropped) there is nothing to read anyway, so ignore the error.
