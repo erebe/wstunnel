@@ -169,11 +169,11 @@ impl<E: crate::TokioExecutorRef> Server<E> {
         match remote.protocol {
             LocalProtocol::Udp { timeout, .. } => {
                 let connector = UdpUpstreamConnector::new(
-                    &remote.host,
+                    remote.host.clone(),
                     remote.port,
                     self.config.socket_so_mark,
                     timeout.unwrap_or(Duration::from_secs(10)),
-                    &self.config.dns_resolver,
+                    self.config.dns_resolver.clone(),
                 );
                 let (rx, tx) = match &self.config.http_proxy {
                     None => connector.connect(&None).await?,
@@ -184,11 +184,11 @@ impl<E: crate::TokioExecutorRef> Server<E> {
             }
             LocalProtocol::Tcp { proxy_protocol } => {
                 let connector = TcpUpstreamConnector::new(
-                    &remote.host,
+                    remote.host.clone(),
                     remote.port,
                     self.config.socket_so_mark,
                     Duration::from_secs(10),
-                    &self.config.dns_resolver,
+                    self.config.dns_resolver.clone(),
                 );
                 let (rx, mut tx) = match &self.config.http_proxy {
                     None => connector.connect(&None).await?,

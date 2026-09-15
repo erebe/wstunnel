@@ -44,7 +44,7 @@ fn sort_socket_addrs(socket_addrs: &[SocketAddr], prefer_ipv6: bool) -> impl Ite
 pub enum DnsResolver {
     System,
     TrustDns {
-        resolver: Box<Resolver<TokioRuntimeProviderWithSoMark>>,
+        resolver: Arc<Resolver<TokioRuntimeProviderWithSoMark>>,
         prefer_ipv6: bool,
     },
 }
@@ -205,7 +205,7 @@ impl DnsResolver {
                         return Ok(Self::System);
                     };
                     return Ok(Self::TrustDns {
-                        resolver: Box::new(mk_resolver(cfg, opts, proxy, so_mark)?),
+                        resolver: Arc::new(mk_resolver(cfg, opts, proxy, so_mark)?),
                         prefer_ipv6,
                     });
                 }
@@ -224,7 +224,7 @@ impl DnsResolver {
         }
 
         Ok(Self::TrustDns {
-            resolver: Box::new(mk_resolver(cfg, ResolverOpts::default(), proxy, so_mark)?),
+            resolver: Arc::new(mk_resolver(cfg, ResolverOpts::default(), proxy, so_mark)?),
             prefer_ipv6,
         })
     }

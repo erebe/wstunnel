@@ -16,14 +16,14 @@ use crate::somark::SoMark;
 use crate::tunnel::upstream_connectors::UpstreamConnector;
 use crate::tunnel::{LocalProtocol, RemoteAddr};
 
-pub struct Socks5UpstreamConnector<'a> {
+pub struct Socks5UpstreamConnector {
     so_mark: SoMark,
     connect_timeout: Duration,
-    dns_resolver: &'a DnsResolver,
+    dns_resolver: DnsResolver,
 }
 
-impl Socks5UpstreamConnector<'_> {
-    pub fn new(so_mark: SoMark, connect_timeout: Duration, dns_resolver: &DnsResolver) -> Socks5UpstreamConnector<'_> {
+impl Socks5UpstreamConnector {
+    pub fn new(so_mark: SoMark, connect_timeout: Duration, dns_resolver: DnsResolver) -> Socks5UpstreamConnector {
         Socks5UpstreamConnector {
             so_mark,
             connect_timeout,
@@ -32,7 +32,7 @@ impl Socks5UpstreamConnector<'_> {
     }
 }
 
-impl UpstreamConnector for Socks5UpstreamConnector<'_> {
+impl UpstreamConnector for Socks5UpstreamConnector {
     type Reader = Socks5UpstreamReader;
     type Writer = Socks5UpstreamWriter;
 
@@ -48,16 +48,21 @@ impl UpstreamConnector for Socks5UpstreamConnector<'_> {
                     remote.port,
                     self.so_mark,
                     self.connect_timeout,
-                    self.dns_resolver,
+                    &self.dns_resolver,
                 )
                 .await?;
                 let (reader, writer) = stream.into_split();
                 Ok((Socks5UpstreamReader::Tcp(reader), Socks5UpstreamWriter::Tcp(writer)))
             }
             LocalProtocol::Udp { .. } => {
-                let stream =
-                    udp::connect(&remote.host, remote.port, self.connect_timeout, self.so_mark, self.dns_resolver)
-                        .await?;
+                let stream = udp::connect(
+                    &remote.host,
+                    remote.port,
+                    self.connect_timeout,
+                    self.so_mark,
+                    &self.dns_resolver,
+                )
+                .await?;
                 Ok((Socks5UpstreamReader::Udp(stream.clone()), Socks5UpstreamWriter::Udp(stream)))
             }
             _ => Err(anyhow!("Invalid protocol for reverse socks5 {:?}", remote.protocol)),
@@ -81,7 +86,7 @@ impl UpstreamConnector for Socks5UpstreamConnector<'_> {
                     remote.port,
                     self.so_mark,
                     self.connect_timeout,
-                    self.dns_resolver,
+                    &self.dns_resolver,
                 )
                 .await?;
                 let (reader, writer) = stream.into_split();

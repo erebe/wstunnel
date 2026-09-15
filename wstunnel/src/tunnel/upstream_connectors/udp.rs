@@ -9,22 +9,22 @@ use crate::somark::SoMark;
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::upstream_connectors::UpstreamConnector;
 
-pub struct UdpUpstreamConnector<'a> {
-    host: &'a Host,
+pub struct UdpUpstreamConnector {
+    host: Host,
     port: u16,
     so_mark: SoMark,
     connect_timeout: Duration,
-    dns_resolver: &'a DnsResolver,
+    dns_resolver: DnsResolver,
 }
 
-impl<'a> UdpUpstreamConnector<'a> {
+impl UdpUpstreamConnector {
     pub fn new(
-        host: &'a Host,
+        host: Host,
         port: u16,
         so_mark: SoMark,
         connect_timeout: Duration,
-        dns_resolver: &'a DnsResolver,
-    ) -> UdpUpstreamConnector<'a> {
+        dns_resolver: DnsResolver,
+    ) -> UdpUpstreamConnector {
         UdpUpstreamConnector {
             host,
             port,
@@ -35,13 +35,13 @@ impl<'a> UdpUpstreamConnector<'a> {
     }
 }
 
-impl UpstreamConnector for UdpUpstreamConnector<'_> {
+impl UpstreamConnector for UdpUpstreamConnector {
     type Reader = WsUdpStream;
     type Writer = WsUdpStream;
 
     async fn connect(&self, _: &Option<RemoteAddr>) -> anyhow::Result<(Self::Reader, Self::Writer)> {
         let stream =
-            protocols::udp::connect(self.host, self.port, self.connect_timeout, self.so_mark, self.dns_resolver)
+            protocols::udp::connect(&self.host, self.port, self.connect_timeout, self.so_mark, &self.dns_resolver)
                 .await?;
 
         Ok((stream.clone(), stream))

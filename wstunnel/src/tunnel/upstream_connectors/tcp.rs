@@ -9,22 +9,22 @@ use crate::somark::SoMark;
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::upstream_connectors::UpstreamConnector;
 
-pub struct TcpUpstreamConnector<'a> {
-    host: &'a Host,
+pub struct TcpUpstreamConnector {
+    host: Host,
     port: u16,
     so_mark: SoMark,
     connect_timeout: Duration,
-    dns_resolver: &'a DnsResolver,
+    dns_resolver: DnsResolver,
 }
 
-impl<'a> TcpUpstreamConnector<'a> {
+impl<'a> TcpUpstreamConnector {
     pub fn new(
-        host: &'a Host,
+        host: Host,
         port: u16,
         so_mark: SoMark,
         connect_timeout: Duration,
-        dns_resolver: &'a DnsResolver,
-    ) -> TcpUpstreamConnector<'a> {
+        dns_resolver: DnsResolver,
+    ) -> TcpUpstreamConnector {
         TcpUpstreamConnector {
             host,
             port,
@@ -35,17 +35,18 @@ impl<'a> TcpUpstreamConnector<'a> {
     }
 }
 
-impl UpstreamConnector for TcpUpstreamConnector<'_> {
+impl UpstreamConnector for TcpUpstreamConnector {
     type Reader = OwnedReadHalf;
     type Writer = OwnedWriteHalf;
 
     async fn connect(&self, remote: &Option<RemoteAddr>) -> anyhow::Result<(Self::Reader, Self::Writer)> {
         let (host, port) = match remote {
             Some(remote) => (&remote.host, remote.port),
-            None => (self.host, self.port),
+            None => (&self.host, self.port),
         };
 
-        let stream = protocols::tcp::connect(host, port, self.so_mark, self.connect_timeout, self.dns_resolver).await?;
+        let stream =
+            protocols::tcp::connect(host, port, self.so_mark, self.connect_timeout, &self.dns_resolver).await?;
         Ok(stream.into_split())
     }
 
@@ -56,7 +57,7 @@ impl UpstreamConnector for TcpUpstreamConnector<'_> {
     ) -> anyhow::Result<(Self::Reader, Self::Writer)> {
         let (host, port) = match remote {
             Some(remote) => (&remote.host, remote.port),
-            None => (self.host, self.port),
+            None => (&self.host, self.port),
         };
 
         let stream = protocols::tcp::connect_with_http_proxy(
@@ -65,7 +66,7 @@ impl UpstreamConnector for TcpUpstreamConnector<'_> {
             port,
             self.so_mark,
             self.connect_timeout,
-            self.dns_resolver,
+            &self.dns_resolver,
         )
         .await?;
         Ok(stream.into_split())

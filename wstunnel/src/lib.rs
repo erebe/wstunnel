@@ -260,11 +260,11 @@ async fn create_client_tunnels(
                 spawn_tunnel! {
                     let cfg = client.config.clone();
                     let tcp_connector = TcpUpstreamConnector::new(
-                        &tunnel.remote.0,
+                        tunnel.remote.0.clone(),
                         tunnel.remote.1,
                         cfg.socket_so_mark,
                         cfg.timeout_connect,
-                        &cfg.dns_resolver,
+                        cfg.dns_resolver.clone(),
                     );
                     let (host, port) = to_host_port(tunnel.local);
                     let remote = RemoteAddr {
@@ -288,11 +288,11 @@ async fn create_client_tunnels(
                         port,
                     };
                     let udp_connector = UdpUpstreamConnector::new(
-                        &tunnel.remote.0,
+                        tunnel.remote.0.clone(),
                         tunnel.remote.1,
                         cfg.socket_so_mark,
                         cfg.timeout_connect,
-                        &cfg.dns_resolver,
+                        cfg.dns_resolver.clone(),
                     );
 
                     if let Err(err) = client.run_reverse_tunnel(remote.clone(), udp_connector).await {
@@ -312,7 +312,7 @@ async fn create_client_tunnels(
                         port,
                     };
                     let socks_connector =
-                        Socks5UpstreamConnector::new(cfg.socket_so_mark, cfg.timeout_connect, &cfg.dns_resolver);
+                        Socks5UpstreamConnector::new(cfg.socket_so_mark, cfg.timeout_connect, cfg.dns_resolver.clone());
 
                     if let Err(err) = client.run_reverse_tunnel(remote, socks_connector).await {
                         error!("{:?}", err);
@@ -331,11 +331,11 @@ async fn create_client_tunnels(
                         port,
                     };
                     let tcp_connector = TcpUpstreamConnector::new(
-                        &tunnel.remote.0,
+                        tunnel.remote.0.clone(),
                         tunnel.remote.1,
                         cfg.socket_so_mark,
                         cfg.timeout_connect,
-                        &cfg.dns_resolver,
+                        cfg.dns_resolver.clone(),
                     );
 
                     if let Err(err) = client.run_reverse_tunnel(remote, tcp_connector).await {
@@ -349,11 +349,11 @@ async fn create_client_tunnels(
                 spawn_tunnel! {
                     let cfg = client.config.clone();
                     let tcp_connector = TcpUpstreamConnector::new(
-                        &tunnel.remote.0,
+                        tunnel.remote.0.clone(),
                         tunnel.remote.1,
                         cfg.socket_so_mark,
                         cfg.timeout_connect,
-                        &cfg.dns_resolver,
+                        cfg.dns_resolver.clone(),
                     );
 
                     let (host, port) = to_host_port(tunnel.local);

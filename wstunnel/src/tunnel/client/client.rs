@@ -186,6 +186,7 @@ impl<E: TokioExecutorRef> Client<E> {
             }
         }
 
+        let connector = Arc::new(connector);
         let mut reconnect_delay = new_reconnect_delay(self.reverse_tunnel_connection_retry_max_backoff);
         loop {
             let client = self.clone();
@@ -251,37 +252,48 @@ impl<E: TokioExecutorRef> Client<E> {
 
             // Connect to endpoint
             event!(parent: &span, Level::DEBUG, "Server response: {:?}", response);
-            let remote = response
-                .headers
-                .get(COOKIE)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|h| jwt_token_to_tunnel(h).ok())
-                .map(|jwt| RemoteAddr {
-                    protocol: jwt.claims.p,
-                    host: Host::parse(&jwt.claims.r).unwrap_or_else(|_| Host::Domain(String::new())),
-                    port: jwt.claims.rp,
-                });
+            let task = {
+                let executor = self.executor.clone();
+                let connector = connector.clone();
+                async move {
+                    let remote = response
+                        .headers
+                        .get(COOKIE)
+                        .and_then(|h| h.to_str().ok())
+                        .and_then(|h| jwt_token_to_tunnel(h).ok())
+                        .map(|jwt| RemoteAddr {
+                            protocol: jwt.claims.p,
+                            host: Host::parse(&jwt.claims.r).unwrap_or_else(|_| Host::Domain(String::new())),
+                            port: jwt.claims.rp,
+                        });
 
-            let (local_rx, local_tx) = match connector.connect(&remote).instrument(span.clone()).await {
-                Ok(s) => s,
-                Err(err) => {
-                    event!(parent: &span, Level::ERROR, "Cannot connect to {remote:?}: {err:?}");
-                    continue;
+                    let (local_rx, local_tx) = match connector.connect(&remote).instrument(span.clone()).await {
+                        Ok(s) => s,
+                        Err(err) => {
+                            event!(parent: &span, Level::ERROR, "Cannot connect to {remote:?}: {err:?}");
+                            return;
+                        }
+                    };
+
+                    let (close_tx, close_rx) = oneshot::channel::<()>();
+                    executor.spawn({
+                        let ping_frequency = client.config.websocket_ping_frequency;
+                        super::super::transport::io::propagate_local_to_remote(
+                            local_rx,
+                            ws_tx,
+                            close_tx,
+                            ping_frequency,
+                        )
+                        .instrument(span.clone())
+                    });
+
+                    let _ = super::super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx)
+                        .instrument(span.clone())
+                        .await;
                 }
             };
 
-            let (close_tx, close_rx) = oneshot::channel::<()>();
-            self.executor.spawn({
-                let ping_frequency = client.config.websocket_ping_frequency;
-                super::super::transport::io::propagate_local_to_remote(local_rx, ws_tx, close_tx, ping_frequency)
-                    .instrument(span.clone())
-            });
-
-            // Forward websocket rx to local rx
-            self.executor.spawn(
-                super::super::transport::io::propagate_remote_to_local(local_tx, ws_rx, close_rx)
-                    .instrument(span.clone()),
-            );
+            self.executor.spawn(task);
         }
     }
 }

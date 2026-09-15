@@ -1,4 +1,6 @@
 use super::udp_server::{Socks5UdpStream, Socks5UdpStreamWriter};
+use crate::protocols::tcp::configure_socket;
+use crate::somark::SoMark;
 use crate::tunnel::LocalProtocol;
 use crate::tunnel::downstream_listeners::DownstreamWrite;
 use anyhow::Context;
@@ -7,13 +9,13 @@ use fast_socks5::server::states::CommandRead;
 use fast_socks5::util::target_addr::TargetAddr;
 use fast_socks5::{ReplyError, Socks5Command};
 use futures_util::{Stream, StreamExt, stream};
+use socket2::SockRef;
 use std::future::Future;
 use std::io::{Error, ErrorKind, IoSlice};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::task::Poll;
 use std::time::Duration;
-use socket2::SockRef;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
@@ -22,8 +24,6 @@ use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 use tracing::{info, warn};
 use url::Host;
-use crate::protocols::tcp::configure_socket;
-use crate::somark::SoMark;
 
 /// Max time a client has to send its SOCKS5 greeting and command once connected.
 /// The accept loop handles connections one at a time, so an idle client must not
