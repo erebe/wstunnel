@@ -1,8 +1,9 @@
 use super::io::{MAX_PACKET_LENGTH, TransportRead, TransportWrite};
 use crate::tunnel::RemoteAddr;
-use crate::tunnel::client::Client;
+use crate::tunnel::client::connection_pool::connect_l4_stream;
+use crate::tunnel::client::{Client, ClientConfig};
 use crate::tunnel::transport::jwt::tunnel_to_jwt_token;
-use crate::tunnel::transport::{TransportScheme, headers_from_file};
+use crate::tunnel::transport::{TransportAddr, TransportScheme, headers_from_file};
 use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
 use either::Either;
@@ -12,7 +13,8 @@ use hyper::body::{Frame, Incoming};
 use hyper::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE};
 use hyper::http::response::Parts;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
+use std::collections::HashSet;
 use std::future::Future;
 use std::io;
 use std::io::ErrorKind;
@@ -120,26 +122,56 @@ impl TransportWrite for Http2TransportWrite {
     }
 }
 
+/// Derives the HTTP/2 authority string (`host` or `host:port`) for `target_addr`.
+///
+/// On the initial connection, honors any host override from `--http-headers-file` or `--http-headers`.
+/// For subsequent redirected hops, uses `target_addr.authority()`.
+fn authority_for(
+    target_addr: &TransportAddr,
+    client_cfg: &ClientConfig,
+    headers_file_host: Option<&str>,
+    is_initial: bool,
+) -> String {
+    if is_initial {
+        if let Some(host) = headers_file_host {
+            return host.to_string();
+        }
+        if let Some(custom_host) = client_cfg.http_headers.get(&hyper::header::HOST)
+            && let Ok(s) = custom_host.to_str()
+        {
+            return s.to_string();
+        }
+        if let Ok(s) = client_cfg.http_header_host.to_str()
+            && !s.is_empty()
+        {
+            return s.to_string();
+        }
+    }
+    target_addr.authority()
+}
+
+/// Connect to a remote wstunnel server over HTTP/2, following HTTP 3xx redirects if encountered.
 pub async fn connect(
     request_id: Uuid,
     client: &Client<impl crate::TokioExecutorRef>,
     dest_addr: &RemoteAddr,
 ) -> anyhow::Result<(Http2TransportRead, Http2TransportWrite, Parts)> {
-    let mut pooled_cnx = match client.cnx_pool.get().await {
-        Ok(cnx) => Ok(cnx),
-        Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
-    }?;
+    let client_cfg = &client.config;
+    let mut current_addr = client_cfg.remote_addr.clone();
+    let mut current_path_prefix = client_cfg.http_upgrade_path_prefix.clone();
+    let mut visited = HashSet::new();
+    let max_redirects = 5;
+    let mut redirect_count = 0;
 
-    // In http2 HOST header does not exist, it is explicitly set in the authority from the request uri
-    let (headers_file, authority) =
-        client
-            .config
+    // In HTTP/2, the HOST header is not used directly; authority is set in the request URI.
+    let (headers_file, headers_file_host) =
+        client_cfg
             .http_headers_file
             .as_ref()
             .map_or((None, None), |headers_file_path| {
                 let (host, headers) = headers_from_file(headers_file_path);
                 let host = if let Some((_, v)) = host {
-                    match (client.config.remote_addr.scheme(), client.config.remote_addr.port()) {
+                    match (client_cfg.remote_addr.scheme(), client_cfg.remote_addr.port()) {
                         (TransportScheme::Http, 80) | (TransportScheme::Https, 443) => {
                             Some(v.to_str().unwrap_or("").to_string())
                         }
@@ -152,92 +184,145 @@ pub async fn connect(
                 (Some(headers), host)
             });
 
-    let mut req = Request::builder()
-        .method("POST")
-        .uri(format!(
-            "{}://{}/{}/events",
-            client.config.remote_addr.scheme(),
-            authority
-                .as_deref()
-                .unwrap_or_else(|| client.config.http_header_host.to_str().unwrap_or("")),
-            client.config.http_upgrade_path_prefix
-        ))
-        .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
-        .header(CONTENT_TYPE, "application/json")
-        .version(hyper::Version::HTTP_2);
+    loop {
+        // On attempt 0, take an already-pooled connection. On subsequent redirect attempts,
+        // dial the new target directly via connect_l4_stream.
+        let transport = if redirect_count == 0 {
+            let mut pooled_cnx = match client.cnx_pool.get().await {
+                Ok(cnx) => Ok(cnx),
+                Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
+            }?;
+            pooled_cnx
+                .take()
+                .and_then(Either::left)
+                .ok_or_else(|| anyhow!("the connection pool did not return a TCP stream"))?
+        } else {
+            connect_l4_stream(client_cfg, &current_addr).await?
+        };
 
-    let headers = match req.headers_mut() {
-        Some(h) => h,
-        None => {
+        let authority = authority_for(
+            &current_addr,
+            client_cfg,
+            headers_file_host.as_deref(),
+            redirect_count == 0,
+        );
+
+        let uri_scheme = match current_addr.scheme() {
+            TransportScheme::Https | TransportScheme::Wss => "https",
+            _ => "http",
+        };
+
+        let mut req = Request::builder()
+            .method("POST")
+            .uri(format!("{uri_scheme}://{authority}/{current_path_prefix}/events"))
+            .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
+            .header(CONTENT_TYPE, "application/json")
+            .version(hyper::Version::HTTP_2);
+
+        let headers = match req.headers_mut() {
+            Some(h) => h,
+            None => {
+                return Err(anyhow!(
+                    "failed to build HTTP request to contact the server {:?}. Most likely path_prefix `{}` or http headers is not valid",
+                    current_addr,
+                    current_path_prefix
+                ));
+            }
+        };
+
+        for (k, v) in &client_cfg.http_headers {
+            let _ = headers.remove(k);
+            headers.append(k, v.clone());
+        }
+
+        if let Some(auth) = &client_cfg.http_upgrade_credentials {
+            let _ = headers.remove(AUTHORIZATION);
+            headers.append(AUTHORIZATION, auth.clone());
+        }
+
+        if let Some(ref headers_file) = headers_file {
+            for (k, v) in headers_file {
+                let _ = headers.remove(k);
+                headers.append(k, v.clone());
+            }
+        }
+
+        let (tx, rx) = mpsc::channel::<Bytes>(1024);
+        let body = StreamBody::new(ReceiverStream::new(rx).map(|s| -> anyhow::Result<Frame<Bytes>> { Ok(Frame::data(s)) }));
+        let req = req.body(body).with_context(|| {
+            format!("failed to build HTTP request to contact the server {current_addr:?}")
+        })?;
+        debug!("with HTTP upgrade request {req:?}");
+
+        let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
+            .timer(TokioTimer::new())
+            .adaptive_window(true)
+            .keep_alive_interval(client_cfg.websocket_ping_frequency)
+            .keep_alive_timeout(Duration::from_secs(10))
+            .keep_alive_while_idle(false)
+            .handshake(TokioIo::new(transport))
+            .await
+            .with_context(|| format!("failed to do http2 handshake with the server {current_addr:?}"))?;
+
+        let cnx_poller = client.executor.spawn(async move {
+            if let Err(err) = cnx.await {
+                error!("{err:?}")
+            }
+        });
+
+        let response = request_sender
+            .send_request(req)
+            .await
+            .with_context(|| format!("failed to send http2 request with the server {current_addr:?}"))?;
+
+        let status = response.status();
+        if status.is_success() {
+            let (parts, body) = response.into_parts();
+            return Ok((
+                Http2TransportRead::new(BodyStream::new(body), Some(cnx_poller)),
+                Http2TransportWrite::new(tx),
+                parts,
+            ));
+        } else if status.is_redirection() {
+            cnx_poller.abort();
+            if redirect_count >= max_redirects {
+                return Err(anyhow!(
+                    "too many redirects ({redirect_count}) when connecting to {:?}",
+                    client_cfg.remote_addr
+                ));
+            }
+            redirect_count += 1;
+            let location = response
+                .headers()
+                .get(hyper::header::LOCATION)
+                .and_then(|h| h.to_str().ok())
+                .ok_or_else(|| anyhow!("Redirect status code {status} without valid Location header"))?
+                .to_string();
+            info!("Server redirected ({status}) to {location}");
+
+            let (next_addr, next_prefix) = current_addr
+                .resolve_redirect(&current_path_prefix, &location, &mut visited)
+                .with_context(|| format!("failed to follow redirect from {current_addr:?} to {location}"))?;
+
+            current_addr = next_addr;
+            current_path_prefix = next_prefix;
+        } else {
+            cnx_poller.abort();
+            let body_bytes = response
+                .into_body()
+                .collect()
+                .await
+                .map(|c| c.to_bytes())
+                .unwrap_or_default();
+            let body_str = String::from_utf8_lossy(&body_bytes);
+            let detail = if body_str.is_empty() {
+                String::new()
+            } else {
+                format!(": {body_str}")
+            };
             return Err(anyhow!(
-                "failed to build HTTP request to contact the server {:?}. Most likely path_prefix `{}` or http headers is not valid",
-                req,
-                client.config.http_upgrade_path_prefix
+                "Http2 server rejected the connection with status {status}{detail}"
             ));
         }
-    };
-    for (k, v) in &client.config.http_headers {
-        let _ = headers.remove(k);
-        headers.append(k, v.clone());
     }
-
-    if let Some(auth) = &client.config.http_upgrade_credentials {
-        let _ = headers.remove(AUTHORIZATION);
-        headers.append(AUTHORIZATION, auth.clone());
-    }
-
-    if let Some(headers_file) = headers_file {
-        for (k, v) in headers_file {
-            let _ = headers.remove(&k);
-            headers.append(k, v);
-        }
-    }
-
-    let (tx, rx) = mpsc::channel::<Bytes>(1024);
-    let body = StreamBody::new(ReceiverStream::new(rx).map(|s| -> anyhow::Result<Frame<Bytes>> { Ok(Frame::data(s)) }));
-    let req = req.body(body).with_context(|| {
-        format!(
-            "failed to build HTTP request to contact the server {:?}",
-            client.config.remote_addr
-        )
-    })?;
-    debug!("with HTTP upgrade request {req:?}");
-    let transport = pooled_cnx
-        .take()
-        .and_then(Either::left)
-        .ok_or_else(|| anyhow!("the connection pool did not return a TCP stream"))?;
-    let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
-        .timer(TokioTimer::new())
-        .adaptive_window(true)
-        .keep_alive_interval(client.config.websocket_ping_frequency)
-        .keep_alive_timeout(Duration::from_secs(10))
-        .keep_alive_while_idle(false)
-        .handshake(TokioIo::new(transport))
-        .await
-        .with_context(|| format!("failed to do http2 handshake with the server {:?}", client.config.remote_addr))?;
-    let cnx_poller = client.executor.spawn(async move {
-        if let Err(err) = cnx.await {
-            error!("{err:?}")
-        }
-    });
-
-    let response = request_sender
-        .send_request(req)
-        .await
-        .with_context(|| format!("failed to send http2 request with the server {:?}", client.config.remote_addr))?;
-
-    if !response.status().is_success() {
-        return Err(anyhow!(
-            "Http2 server rejected the connection: {:?}: {:?}",
-            response.status(),
-            String::from_utf8(response.into_body().collect().await?.to_bytes().to_vec()).unwrap_or_default()
-        ));
-    }
-
-    let (parts, body) = response.into_parts();
-    Ok((
-        Http2TransportRead::new(BodyStream::new(body), Some(cnx_poller)),
-        Http2TransportWrite::new(tx),
-        parts,
-    ))
 }
