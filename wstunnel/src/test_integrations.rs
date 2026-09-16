@@ -9,9 +9,13 @@ use crate::tunnel::client::{Client, ClientConfig, TlsClientConfig};
 use crate::tunnel::downstream_listeners::{Socks5DownstreamListener, TcpDownstreamListener, UdpDownstreamListener};
 use crate::tunnel::server::{Server, ServerConfig, TlsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use futures_util::{Stream, StreamExt};
+use http_body_util::Empty;
 use hyper::http::HeaderValue;
+use hyper::service::service_fn;
+use hyper::{Request, Response, StatusCode};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use regex::Regex;
 use rstest::{fixture, rstest};
@@ -23,6 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::pin;
+use tokio_rustls::TlsAcceptor;
 use url::Host;
 
 /// Ports already handed out by [`free_port`] in this process. A port becomes free again as soon
@@ -167,35 +172,7 @@ async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> Cli
 
 /// Not a fixture, as the port to dial is only known once the server fixture has picked one.
 async fn client_ws(server_port: u16, dns_resolver: DnsResolver) -> Client {
-    let client_config = ClientConfig {
-        remote_addr: TransportAddr::new(TransportScheme::Ws, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, None)
-            .unwrap(),
-        socket_so_mark: SoMark::new(None),
-        http_upgrade_path_prefix: "wstunnel".to_string(),
-        http_upgrade_credentials: None,
-        http_headers: HashMap::new(),
-        http_headers_file: None,
-        http_header_host: HeaderValue::from_str(&format!("127.0.0.1:{server_port}")).unwrap(),
-        custom_http_header_host: None,
-        timeout_connect: Duration::from_secs(10),
-        websocket_ping_frequency: Some(Duration::from_secs(10)),
-        websocket_mask_frame: false,
-        dns_resolver,
-        http_proxy: None,
-        webtransport: None,
-        max_redirects: 5,
-        tls_verify_certificate: false,
-    };
-
-    Client::new(
-        client_config,
-        1,
-        Duration::from_secs(1),
-        Duration::from_secs(1),
-        DefaultTokioExecutor::default(),
-    )
-    .await
-    .unwrap()
+    client_ws_with_redirects(server_port, 5, dns_resolver).await
 }
 
 /// Creates a test `Client` instance configured with WebSocket transport and custom `max_redirects`.
@@ -231,31 +208,155 @@ async fn client_ws_with_redirects(server_port: u16, max_redirects: usize, dns_re
     .unwrap()
 }
 
+/// Creates a test `Client` instance configured with HTTP/2 transport and custom `max_redirects`.
+async fn client_h2_with_redirects(server_port: u16, max_redirects: usize, dns_resolver: DnsResolver) -> Client {
+    let client_config = ClientConfig {
+        remote_addr: TransportAddr::new(TransportScheme::Http, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, None)
+            .unwrap(),
+        socket_so_mark: SoMark::new(None),
+        http_upgrade_path_prefix: "wstunnel".to_string(),
+        http_upgrade_credentials: None,
+        http_headers: HashMap::new(),
+        http_headers_file: None,
+        http_header_host: HeaderValue::from_str(&format!("127.0.0.1:{server_port}")).unwrap(),
+        custom_http_header_host: None,
+        timeout_connect: Duration::from_secs(10),
+        websocket_ping_frequency: Some(Duration::from_secs(10)),
+        websocket_mask_frame: false,
+        dns_resolver,
+        http_proxy: None,
+        webtransport: None,
+        max_redirects,
+        tls_verify_certificate: false,
+    };
+
+    Client::new(
+        client_config,
+        1,
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        DefaultTokioExecutor::default(),
+    )
+    .await
+    .unwrap()
+}
+
+/// Creates a test `Client` instance configured with WebSocket over TLS (`wss://`) and custom `max_redirects`.
+async fn client_wss_with_redirects(server_port: u16, max_redirects: usize, dns_resolver: DnsResolver) -> Client {
+    let tls_connector =
+        crate::protocols::tls::tls_connector(false, TransportScheme::Wss.alpn_protocols(), true, None, None, None)
+            .unwrap();
+    let tls = TlsClientConfig {
+        tls_sni_disabled: false,
+        tls_sni_override: None,
+        tls_verify_certificate: false,
+        tls_connector: Arc::new(parking_lot::RwLock::new(tls_connector)),
+        tls_certificate_path: None,
+        tls_key_path: None,
+    };
+
+    let client_config = ClientConfig {
+        remote_addr: TransportAddr::new(TransportScheme::Wss, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, Some(tls))
+            .unwrap(),
+        socket_so_mark: SoMark::new(None),
+        http_upgrade_path_prefix: "wstunnel".to_string(),
+        http_upgrade_credentials: None,
+        http_headers: HashMap::new(),
+        http_headers_file: None,
+        http_header_host: HeaderValue::from_str(&format!("127.0.0.1:{server_port}")).unwrap(),
+        custom_http_header_host: None,
+        timeout_connect: Duration::from_secs(10),
+        websocket_ping_frequency: Some(Duration::from_secs(10)),
+        websocket_mask_frame: false,
+        dns_resolver,
+        http_proxy: None,
+        webtransport: None,
+        max_redirects,
+        tls_verify_certificate: false,
+    };
+
+    Client::new(
+        client_config,
+        1,
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        DefaultTokioExecutor::default(),
+    )
+    .await
+    .unwrap()
+}
+
+fn test_tls_acceptor() -> TlsAcceptor {
+    let tls_server_config = TlsServerConfig {
+        tls_certificate: parking_lot::Mutex::new(embedded_certificate::TLS_CERTIFICATE.0.clone()),
+        tls_key: parking_lot::Mutex::new(embedded_certificate::TLS_CERTIFICATE.1.clone_key()),
+        tls_client_ca_certificates: None,
+        tls_certificate_path: None,
+        tls_key_path: None,
+        tls_client_ca_certs_path: None,
+    };
+    crate::protocols::tls::tls_acceptor(
+        &tls_server_config,
+        Some(vec![b"h2".to_vec(), b"http/1.1".to_vec()]),
+    )
+    .unwrap()
+}
+
+/// Spawns a mock HTTP/1.1 and HTTP/2 redirect server (optionally wrapped in TLS)
+/// that responds with the specified status code and Location header.
+async fn start_auto_redirect_server(
+    status_code: u16,
+    _status_text: &'static str,
+    target_url: Arc<parking_lot::RwLock<String>>,
+    tls_acceptor: Option<TlsAcceptor>,
+) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let handle = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let target_url = target_url.clone();
+            let tls_acceptor = tls_acceptor.clone();
+            tokio::spawn(async move {
+                let status = StatusCode::from_u16(status_code).unwrap();
+                let service = service_fn(move |_req: Request<hyper::body::Incoming>| {
+                    let target = target_url.read().clone();
+                    let resp = Response::builder()
+                        .status(status)
+                        .header(hyper::header::LOCATION, target)
+                        .header(hyper::header::CONTENT_LENGTH, "0")
+                        .body(Empty::<Bytes>::new())
+                        .unwrap();
+                    async move { Ok::<_, std::convert::Infallible>(resp) }
+                });
+
+                let mut auto_builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+                auto_builder.http1().timer(TokioTimer::new());
+                auto_builder.http2().timer(TokioTimer::new());
+
+                if let Some(acceptor) = tls_acceptor {
+                    if let Ok(tls_stream) = acceptor.accept(stream).await {
+                        let io = TokioIo::new(tls_stream);
+                        let _ = auto_builder.serve_connection_with_upgrades(io, service).await;
+                    }
+                } else {
+                    let io = TokioIo::new(stream);
+                    let _ = auto_builder.serve_connection_with_upgrades(io, service).await;
+                }
+            });
+        }
+    });
+
+    (addr, handle)
+}
+
 /// Spawns a mock HTTP redirect server that responds with the specified status code and Location header.
 async fn start_redirect_server(
     status_code: u16,
     status_text: &'static str,
     target_url: Arc<parking_lot::RwLock<String>>,
 ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    let handle = tokio::spawn(async move {
-        while let Ok((mut stream, _)) = listener.accept().await {
-            let target = target_url.read().clone();
-            tokio::spawn(async move {
-                let mut buf = [0u8; 2048];
-                let _ = stream.read(&mut buf).await;
-                let response = format!(
-                    "HTTP/1.1 {status_code} {status_text}\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
-                let _ = stream.flush().await;
-            });
-        }
-    });
-
-    (addr, handle)
+    start_auto_redirect_server(status_code, status_text, target_url, None).await
 }
 
 #[fixture]
@@ -696,6 +797,9 @@ async fn test_tcp_tunnel_websocket_redirect_301(
     // Verify active target was updated to the server_port
     assert_eq!(client_ws.active_target().addr.port(), server_port);
 
+    // Stop redirect server to strictly prove connection 2 bypasses it completely and uses cached active target
+    redirect_h.abort();
+
     // Second connection: uses the cached active target directly
     let mut client2 = protocols::tcp::connect(
         &tunnel_host,
@@ -969,4 +1073,260 @@ async fn test_tcp_tunnel_cached_redirect_fallback(
 
     // Active target is now updated to Server 2!
     assert_eq!(client_ws.active_target().addr.port(), server2_port);
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_tcp_tunnel_http2_redirect_301(
+    server_no_tls: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    let (endpoint_listen, endpoint_host) = free_addr();
+
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    // Start auto redirect server that sends 301 over HTTP/2 to the wstunnel server
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("http://127.0.0.1:{server_port}/wstunnel/events")));
+    let (redirect_addr, redirect_h) = start_auto_redirect_server(301, "Moved Permanently", redirect_target, None).await;
+    defer! { redirect_h.abort(); };
+
+    // Point client to the redirect server with HTTP/2 transport
+    let client_h2 = client_h2_with_redirects(redirect_addr.port(), 5, dns_resolver.clone()).await;
+
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+        .await
+        .unwrap();
+    let client_h2_clone = client_h2.clone();
+    tokio::spawn(async move {
+        client_h2_clone.run_tunnel(server).await.unwrap();
+    });
+
+    let mut tcp_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+
+    // First connection: triggers HTTP/2 301 redirection and updates active target
+    let mut client = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client.write_all(b"Hello 1").await.unwrap();
+    let mut dd = tcp_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    dd.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"Hello 1");
+    buf.clear();
+
+    dd.write_all(b"world 1").await.unwrap();
+    client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"world 1");
+    buf.clear();
+
+    // Verify active target was updated to the server_port
+    assert_eq!(client_h2.active_target().addr.port(), server_port);
+
+    // Stop redirect server to strictly prove connection 2 bypasses it completely and uses cached active target
+    redirect_h.abort();
+
+    // Second connection: uses the cached active target directly
+    let mut client2 = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client2.write_all(b"Hello 2").await.unwrap();
+    let mut dd2 = tcp_listener.next().await.unwrap().unwrap();
+    dd2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"Hello 2");
+    buf.clear();
+
+    dd2.write_all(b"world 2").await.unwrap();
+    client2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"world 2");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_tcp_tunnel_websocket_redirect_tls(
+    server_webtransport: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    let (endpoint_listen, endpoint_host) = free_addr();
+
+    let server_port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    // Start TLS auto redirect server that sends 301 to the wstunnel TLS server
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("wss://127.0.0.1:{server_port}/wstunnel/events")));
+    let tls_acceptor = test_tls_acceptor();
+    let (redirect_addr, redirect_h) =
+        start_auto_redirect_server(301, "Moved Permanently", redirect_target, Some(tls_acceptor)).await;
+    defer! { redirect_h.abort(); };
+
+    // Point client to the TLS redirect server with wss:// transport
+    let client_wss = client_wss_with_redirects(redirect_addr.port(), 5, dns_resolver.clone()).await;
+
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+        .await
+        .unwrap();
+    let client_wss_clone = client_wss.clone();
+    tokio::spawn(async move {
+        client_wss_clone.run_tunnel(server).await.unwrap();
+    });
+
+    let mut tcp_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+
+    // First connection: triggers TLS 301 redirection and updates active target
+    let mut client = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client.write_all(b"Hello 1").await.unwrap();
+    let mut dd = tcp_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    dd.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"Hello 1");
+    buf.clear();
+
+    dd.write_all(b"world 1").await.unwrap();
+    client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"world 1");
+    buf.clear();
+
+    // Verify active target was updated to the server_port
+    assert_eq!(client_wss.active_target().addr.port(), server_port);
+
+    // Stop redirect server to strictly prove connection 2 bypasses it completely and uses cached active target
+    redirect_h.abort();
+
+    // Second connection: uses the cached active target directly
+    let mut client2 = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client2.write_all(b"Hello 2").await.unwrap();
+    let mut dd2 = tcp_listener.next().await.unwrap().unwrap();
+    dd2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"Hello 2");
+    buf.clear();
+
+    dd2.write_all(b"world 2").await.unwrap();
+    client2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"world 2");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_tcp_tunnel_websocket_redirect_cleartext_to_tls(
+    server_webtransport: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    let (endpoint_listen, endpoint_host) = free_addr();
+
+    let server_port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    // Cleartext redirect server that sends 301 pointing to wss:// wstunnel server
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("wss://127.0.0.1:{server_port}/wstunnel/events")));
+    let (redirect_addr, redirect_h) = start_redirect_server(301, "Moved Permanently", redirect_target).await;
+    defer! { redirect_h.abort(); };
+
+    // Client begins with plain ws://
+    let client_ws = client_ws_with_redirects(redirect_addr.port(), 5, dns_resolver.clone()).await;
+
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+        .await
+        .unwrap();
+    let client_ws_clone = client_ws.clone();
+    tokio::spawn(async move {
+        client_ws_clone.run_tunnel(server).await.unwrap();
+    });
+
+    let mut tcp_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+
+    let mut client = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client.write_all(b"Hello 1").await.unwrap();
+    let mut dd = tcp_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    dd.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"Hello 1");
+    buf.clear();
+
+    dd.write_all(b"world 1").await.unwrap();
+    client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"world 1");
+    buf.clear();
+
+    // Verify active target was updated to the server_port and scheme is Wss
+    assert_eq!(client_ws.active_target().addr.port(), server_port);
+    assert_eq!(*client_ws.active_target().addr.scheme(), TransportScheme::Wss);
+
+    // Stop redirect server to strictly prove connection 2 bypasses it completely
+    redirect_h.abort();
+
+    let mut client2 = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client2.write_all(b"Hello 2").await.unwrap();
+    let mut dd2 = tcp_listener.next().await.unwrap().unwrap();
+    dd2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"Hello 2");
+    buf.clear();
+
+    dd2.write_all(b"world 2").await.unwrap();
+    client2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"world 2");
 }
