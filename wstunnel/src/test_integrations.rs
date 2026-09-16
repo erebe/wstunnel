@@ -194,6 +194,64 @@ async fn client_ws(server_port: u16, dns_resolver: DnsResolver) -> Client {
     .unwrap()
 }
 
+/// Creates a test `Client` instance configured with WebSocket transport and custom `max_redirects`.
+async fn client_ws_with_redirects(server_port: u16, max_redirects: usize, dns_resolver: DnsResolver) -> Client {
+    let client_config = ClientConfig {
+        remote_addr: TransportAddr::new(TransportScheme::Ws, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, None)
+            .unwrap(),
+        socket_so_mark: SoMark::new(None),
+        http_upgrade_path_prefix: "wstunnel".to_string(),
+        http_upgrade_credentials: None,
+        http_headers: HashMap::new(),
+        http_headers_file: None,
+        http_header_host: HeaderValue::from_str(&format!("127.0.0.1:{server_port}")).unwrap(),
+        timeout_connect: Duration::from_secs(10),
+        websocket_ping_frequency: Some(Duration::from_secs(10)),
+        websocket_mask_frame: false,
+        dns_resolver,
+        http_proxy: None,
+        webtransport: None,
+        max_redirects,
+    };
+
+    Client::new(
+        client_config,
+        1,
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        DefaultTokioExecutor::default(),
+    )
+    .await
+    .unwrap()
+}
+
+/// Spawns a mock HTTP redirect server that responds with the specified status code and Location header.
+async fn start_redirect_server(
+    status_code: u16,
+    status_text: &'static str,
+    target_url: Arc<parking_lot::RwLock<String>>,
+) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let handle = tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let target = target_url.read().clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf).await;
+                let response = format!(
+                    "HTTP/1.1 {status_code} {status_text}\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.flush().await;
+            });
+        }
+    });
+
+    (addr, handle)
+}
+
 #[fixture]
 fn no_restrictions() -> RestrictionsRules {
     pub fn default_host() -> Regex {
@@ -570,4 +628,312 @@ async fn test_socks5_tunnel_unreachable_target_replies_error(
     let rep = socks5_handshake_connect(&mut client, Ipv4Addr::LOCALHOST, dead_endpoint.port()).await;
     assert_ne!(rep, 0x00, "reply must report failure when the target is unreachable");
     assert_eq!(rep, 0x01, "expected GeneralFailure reply code");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_tcp_tunnel_websocket_redirect_301(
+    server_no_tls: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    let (endpoint_listen, endpoint_host) = free_addr();
+
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    // Start redirect server that sends 301 to the wstunnel server
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("ws://127.0.0.1:{server_port}/wstunnel/events")));
+    let (redirect_addr, redirect_h) = start_redirect_server(301, "Moved Permanently", redirect_target).await;
+    defer! { redirect_h.abort(); };
+
+    // Point client to the redirect server
+    let client_ws = client_ws_with_redirects(redirect_addr.port(), 5, dns_resolver.clone()).await;
+
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+        .await
+        .unwrap();
+    let client_ws_clone = client_ws.clone();
+    tokio::spawn(async move {
+        client_ws_clone.run_tunnel(server).await.unwrap();
+    });
+
+    let mut tcp_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+
+    // First connection: triggers 301 redirection and updates active target
+    let mut client = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client.write_all(b"Hello 1").await.unwrap();
+    let mut dd = tcp_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    dd.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"Hello 1");
+    buf.clear();
+
+    dd.write_all(b"world 1").await.unwrap();
+    client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"world 1");
+    buf.clear();
+
+    // Verify active target was updated to the server_port
+    assert_eq!(client_ws.active_target().addr.port(), server_port);
+
+    // Second connection: uses the cached active target directly
+    let mut client2 = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client2.write_all(b"Hello 2").await.unwrap();
+    let mut dd2 = tcp_listener.next().await.unwrap().unwrap();
+    dd2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"Hello 2");
+    buf.clear();
+
+    dd2.write_all(b"world 2").await.unwrap();
+    client2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"world 2");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_tcp_tunnel_websocket_redirect_302(
+    server_no_tls: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    let (endpoint_listen, endpoint_host) = free_addr();
+
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    // Start redirect server that sends 302 to the wstunnel server
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("ws://127.0.0.1:{server_port}/wstunnel/events")));
+    let (redirect_addr, redirect_h) = start_redirect_server(302, "Found", redirect_target).await;
+    defer! { redirect_h.abort(); };
+
+    let client_ws = client_ws_with_redirects(redirect_addr.port(), 5, dns_resolver.clone()).await;
+
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+        .await
+        .unwrap();
+    let client_ws_clone = client_ws.clone();
+    tokio::spawn(async move {
+        client_ws_clone.run_tunnel(server).await.unwrap();
+    });
+
+    let mut tcp_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+
+    let mut client = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client.write_all(b"Hello 302").await.unwrap();
+    let mut dd = tcp_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    dd.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..9], b"Hello 302");
+    buf.clear();
+
+    dd.write_all(b"world 302").await.unwrap();
+    client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..9], b"world 302");
+    assert_eq!(client_ws.active_target().addr.port(), server_port);
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(10))]
+#[tokio::test]
+#[serial]
+async fn test_tcp_tunnel_redirect_max_redirects_zero(
+    server_no_tls: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    let (endpoint_listen, endpoint_host) = free_addr();
+
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("ws://127.0.0.1:{server_port}/wstunnel/events")));
+    let (redirect_addr, redirect_h) = start_redirect_server(302, "Found", redirect_target).await;
+    defer! { redirect_h.abort(); };
+
+    // Point client to redirect server, but with max_redirects = 0
+    let client_ws = client_ws_with_redirects(redirect_addr.port(), 0, dns_resolver.clone()).await;
+
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = client_ws.run_tunnel(server).await;
+    });
+
+    let _tcp_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+
+    let mut client = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    // Client connection should be closed by the listener because redirect failed
+    let mut buf = [0u8; 128];
+    let n = client.read(&mut buf).await.unwrap_or(0);
+    assert_eq!(n, 0, "connection should be closed when max_redirects is exceeded");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(20))]
+#[tokio::test]
+#[serial]
+async fn test_tcp_tunnel_cached_redirect_fallback(
+    dns_resolver: DnsResolver,
+    no_restrictions: RestrictionsRules,
+) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    let (endpoint_listen, endpoint_host) = free_addr();
+
+    // Server 1
+    let (s1_listen, _) = free_addr();
+    let server1_config = ServerConfig {
+        socket_so_mark: SoMark::new(None),
+        bind: s1_listen,
+        websocket_ping_frequency: Some(Duration::from_secs(10)),
+        timeout_connect: Duration::from_secs(10),
+        websocket_mask_frame: false,
+        tls: None,
+        dns_resolver: dns_resolver.clone(),
+        restriction_config: None,
+        http_proxy: None,
+        remote_server_idle_timeout: Duration::from_secs(30),
+        enable_webtransport: false,
+    };
+    let server1 = Server::new(server1_config, DefaultTokioExecutor::default());
+    let server1_port = s1_listen.port();
+    let server1_h = tokio::spawn(server1.serve(no_restrictions.clone()));
+
+    // Canonical redirect server pointing initially to Server 1
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("ws://127.0.0.1:{server1_port}/wstunnel/events")));
+    let (redirect_addr, redirect_h) = start_redirect_server(302, "Found", redirect_target.clone()).await;
+    defer! { redirect_h.abort(); };
+
+    let client_ws = client_ws_with_redirects(redirect_addr.port(), 5, dns_resolver.clone()).await;
+
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+        .await
+        .unwrap();
+    let client_ws_clone = client_ws.clone();
+    tokio::spawn(async move {
+        client_ws_clone.run_tunnel(server).await.unwrap();
+    });
+
+    let mut tcp_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+
+    // Connection 1 to Server 1
+    let mut client1 = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client1.write_all(b"Hello 1").await.unwrap();
+    let mut dd1 = tcp_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    dd1.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"Hello 1");
+    buf.clear();
+    dd1.write_all(b"world 1").await.unwrap();
+    client1.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"world 1");
+    buf.clear();
+    drop(client1);
+    drop(dd1);
+
+    // Active target is now Server 1
+    assert_eq!(client_ws.active_target().addr.port(), server1_port);
+
+    // Abort Server 1 to simulate server restart / NAT port change
+    server1_h.abort();
+
+    // Start Server 2 on a new port
+    let (s2_listen, _) = free_addr();
+    let server2_config = ServerConfig {
+        socket_so_mark: SoMark::new(None),
+        bind: s2_listen,
+        websocket_ping_frequency: Some(Duration::from_secs(10)),
+        timeout_connect: Duration::from_secs(10),
+        websocket_mask_frame: false,
+        tls: None,
+        dns_resolver: dns_resolver.clone(),
+        restriction_config: None,
+        http_proxy: None,
+        remote_server_idle_timeout: Duration::from_secs(30),
+        enable_webtransport: false,
+    };
+    let server2 = Server::new(server2_config, DefaultTokioExecutor::default());
+    let server2_port = s2_listen.port();
+    let server2_h = tokio::spawn(server2.serve(no_restrictions));
+    defer! { server2_h.abort(); };
+
+    // Update canonical redirect target to point to Server 2
+    *redirect_target.write() = format!("ws://127.0.0.1:{server2_port}/wstunnel/events");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Connection 2: should fail connecting to dead Server 1, fall back to canonical redirect server,
+    // get redirected to Server 2, update active target, and succeed!
+    let mut client2 = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client2.write_all(b"Hello 2").await.unwrap();
+    let mut dd2 = tcp_listener.next().await.unwrap().unwrap();
+    dd2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..7], b"Hello 2");
+
+    // Active target is now updated to Server 2!
+    assert_eq!(client_ws.active_target().addr.port(), server2_port);
 }

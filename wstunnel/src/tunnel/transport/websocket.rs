@@ -522,13 +522,15 @@ pub async fn connect(
                     client_cfg.remote_addr
                 );
                 client.reset_active_target();
+                // When falling back after a cached target failure, establish a fresh L4 connection directly
+                // rather than borrowing potentially stale/closed sockets from the connection pool.
                 do_connect(
                     request_id,
                     client,
                     dest_addr,
                     client_cfg.remote_addr.clone(),
                     client_cfg.http_upgrade_path_prefix.clone(),
-                    true,
+                    false,
                 )
                 .await
             }
