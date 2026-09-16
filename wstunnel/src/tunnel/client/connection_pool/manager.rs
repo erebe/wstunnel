@@ -117,43 +117,8 @@ impl ManageConnection for L4StreamManager {
             return Ok(Some(Either::Right(self.connect_webtransport().await?)));
         }
 
-        let timeout = self.timeout_connect;
-        let tcp_stream = if let Some(http_proxy) = &self.http_proxy {
-            protocols::tcp::connect_with_http_proxy(
-                http_proxy,
-                self.remote_addr.host(),
-                self.remote_addr.port(),
-                self.socket_so_mark,
-                timeout,
-                &self.dns_resolver,
-            )
-            .await?
-        } else {
-            protocols::tcp::connect(
-                self.remote_addr.host(),
-                self.remote_addr.port(),
-                self.socket_so_mark,
-                timeout,
-                &self.dns_resolver,
-            )
-            .await?
-        };
-
-        if self.remote_addr.tls().is_some() {
-            // Bound the TLS handshake with the same timeout as the TCP connect,
-            // so a peer that accepts the connection but never completes the
-            // handshake is dropped instead of held.
-            let tls_stream = match tokio::time::timeout(timeout, tls::connect(self, tcp_stream)).await {
-                Ok(res) => res?,
-                Err(_) => {
-                    warn!("Timed out after {timeout:?} doing the TLS handshake with the server");
-                    return Err(anyhow!("Timed out doing the TLS handshake with the server"));
-                }
-            };
-            Ok(Some(Either::Left(L4Stream::from_client_tls(tls_stream, Bytes::default()))))
-        } else {
-            Ok(Some(Either::Left(L4Stream::from_tcp(tcp_stream, Bytes::default()))))
-        }
+        let l4_stream = connect_l4_stream(self, &self.remote_addr).await?;
+        Ok(Some(Either::Left(l4_stream)))
     }
 
     async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
@@ -176,5 +141,56 @@ impl ManageConnection for L4StreamManager {
             Some(Either::Left(_)) => false,
             Some(Either::Right(session)) => session.close_reason().is_some(),
         }
+    }
+}
+
+/// Establish a Layer-4 stream (TCP or TCP + TLS) to the specified `remote_addr`.
+///
+/// If an HTTP proxy is configured in `client_cfg`, the connection is tunneled through it.
+/// If `remote_addr` uses TLS (`wss://` or `https://`), the TLS handshake is performed
+/// using the credentials and SNI derived from `client_cfg` and `remote_addr`.
+///
+/// This helper is used both by [`L4StreamManager`] for pooling connections to the configured
+/// server, and by transport connection loops when following HTTP redirects to new server targets.
+pub async fn connect_l4_stream(
+    client_cfg: &ClientConfig,
+    remote_addr: &transport::TransportAddr,
+) -> anyhow::Result<L4Stream> {
+    let timeout = client_cfg.timeout_connect;
+    let tcp_stream = if let Some(http_proxy) = &client_cfg.http_proxy {
+        protocols::tcp::connect_with_http_proxy(
+            http_proxy,
+            remote_addr.host(),
+            remote_addr.port(),
+            client_cfg.socket_so_mark,
+            timeout,
+            &client_cfg.dns_resolver,
+        )
+        .await?
+    } else {
+        protocols::tcp::connect(
+            remote_addr.host(),
+            remote_addr.port(),
+            client_cfg.socket_so_mark,
+            timeout,
+            &client_cfg.dns_resolver,
+        )
+        .await?
+    };
+
+    if remote_addr.tls().is_some() {
+        // Bound the TLS handshake with the same timeout as the TCP connect,
+        // so a peer that accepts the connection but never completes the
+        // handshake is dropped instead of held.
+        let tls_stream = match tokio::time::timeout(timeout, tls::connect_addr(client_cfg, remote_addr, tcp_stream)).await {
+            Ok(res) => res?,
+            Err(_) => {
+                warn!("Timed out after {timeout:?} doing the TLS handshake with the server");
+                return Err(anyhow!("Timed out doing the TLS handshake with the server"));
+            }
+        };
+        Ok(L4Stream::from_client_tls(tls_stream, Bytes::default()))
+    } else {
+        Ok(L4Stream::from_tcp(tcp_stream, Bytes::default()))
     }
 }

@@ -47,15 +47,19 @@ impl ClientConfig {
                 |sni_override| sni_override.as_ref().to_string(),
             )
     }
-    pub fn tls_server_name(&self) -> ServerName<'static> {
+    /// Derive the TLS `ServerName` (for SNI and certificate verification) for a specific target address.
+    ///
+    /// If `--tls-sni-override` was specified on the TLS configuration, that name is used.
+    /// Otherwise, the host from `remote_addr` (domain name or IP address) is used.
+    pub fn tls_server_name_for(&self, remote_addr: &TransportAddr) -> ServerName<'static> {
         static INVALID_DNS_NAME: LazyLock<DnsName> =
             LazyLock::new(|| DnsName::try_from("dns-name-invalid.com").unwrap());
 
-        self.remote_addr
+        remote_addr
             .tls()
             .and_then(|tls| tls.tls_sni_override.as_ref())
             .map_or_else(
-                || match &self.remote_addr.host() {
+                || match remote_addr.host() {
                     Host::Domain(domain) => ServerName::DnsName(
                         DnsName::try_from(domain.clone()).unwrap_or_else(|_| INVALID_DNS_NAME.clone()),
                     ),
@@ -64,6 +68,11 @@ impl ClientConfig {
                 },
                 |sni_override| ServerName::DnsName(sni_override.clone()),
             )
+    }
+
+    /// Derive the TLS `ServerName` for the client's configured default `remote_addr`.
+    pub fn tls_server_name(&self) -> ServerName<'static> {
+        self.tls_server_name_for(&self.remote_addr)
     }
 }
 
