@@ -1,22 +1,23 @@
 use super::io::{MAX_PACKET_LENGTH, TransportRead, TransportWrite};
 use crate::tunnel::RemoteAddr;
-use crate::tunnel::client::Client;
-use crate::tunnel::client::connection_pool::{L4ReadHalf, L4Stream, L4WriteHalf};
+use crate::tunnel::client::{Client, ClientConfig};
+use crate::tunnel::client::connection_pool::{connect_l4_stream, L4ReadHalf, L4Stream, L4WriteHalf};
 use crate::tunnel::transport::headers_from_file;
 use crate::tunnel::transport::jwt::{JWT_HEADER_PREFIX, tunnel_to_jwt_token};
+use crate::tunnel::transport::{TransportAddr, TransportScheme};
 use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
 use either::Either;
 use fastwebsockets::{CloseCode, Frame, OpCode, Payload, Role, WebSocket, WebSocketRead, WebSocketWrite};
-use http_body_util::Empty;
+use http_body_util::{BodyExt, Empty};
 use hyper::Request;
-use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
+use hyper::header::{AUTHORIZATION, HeaderValue, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::http::response::Parts;
 use hyper::upgrade::Upgraded;
-use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::debug;
+use std::collections::HashSet;
 use std::io;
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -28,7 +29,7 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_rustls::server::TlsStream;
-use tracing::trace;
+use tracing::{info, trace};
 use uuid::Uuid;
 
 pub struct WebsocketTransportWrite {
@@ -251,21 +252,39 @@ impl TransportRead for WebsocketTransportRead {
     }
 }
 
-pub async fn connect(
-    request_id: Uuid,
-    client: &Client<impl crate::TokioExecutorRef>,
-    dest_addr: &RemoteAddr,
-) -> anyhow::Result<(WebsocketTransportRead, WebsocketTransportWrite, Parts)> {
-    let client_cfg = &client.config;
-    let mut pooled_cnx = match client.cnx_pool.get().await {
-        Ok(cnx) => Ok(cnx),
-        Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
-    }?;
+/// Derives the appropriate `Host` header for `target_addr`.
+///
+/// Honors any explicit `Host` header provided in `client_cfg.http_headers`, otherwise
+/// generates the host authority string (including non-default port if applicable).
+fn host_header_for(target_addr: &TransportAddr, client_cfg: &ClientConfig) -> HeaderValue {
+    if let Some(custom_host) = client_cfg.http_headers.get(&HOST) {
+        return custom_host.clone();
+    }
+    let host_str = match target_addr.port() {
+        80 if matches!(target_addr.scheme(), TransportScheme::Ws | TransportScheme::Http) => {
+            target_addr.host().to_string()
+        }
+        443 if matches!(target_addr.scheme(), TransportScheme::Wss | TransportScheme::Https) => {
+            target_addr.host().to_string()
+        }
+        port => format!("{}:{}", target_addr.host(), port),
+    };
+    HeaderValue::from_str(&host_str).unwrap_or_else(|_| client_cfg.http_header_host.clone())
+}
 
+/// Builds the HTTP/1.1 WebSocket upgrade request targeting `target_addr` at `/{path_prefix}/events`.
+fn build_upgrade_request(
+    client_cfg: &ClientConfig,
+    target_addr: &TransportAddr,
+    path_prefix: &str,
+    request_id: Uuid,
+    dest_addr: &RemoteAddr,
+) -> anyhow::Result<Request<Empty<Bytes>>> {
+    let host_val = host_header_for(target_addr, client_cfg);
     let mut req = Request::builder()
         .method("GET")
-        .uri(format!("/{}/events", client_cfg.http_upgrade_path_prefix))
-        .header(HOST, &client_cfg.http_header_host)
+        .uri(format!("/{}/events", path_prefix))
+        .header(HOST, host_val)
         .header(UPGRADE, "websocket")
         .header(CONNECTION, "upgrade")
         .header(SEC_WEBSOCKET_KEY, fastwebsockets::handshake::generate_key())
@@ -281,8 +300,8 @@ pub async fn connect(
         None => {
             return Err(anyhow!(
                 "failed to build HTTP request to contact the server {:?}. Most likely path_prefix `{}` or http headers is not valid",
-                req.body(Empty::<Bytes>::new()),
-                client_cfg.http_upgrade_path_prefix
+                target_addr,
+                path_prefix
             ));
         }
     };
@@ -309,23 +328,162 @@ pub async fn connect(
     }
 
     let req = req.body(Empty::<Bytes>::new()).with_context(|| {
-        format!(
-            "failed to build HTTP request to contact the server {:?}",
-            client_cfg.remote_addr
-        )
+        format!("failed to build HTTP request to contact the server {target_addr:?}")
     })?;
-    debug!("with HTTP upgrade request {req:?}");
-    let transport = pooled_cnx
-        .take()
-        .and_then(Either::left)
-        .ok_or_else(|| anyhow!("the connection pool did not return a TCP stream"))?;
+    Ok(req)
+}
 
-    let (ws, response) = fastwebsockets::handshake::client(&TokioExecutor::new(), req, transport)
+/// The outcome of a WebSocket handshake attempt.
+enum HandshakeOutcome {
+    /// Server accepted the upgrade with 101 Switching Protocols.
+    Success(Box<WebSocket<TokioIo<Upgraded>>>, Parts),
+    /// Server responded with an HTTP 3xx redirection and a `Location` header.
+    Redirect { status: hyper::StatusCode, location: String },
+}
+
+/// Performs a WebSocket handshake over the given `transport` stream, intercepting HTTP 3xx redirects.
+async fn do_websocket_handshake(
+    transport: L4Stream,
+    req: Request<Empty<Bytes>>,
+    executor: &impl crate::TokioExecutorRef,
+) -> anyhow::Result<HandshakeOutcome> {
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(transport))
         .await
-        .with_context(|| format!("failed to do websocket handshake with the server {:?}", client_cfg.remote_addr))?;
+        .with_context(|| "failed to establish HTTP/1.1 handshake with server")?;
 
-    let (ws_rx, ws_tx) = mk_websocket_tunnel(ws, Role::Client, client_cfg.websocket_mask_frame)?;
-    Ok((ws_rx, ws_tx, response.into_parts().0))
+    executor.spawn(async move {
+        if let Err(err) = conn.with_upgrades().await {
+            debug!("HTTP/1.1 connection driver ended: {err:?}");
+        }
+    });
+
+    let mut response = sender
+        .send_request(req)
+        .await
+        .with_context(|| "failed to send WebSocket upgrade request")?;
+
+    let status = response.status();
+    if status == hyper::StatusCode::SWITCHING_PROTOCOLS {
+        let is_upgrade_ws = response
+            .headers()
+            .get(UPGRADE)
+            .and_then(|h| h.to_str().ok())
+            .map(|h| h.eq_ignore_ascii_case("websocket"))
+            .unwrap_or(false);
+        if !is_upgrade_ws {
+            return Err(anyhow!(
+                "Server responded with 101 Switching Protocols but missing or invalid Upgrade header"
+            ));
+        }
+
+        let is_conn_upgrade = response
+            .headers()
+            .get(CONNECTION)
+            .and_then(|h| h.to_str().ok())
+            .map(|h| h.split(',').any(|part| part.trim().eq_ignore_ascii_case("upgrade")))
+            .unwrap_or(false);
+        if !is_conn_upgrade {
+            return Err(anyhow!(
+                "Server responded with 101 Switching Protocols but missing or invalid Connection header"
+            ));
+        }
+
+        let upgraded = hyper::upgrade::on(&mut response)
+            .await
+            .with_context(|| "failed to upgrade HTTP connection to WebSocket")?;
+        let ws = WebSocket::after_handshake(TokioIo::new(upgraded), Role::Client);
+        Ok(HandshakeOutcome::Success(Box::new(ws), response.into_parts().0))
+    } else if status.is_redirection() {
+        let location = response
+            .headers()
+            .get(hyper::header::LOCATION)
+            .and_then(|h| h.to_str().ok())
+            .ok_or_else(|| anyhow!("Redirect status code {status} without valid Location header"))?
+            .to_string();
+        Ok(HandshakeOutcome::Redirect { status, location })
+    } else {
+        let body_bytes = response
+            .into_body()
+            .collect()
+            .await
+            .map(|c| c.to_bytes())
+            .unwrap_or_default();
+        let body_str = String::from_utf8_lossy(&body_bytes);
+        let detail = if body_str.is_empty() {
+            String::new()
+        } else {
+            format!(": {body_str}")
+        };
+        Err(anyhow!(
+            "WebSocket handshake rejected by server with status {status}{detail}"
+        ))
+    }
+}
+
+/// Connect to a remote wstunnel server over WebSocket, following HTTP 3xx redirects if encountered.
+pub async fn connect(
+    request_id: Uuid,
+    client: &Client<impl crate::TokioExecutorRef>,
+    dest_addr: &RemoteAddr,
+) -> anyhow::Result<(WebsocketTransportRead, WebsocketTransportWrite, Parts)> {
+    let client_cfg = &client.config;
+    let mut current_addr = client_cfg.remote_addr.clone();
+    let mut current_path_prefix = client_cfg.http_upgrade_path_prefix.clone();
+    let mut visited = HashSet::new();
+    let max_redirects = 5;
+    let mut redirect_count = 0;
+
+    loop {
+        // On attempt 0, take an already-pooled connection. On subsequent redirect attempts,
+        // dial the new target directly via connect_l4_stream.
+        let transport = if redirect_count == 0 {
+            let mut pooled_cnx = match client.cnx_pool.get().await {
+                Ok(cnx) => Ok(cnx),
+                Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
+            }?;
+            pooled_cnx
+                .take()
+                .and_then(Either::left)
+                .ok_or_else(|| anyhow!("the connection pool did not return a TCP stream"))?
+        } else {
+            connect_l4_stream(client_cfg, &current_addr).await?
+        };
+
+        let req = build_upgrade_request(
+            client_cfg,
+            &current_addr,
+            &current_path_prefix,
+            request_id,
+            dest_addr,
+        )?;
+        debug!("with HTTP upgrade request {req:?}");
+
+        match do_websocket_handshake(transport, req, &client.executor)
+            .await
+            .with_context(|| format!("failed to do websocket handshake with the server {:?}", current_addr))?
+        {
+            HandshakeOutcome::Success(ws, parts) => {
+                let (ws_rx, ws_tx) = mk_websocket_tunnel(*ws, Role::Client, client_cfg.websocket_mask_frame)?;
+                return Ok((ws_rx, ws_tx, parts));
+            }
+            HandshakeOutcome::Redirect { status, location } => {
+                if redirect_count >= max_redirects {
+                    return Err(anyhow!(
+                        "too many redirects ({redirect_count}) when connecting to {:?}",
+                        client_cfg.remote_addr
+                    ));
+                }
+                redirect_count += 1;
+                info!("Server redirected ({status}) to {location}");
+                let (next_addr, next_prefix) = current_addr
+                    .resolve_redirect(&current_path_prefix, &location, &mut visited)
+                    .with_context(|| format!("failed to follow redirect from {current_addr:?} to {location}"))?;
+
+                current_addr = next_addr;
+                current_path_prefix = next_prefix;
+            }
+        }
+    }
 }
 
 pub fn mk_websocket_tunnel(

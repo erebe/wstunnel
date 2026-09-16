@@ -290,7 +290,7 @@ impl TransportAddr {
         };
 
         // Extract port
-        let port = new_url.port_or_known_default().unwrap_or_else(|| match new_scheme {
+        let port = new_url.port_or_known_default().unwrap_or(match new_scheme {
             TransportScheme::Ws | TransportScheme::Http => 80,
             TransportScheme::Wss | TransportScheme::Https | TransportScheme::Wts => 443,
         });
