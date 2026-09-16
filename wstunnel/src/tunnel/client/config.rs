@@ -22,6 +22,9 @@ pub struct ClientConfig {
     pub http_headers: HashMap<HeaderName, HeaderValue>,
     pub http_headers_file: Option<PathBuf>,
     pub http_header_host: HeaderValue,
+    /// Host header explicitly supplied by the user via `-H "Host: ..."`.
+    /// `None` if the host header was auto-derived from `remote_addr`.
+    pub custom_http_header_host: Option<HeaderValue>,
     pub timeout_connect: Duration,
     pub websocket_ping_frequency: Option<Duration>,
     pub websocket_mask_frame: bool,

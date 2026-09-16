@@ -124,7 +124,7 @@ impl TransportWrite for Http2TransportWrite {
 
 /// Derives the HTTP/2 authority string (`host` or `host:port`) for `target_addr`.
 ///
-/// On the initial connection, honors any host override from `--http-headers-file` or `--http-headers`.
+/// On the initial connection, honors any host override from `--http-headers-file` or `-H "Host: ..."`.
 /// For subsequent redirected hops, uses `target_addr.authority()`.
 fn authority_for(
     target_addr: &TransportAddr,
@@ -136,13 +136,8 @@ fn authority_for(
         if let Some(host) = headers_file_host {
             return host.to_string();
         }
-        if let Some(custom_host) = client_cfg.http_headers.get(&hyper::header::HOST)
+        if let Some(custom_host) = &client_cfg.custom_http_header_host
             && let Ok(s) = custom_host.to_str()
-        {
-            return s.to_string();
-        }
-        if let Ok(s) = client_cfg.http_header_host.to_str()
-            && !s.is_empty()
         {
             return s.to_string();
         }
@@ -207,7 +202,7 @@ async fn do_connect(
             &current_addr,
             client_cfg,
             headers_file_host.as_deref(),
-            can_use_pool && redirect_count == 0,
+            redirect_count == 0,
         );
 
         let uri_scheme = match current_addr.scheme() {
@@ -386,5 +381,71 @@ pub async fn connect(
             true,
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DnsResolver;
+    use crate::SoMark;
+    use hyper::header::HeaderValue;
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use url::Host;
+
+    fn make_test_cfg(custom_host: Option<&str>) -> ClientConfig {
+        ClientConfig {
+            remote_addr: TransportAddr::new(
+                TransportScheme::Http,
+                Host::Domain("d1.example.com".to_string()),
+                8080,
+                None,
+            )
+            .unwrap(),
+            socket_so_mark: SoMark::new(None),
+            http_upgrade_path_prefix: "v1".to_string(),
+            http_upgrade_credentials: None,
+            http_headers: HashMap::new(),
+            http_headers_file: None,
+            http_header_host: HeaderValue::from_static("d1.example.com:8080"),
+            custom_http_header_host: custom_host.map(|h| HeaderValue::from_str(h).unwrap()),
+            timeout_connect: Duration::from_secs(10),
+            websocket_ping_frequency: None,
+            websocket_mask_frame: false,
+            dns_resolver: DnsResolver::System,
+            http_proxy: None,
+            webtransport: None,
+            max_redirects: 5,
+        }
+    }
+
+    #[test]
+    fn test_authority_custom_on_initial_hop_only() {
+        let cfg = make_test_cfg(Some("custom.example.com"));
+        let initial_addr = cfg.remote_addr.clone();
+        let redirected_addr = TransportAddr::new(
+            TransportScheme::Http,
+            Host::Domain("d2.example.com".to_string()),
+            9090,
+            None,
+        )
+        .unwrap();
+
+        // Initial hop must use the custom host header as authority
+        let auth_initial = authority_for(&initial_addr, &cfg, None, true);
+        assert_eq!(auth_initial, "custom.example.com");
+
+        // Redirected hop must derive authority dynamically from redirected addr
+        let auth_redirected = authority_for(&redirected_addr, &cfg, None, false);
+        assert_eq!(auth_redirected, "d2.example.com:9090");
+    }
+
+    #[test]
+    fn test_authority_auto_derived_when_no_custom_host() {
+        let cfg = make_test_cfg(None);
+        let initial_addr = cfg.remote_addr.clone();
+        let auth_initial = authority_for(&initial_addr, &cfg, None, true);
+        assert_eq!(auth_initial, "d1.example.com:8080");
     }
 }

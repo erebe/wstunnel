@@ -150,15 +150,16 @@ pub async fn create_client(
     };
 
     // Extract host header from http_headers
-    let host_header = if let Some((_, host_val)) = args.http_headers.iter().find(|(h, _)| *h == HOST) {
-        host_val.clone()
-    } else {
-        let host = match args.remote_addr.port_or_known_default() {
-            None | Some(80) | Some(443) => args.remote_addr.host().unwrap().to_string(),
-            Some(port) => format!("{}:{}", args.remote_addr.host().unwrap(), port),
+    let (custom_host_header, host_header) =
+        if let Some((_, host_val)) = args.http_headers.iter().find(|(h, _)| *h == HOST) {
+            (Some(host_val.clone()), host_val.clone())
+        } else {
+            let host = match args.remote_addr.port_or_known_default() {
+                None | Some(80) | Some(443) => args.remote_addr.host().unwrap().to_string(),
+                Some(port) => format!("{}:{}", args.remote_addr.host().unwrap(), port),
+            };
+            (None, HeaderValue::from_str(&host)?)
         };
-        HeaderValue::from_str(&host)?
-    };
     if let Some(path) = &args.http_headers_file
         && !path.exists()
     {
@@ -213,6 +214,7 @@ pub async fn create_client(
         http_headers: args.http_headers.into_iter().filter(|(k, _)| k != HOST).collect(),
         http_headers_file: args.http_headers_file,
         http_header_host: host_header,
+        custom_http_header_host: custom_host_header,
         timeout_connect: Duration::from_secs(10),
         websocket_ping_frequency,
         websocket_mask_frame: args.websocket_mask_frame,

@@ -287,9 +287,3 @@ pub async fn connect_addr(
 
     Ok(tls_stream)
 }
-
-/// Complete a client-side TLS handshake over an existing TCP stream toward `client_cfg.remote_addr`.
-#[allow(dead_code)]
-pub async fn connect(client_cfg: &ClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
-    connect_addr(client_cfg, &client_cfg.remote_addr, tcp_stream).await
-}

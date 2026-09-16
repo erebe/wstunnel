@@ -1,8 +1,6 @@
 mod server;
 mod utils;
 
-#[allow(unused_imports)]
-pub use server::connect;
 pub use server::connect_addr;
 pub use server::load_certificates_from_pem;
 pub use server::load_private_key_from_file;

@@ -323,9 +323,16 @@ impl TransportAddr {
             }
         };
 
-        // TLS configuration: carry over existing TLS configuration if the target requires TLS
+        // TLS configuration: carry over existing TLS configuration if the target requires TLS.
+        // If the redirect changes the host, clear any SNI override so that the TLS handshake
+        // and certificate verification use the new destination host rather than a mismatched override.
         let tls = match self.tls().cloned() {
-            Some(tls) => Some(tls),
+            Some(mut tls) => {
+                if self.host() != &host {
+                    tls.tls_sni_override = None;
+                }
+                Some(tls)
+            }
             None if matches!(new_scheme, TransportScheme::Wss | TransportScheme::Https) => {
                 let connector = crate::protocols::tls::tls_connector(
                     false,
@@ -546,5 +553,43 @@ mod tests {
         assert!(addr1.is_same_endpoint(&addr2));
         assert!(!addr1.is_same_endpoint(&addr3));
         assert!(!addr1.is_same_endpoint(&addr4));
+    }
+
+    #[test]
+    fn test_resolve_redirect_sni_override_cleared_on_host_change() {
+        use tokio_rustls::rustls::pki_types::DnsName;
+        let mut tls = dummy_tls_config();
+        tls.tls_sni_override = Some(DnsName::try_from("initial-sni.com").unwrap().to_owned());
+
+        let addr = TransportAddr::Wss {
+            scheme: TransportScheme::Wss,
+            tls,
+            host: Host::Domain("d1.example.com".to_string()),
+            port: 443,
+        };
+        let mut visited = HashSet::new();
+
+        // 1. Redirect to same host, different port: SNI override should be preserved
+        let (same_host_addr, _) = addr
+            .resolve_redirect("v1", "https://d1.example.com:8443/v1/events", &mut visited)
+            .unwrap();
+        assert_eq!(
+            same_host_addr
+                .tls()
+                .and_then(|t| t.tls_sni_override.as_ref())
+                .map(|s| s.as_ref()),
+            Some("initial-sni.com")
+        );
+
+        // 2. Redirect to different host: SNI override should be cleared
+        let (diff_host_addr, _) = addr
+            .resolve_redirect("v1", "https://d2.example.com:443/v1/events", &mut visited)
+            .unwrap();
+        assert_eq!(
+            diff_host_addr
+                .tls()
+                .and_then(|t| t.tls_sni_override.as_ref()),
+            None
+        );
     }
 }

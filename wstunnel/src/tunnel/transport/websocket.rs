@@ -254,10 +254,15 @@ impl TransportRead for WebsocketTransportRead {
 
 /// Derives the appropriate `Host` header for `target_addr`.
 ///
-/// Honors any explicit `Host` header provided in `client_cfg.http_headers`, otherwise
-/// generates the host authority string (including non-default port if applicable).
-fn host_header_for(target_addr: &TransportAddr, client_cfg: &ClientConfig) -> HeaderValue {
-    if let Some(custom_host) = client_cfg.http_headers.get(&HOST) {
+/// On the initial connection attempt (`is_initial == true`), any explicit custom `Host` header
+/// provided by the user via `-H "Host: ..."` is honored.
+///
+/// On subsequent redirected hops (`is_initial == false`) or if no custom host header was configured,
+/// the host authority string (including non-default port if applicable) is dynamically derived from `target_addr`.
+fn host_header_for(target_addr: &TransportAddr, client_cfg: &ClientConfig, is_initial: bool) -> HeaderValue {
+    if is_initial
+        && let Some(custom_host) = &client_cfg.custom_http_header_host
+    {
         return custom_host.clone();
     }
     let host_str = match target_addr.port() {
@@ -279,8 +284,9 @@ fn build_upgrade_request(
     path_prefix: &str,
     request_id: Uuid,
     dest_addr: &RemoteAddr,
+    is_initial: bool,
 ) -> anyhow::Result<Request<Empty<Bytes>>> {
-    let host_val = host_header_for(target_addr, client_cfg);
+    let host_val = host_header_for(target_addr, client_cfg, is_initial);
     let mut req = Request::builder()
         .method("GET")
         .uri(format!("/{}/events", path_prefix))
@@ -458,6 +464,7 @@ async fn do_connect(
             &current_path_prefix,
             request_id,
             dest_addr,
+            redirect_count == 0,
         )?;
         debug!("with HTTP upgrade request {req:?}");
 
@@ -588,4 +595,69 @@ pub fn mk_websocket_tunnel(
     let in_flight_ping = Arc::new(AtomicUsize::new(0));
     let (ws_rx, pending_ops) = WebsocketTransportRead::new(ws_rx, in_flight_ping.clone());
     Ok((ws_rx, WebsocketTransportWrite::new(ws_tx, pending_ops, in_flight_ping)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DnsResolver;
+    use crate::SoMark;
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use url::Host;
+
+    fn make_test_cfg(custom_host: Option<&str>) -> ClientConfig {
+        ClientConfig {
+            remote_addr: TransportAddr::new(
+                TransportScheme::Ws,
+                Host::Domain("d1.example.com".to_string()),
+                8080,
+                None,
+            )
+            .unwrap(),
+            socket_so_mark: SoMark::new(None),
+            http_upgrade_path_prefix: "v1".to_string(),
+            http_upgrade_credentials: None,
+            http_headers: HashMap::new(),
+            http_headers_file: None,
+            http_header_host: HeaderValue::from_static("d1.example.com:8080"),
+            custom_http_header_host: custom_host.map(|h| HeaderValue::from_str(h).unwrap()),
+            timeout_connect: Duration::from_secs(10),
+            websocket_ping_frequency: None,
+            websocket_mask_frame: false,
+            dns_resolver: DnsResolver::System,
+            http_proxy: None,
+            webtransport: None,
+            max_redirects: 5,
+        }
+    }
+
+    #[test]
+    fn test_host_header_custom_on_initial_hop_only() {
+        let cfg = make_test_cfg(Some("custom.example.com"));
+        let initial_addr = cfg.remote_addr.clone();
+        let redirected_addr = TransportAddr::new(
+            TransportScheme::Ws,
+            Host::Domain("d2.example.com".to_string()),
+            9090,
+            None,
+        )
+        .unwrap();
+
+        // Initial hop must use the custom host header
+        let host_initial = host_header_for(&initial_addr, &cfg, true);
+        assert_eq!(host_initial.to_str().unwrap(), "custom.example.com");
+
+        // Redirected hop must derive host authority dynamically
+        let host_redirected = host_header_for(&redirected_addr, &cfg, false);
+        assert_eq!(host_redirected.to_str().unwrap(), "d2.example.com:9090");
+    }
+
+    #[test]
+    fn test_host_header_auto_derived_when_no_custom_host() {
+        let cfg = make_test_cfg(None);
+        let initial_addr = cfg.remote_addr.clone();
+        let host_initial = host_header_for(&initial_addr, &cfg, true);
+        assert_eq!(host_initial.to_str().unwrap(), "d1.example.com:8080");
+    }
 }
