@@ -295,11 +295,7 @@ fn test_tls_acceptor() -> TlsAcceptor {
         tls_key_path: None,
         tls_client_ca_certs_path: None,
     };
-    crate::protocols::tls::tls_acceptor(
-        &tls_server_config,
-        Some(vec![b"h2".to_vec(), b"http/1.1".to_vec()]),
-    )
-    .unwrap()
+    crate::protocols::tls::tls_acceptor(&tls_server_config, Some(vec![b"h2".to_vec(), b"http/1.1".to_vec()])).unwrap()
 }
 
 /// Spawns a mock HTTP/1.1 and HTTP/2 redirect server (optionally wrapped in TLS)
@@ -754,7 +750,9 @@ async fn test_tcp_tunnel_websocket_redirect_301(
     defer! { server_h.abort(); };
 
     // Start redirect server that sends 301 to the wstunnel server
-    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("ws://127.0.0.1:{server_port}/wstunnel/events")));
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://127.0.0.1:{server_port}/wstunnel/events"
+    )));
     let (redirect_addr, redirect_h) = start_redirect_server(301, "Moved Permanently", redirect_target).await;
     defer! { redirect_h.abort(); };
 
@@ -839,7 +837,9 @@ async fn test_tcp_tunnel_websocket_redirect_302(
     defer! { server_h.abort(); };
 
     // Start redirect server that sends 302 to the wstunnel server
-    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("ws://127.0.0.1:{server_port}/wstunnel/events")));
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://127.0.0.1:{server_port}/wstunnel/events"
+    )));
     let (redirect_addr, redirect_h) = start_redirect_server(302, "Found", redirect_target).await;
     defer! { redirect_h.abort(); };
 
@@ -921,7 +921,9 @@ async fn test_tcp_tunnel_redirect_max_redirects_zero(
     let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
     defer! { server_h.abort(); };
 
-    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("ws://127.0.0.1:{server_port}/wstunnel/events")));
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://127.0.0.1:{server_port}/wstunnel/events"
+    )));
     let (redirect_addr, redirect_h) = start_redirect_server(302, "Found", redirect_target).await;
     defer! { redirect_h.abort(); };
 
@@ -957,10 +959,7 @@ async fn test_tcp_tunnel_redirect_max_redirects_zero(
 #[timeout(Duration::from_secs(20))]
 #[tokio::test]
 #[serial]
-async fn test_tcp_tunnel_cached_redirect_fallback(
-    dns_resolver: DnsResolver,
-    no_restrictions: RestrictionsRules,
-) {
+async fn test_tcp_tunnel_cached_redirect_fallback(dns_resolver: DnsResolver, no_restrictions: RestrictionsRules) {
     let (tunnel_listen, tunnel_host) = free_addr();
     let (endpoint_listen, endpoint_host) = free_addr();
 
@@ -984,7 +983,9 @@ async fn test_tcp_tunnel_cached_redirect_fallback(
     let server1_h = tokio::spawn(server1.serve(no_restrictions.clone()));
 
     // Canonical redirect server pointing initially to Server 1
-    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("ws://127.0.0.1:{server1_port}/wstunnel/events")));
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://127.0.0.1:{server1_port}/wstunnel/events"
+    )));
     let (redirect_addr, redirect_h) = start_redirect_server(301, "Moved Permanently", redirect_target.clone()).await;
     defer! { redirect_h.abort(); };
 
@@ -1092,7 +1093,9 @@ async fn test_tcp_tunnel_http2_redirect_301(
     defer! { server_h.abort(); };
 
     // Start auto redirect server that sends 301 over HTTP/2 to the wstunnel server
-    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("http://127.0.0.1:{server_port}/wstunnel/events")));
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "http://127.0.0.1:{server_port}/wstunnel/events"
+    )));
     let (redirect_addr, redirect_h) = start_auto_redirect_server(301, "Moved Permanently", redirect_target, None).await;
     defer! { redirect_h.abort(); };
 
@@ -1177,7 +1180,9 @@ async fn test_tcp_tunnel_websocket_redirect_tls(
     defer! { server_h.abort(); };
 
     // Start TLS auto redirect server that sends 301 to the wstunnel TLS server
-    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("wss://127.0.0.1:{server_port}/wstunnel/events")));
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "wss://127.0.0.1:{server_port}/wstunnel/events"
+    )));
     let tls_acceptor = test_tls_acceptor();
     let (redirect_addr, redirect_h) =
         start_auto_redirect_server(301, "Moved Permanently", redirect_target, Some(tls_acceptor)).await;
@@ -1264,7 +1269,9 @@ async fn test_tcp_tunnel_websocket_redirect_cleartext_to_tls(
     defer! { server_h.abort(); };
 
     // Cleartext redirect server that sends 301 pointing to wss:// wstunnel server
-    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("wss://127.0.0.1:{server_port}/wstunnel/events")));
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "wss://127.0.0.1:{server_port}/wstunnel/events"
+    )));
     let (redirect_addr, redirect_h) = start_redirect_server(301, "Moved Permanently", redirect_target).await;
     defer! { redirect_h.abort(); };
 

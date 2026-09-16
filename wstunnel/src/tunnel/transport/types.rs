@@ -408,15 +408,9 @@ mod tests {
     use super::*;
 
     fn dummy_tls_config() -> TlsClientConfig {
-        let connector = crate::protocols::tls::tls_connector(
-            false,
-            TransportScheme::Wss.alpn_protocols(),
-            true,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let connector =
+            crate::protocols::tls::tls_connector(false, TransportScheme::Wss.alpn_protocols(), true, None, None, None)
+                .unwrap();
         TlsClientConfig {
             tls_sni_disabled: false,
             tls_sni_override: None,
@@ -601,12 +595,7 @@ mod tests {
         let (diff_host_addr, _) = addr
             .resolve_redirect("v1", "https://d2.example.com:443/v1/events", &mut visited, false)
             .unwrap();
-        assert_eq!(
-            diff_host_addr
-                .tls()
-                .and_then(|t| t.tls_sni_override.as_ref()),
-            None
-        );
+        assert_eq!(diff_host_addr.tls().and_then(|t| t.tls_sni_override.as_ref()), None);
     }
 
     #[test]

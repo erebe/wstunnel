@@ -182,13 +182,14 @@ pub async fn connect_l4_stream(
         // Bound the TLS handshake with the same timeout as the TCP connect,
         // so a peer that accepts the connection but never completes the
         // handshake is dropped instead of held.
-        let tls_stream = match tokio::time::timeout(timeout, tls::connect_addr(client_cfg, remote_addr, tcp_stream)).await {
-            Ok(res) => res?,
-            Err(_) => {
-                warn!("Timed out after {timeout:?} doing the TLS handshake with the server");
-                return Err(anyhow!("Timed out doing the TLS handshake with the server"));
-            }
-        };
+        let tls_stream =
+            match tokio::time::timeout(timeout, tls::connect_addr(client_cfg, remote_addr, tcp_stream)).await {
+                Ok(res) => res?,
+                Err(_) => {
+                    warn!("Timed out after {timeout:?} doing the TLS handshake with the server");
+                    return Err(anyhow!("Timed out doing the TLS handshake with the server"));
+                }
+            };
         Ok(L4Stream::from_client_tls(tls_stream, Bytes::default()))
     } else {
         Ok(L4Stream::from_tcp(tcp_stream, Bytes::default()))

@@ -1,7 +1,7 @@
 use super::io::{MAX_PACKET_LENGTH, TransportRead, TransportWrite};
 use crate::tunnel::RemoteAddr;
+use crate::tunnel::client::connection_pool::{L4ReadHalf, L4Stream, L4WriteHalf, connect_l4_stream};
 use crate::tunnel::client::{Client, ClientConfig};
-use crate::tunnel::client::connection_pool::{connect_l4_stream, L4ReadHalf, L4Stream, L4WriteHalf};
 use crate::tunnel::transport::headers_from_file;
 use crate::tunnel::transport::jwt::{JWT_HEADER_PREFIX, tunnel_to_jwt_token};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
@@ -260,9 +260,7 @@ impl TransportRead for WebsocketTransportRead {
 /// On subsequent redirected hops (`is_initial == false`) or if no custom host header was configured,
 /// the host authority string (including non-default port if applicable) is dynamically derived from `target_addr`.
 fn host_header_for(target_addr: &TransportAddr, client_cfg: &ClientConfig, is_initial: bool) -> HeaderValue {
-    if is_initial
-        && let Some(custom_host) = &client_cfg.custom_http_header_host
-    {
+    if is_initial && let Some(custom_host) = &client_cfg.custom_http_header_host {
         return custom_host.clone();
     }
     let host_str = match target_addr.port() {
@@ -333,9 +331,9 @@ fn build_upgrade_request(
         }
     }
 
-    let req = req.body(Empty::<Bytes>::new()).with_context(|| {
-        format!("failed to build HTTP request to contact the server {target_addr:?}")
-    })?;
+    let req = req
+        .body(Empty::<Bytes>::new())
+        .with_context(|| format!("failed to build HTTP request to contact the server {target_addr:?}"))?;
     Ok(req)
 }
 
@@ -344,7 +342,10 @@ enum HandshakeOutcome {
     /// Server accepted the upgrade with 101 Switching Protocols.
     Success(Box<WebSocket<TokioIo<Upgraded>>>, Parts),
     /// Server responded with an HTTP 3xx redirection and a `Location` header.
-    Redirect { status: hyper::StatusCode, location: String },
+    Redirect {
+        status: hyper::StatusCode,
+        location: String,
+    },
 }
 
 /// Performs a WebSocket handshake over the given `transport` stream, intercepting HTTP 3xx redirects.
@@ -420,9 +421,7 @@ async fn do_websocket_handshake(
         } else {
             format!(": {body_str}")
         };
-        Err(anyhow!(
-            "WebSocket handshake rejected by server with status {status}{detail}"
-        ))
+        Err(anyhow!("WebSocket handshake rejected by server with status {status}{detail}"))
     }
 }
 
@@ -512,12 +511,7 @@ async fn do_connect(
                 }
                 info!("Server redirected ({status}) to {location}");
                 let (next_addr, next_prefix) = current_addr
-                    .resolve_redirect(
-                        &current_path_prefix,
-                        &location,
-                        &mut visited,
-                        client_cfg.tls_verify_certificate,
-                    )
+                    .resolve_redirect(&current_path_prefix, &location, &mut visited, client_cfg.tls_verify_certificate)
                     .with_context(|| format!("failed to follow redirect from {current_addr:?} to {location}"))?;
 
                 current_addr = next_addr;
@@ -552,9 +546,7 @@ pub async fn connect(
             Err(err) => {
                 warn!(
                     "Failed to connect to cached redirect target {:?}: {:?}. Falling back to canonical server URL {:?}",
-                    active.addr,
-                    err,
-                    client_cfg.remote_addr
+                    active.addr, err, client_cfg.remote_addr
                 );
                 client.reset_active_target();
                 // When falling back after a cached target failure, establish a fresh L4 connection directly
@@ -665,13 +657,8 @@ mod tests {
     fn test_host_header_custom_on_initial_hop_only() {
         let cfg = make_test_cfg(Some("custom.example.com"));
         let initial_addr = cfg.remote_addr.clone();
-        let redirected_addr = TransportAddr::new(
-            TransportScheme::Ws,
-            Host::Domain("d2.example.com".to_string()),
-            9090,
-            None,
-        )
-        .unwrap();
+        let redirected_addr =
+            TransportAddr::new(TransportScheme::Ws, Host::Domain("d2.example.com".to_string()), 9090, None).unwrap();
 
         // Initial hop must use the custom host header
         let host_initial = host_header_for(&initial_addr, &cfg, true);

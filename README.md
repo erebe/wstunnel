@@ -284,6 +284,13 @@ Options:
           
           [env: WSTUNNEL_DNS_PREFER_IPV4=]
 
+      --max-redirects <INT>
+          Maximum number of HTTP redirects (301, 302, 307, 308) to follow for server URL.
+          Set to 0 to disable redirect following.
+          
+          [env: WSTUNNEL_MAX_REDIRECTS=]
+          [default: 5]
+
   -h, --help
           Print help (see a summary with '-h')
 ```

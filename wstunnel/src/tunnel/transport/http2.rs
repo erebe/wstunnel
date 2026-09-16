@@ -201,12 +201,7 @@ async fn do_connect(
             connect_l4_stream(client_cfg, &current_addr).await?
         };
 
-        let authority = authority_for(
-            &current_addr,
-            client_cfg,
-            headers_file_host.as_deref(),
-            redirect_count == 0,
-        );
+        let authority = authority_for(&current_addr, client_cfg, headers_file_host.as_deref(), redirect_count == 0);
 
         let uri_scheme = match current_addr.scheme() {
             TransportScheme::Https | TransportScheme::Wss => "https",
@@ -249,10 +244,11 @@ async fn do_connect(
         }
 
         let (tx, rx) = mpsc::channel::<Bytes>(1024);
-        let body = StreamBody::new(ReceiverStream::new(rx).map(|s| -> anyhow::Result<Frame<Bytes>> { Ok(Frame::data(s)) }));
-        let req = req.body(body).with_context(|| {
-            format!("failed to build HTTP request to contact the server {current_addr:?}")
-        })?;
+        let body =
+            StreamBody::new(ReceiverStream::new(rx).map(|s| -> anyhow::Result<Frame<Bytes>> { Ok(Frame::data(s)) }));
+        let req = req
+            .body(body)
+            .with_context(|| format!("failed to build HTTP request to contact the server {current_addr:?}"))?;
         debug!("with HTTP upgrade request {req:?}");
 
         let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
@@ -325,12 +321,7 @@ async fn do_connect(
             info!("Server redirected ({status}) to {location}");
 
             let (next_addr, next_prefix) = current_addr
-                .resolve_redirect(
-                    &current_path_prefix,
-                    &location,
-                    &mut visited,
-                    client_cfg.tls_verify_certificate,
-                )
+                .resolve_redirect(&current_path_prefix, &location, &mut visited, client_cfg.tls_verify_certificate)
                 .with_context(|| format!("failed to follow redirect from {current_addr:?} to {location}"))?;
 
             current_addr = next_addr;
@@ -349,9 +340,7 @@ async fn do_connect(
             } else {
                 format!(": {body_str}")
             };
-            return Err(anyhow!(
-                "Http2 server rejected the connection with status {status}{detail}"
-            ));
+            return Err(anyhow!("Http2 server rejected the connection with status {status}{detail}"));
         }
     }
 }
@@ -381,9 +370,7 @@ pub async fn connect(
             Err(err) => {
                 warn!(
                     "Failed to connect to cached redirect target {:?}: {:?}. Falling back to canonical server URL {:?}",
-                    active.addr,
-                    err,
-                    client_cfg.remote_addr
+                    active.addr, err, client_cfg.remote_addr
                 );
                 client.reset_active_target();
                 // When falling back after a cached target failure, establish a fresh L4 connection directly
@@ -453,13 +440,8 @@ mod tests {
     fn test_authority_custom_on_initial_hop_only() {
         let cfg = make_test_cfg(Some("custom.example.com"));
         let initial_addr = cfg.remote_addr.clone();
-        let redirected_addr = TransportAddr::new(
-            TransportScheme::Http,
-            Host::Domain("d2.example.com".to_string()),
-            9090,
-            None,
-        )
-        .unwrap();
+        let redirected_addr =
+            TransportAddr::new(TransportScheme::Http, Host::Domain("d2.example.com".to_string()), 9090, None).unwrap();
 
         // Initial hop must use the custom host header as authority
         let auth_initial = authority_for(&initial_addr, &cfg, None, true);

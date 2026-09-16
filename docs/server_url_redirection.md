@@ -1,0 +1,90 @@
+# wstunnel Server URL Redirection (301/302/307/308) Specification & Architecture
+
+## 1. Context & Problem Statement
+
+When using `wstunnel` client with a server URL behind a reverse proxy, CDN (e.g., Cloudflare Rules), or HTTP redirector (e.g., `wss://d1.example.com` redirecting to `wss://d2.example.com`), previous versions of wstunnel aborted with:
+
+```text
+ERROR tunnel{id="..." remote="..."}: wstunnel::tunnel::client::client: failed to do websocket handshake with the server wss://d1.example.com:443
+Caused by:
+    Invalid status code: 301
+```
+
+This feature adds support for following HTTP 3xx redirects (`301`, `302`, `307`, `308`) when connecting to remote wstunnel servers over WebSocket and HTTP/2 transports.
+
+### Objectives & Guarantees
+1. **Minimal footprint:** Localized and idiomatic changes.
+2. **Zero new dependencies:** Relies strictly on existing dependencies (`hyper`, `fastwebsockets`, `url`, `tokio`, `bb8`, `arc-swap`, `parking_lot`).
+3. **Zero performance regression:** Normal connections (without redirection) experience **identical performance** to the baseline (no extra round-trips, no additional lock contention, no extra heap allocations).
+4. **RFC 9110 standard semantics:** Full compliance with standard HTTP redirect semantics across multiple client connections.
+5. **Security & robustness:** Downgrade attack protection, redirect loop detection, configurable hop limit (`--max-redirects`), and cached target fallback to canonical URL.
+
+---
+
+## 2. Architecture & Design
+
+### 2.1 The L4 / L7 Decoupling
+
+In wstunnel, connection establishment is decoupled into two layers:
+- **Layer 4 (TCP + TLS):** Extracted into `connect_l4_stream` in `wstunnel/src/tunnel/client/connection_pool/manager.rs`. It resolves DNS, establishes TCP, and completes TLS handshake. Pooled connections from `bb8::Pool<L4StreamManager>` dial the canonical configured address.
+- **Layer 7 (HTTP / WebSocket Handshake):** Implemented in `wstunnel/src/tunnel/transport/websocket.rs` and `wstunnel/src/tunnel/transport/http2.rs`. It inspects the HTTP response status. If a 101/200 is received, the tunnel is established immediately. If a 3xx response is received, it follows the redirect chain.
+
+### 2.2 Connection Handling Semantics (RFC 9110)
+
+```mermaid
+flowchart TD
+    subgraph Conn1 ["Connection 1 (Initial Handshake)"]
+        A1["Connect to server URL"] --> B1{"Server Response"}
+        B1 -->|101 / 200| C1["Tunnel Established (No Redirection)"]
+        B1 -->|301 / 308 (Permanent Chain)| D1["Follow Redirect to Target D2\nUpdate Shared Active Target"]
+        B1 -->|302 / 307 (Temporary)| E1["Follow Redirect to Target D2\nKeep Canonical URL as Active Target"]
+    end
+
+    subgraph Conn2 ["Connection 2 (Subsequent Connection)"]
+        F2["New Tunnel Request"] --> G2{"Active Target"}
+        G2 -->|Cached D2 (from 301/308)| H2["Connect directly to D2\n(Skips Redirection Round-Trip!)"]
+        G2 -->|Canonical URL (from 302/307)| I2["Connect to Canonical URL\nFollows Redirect Again"]
+        H2 -->|If D2 Fails / Dead| J2["Automatic Fallback to Canonical URL\nRe-evaluates Redirection"]
+    end
+```
+
+#### A. Permanent Redirects (`301 Moved Permanently` / `308 Permanent Redirect`)
+- **Semantics (RFC 9110 §15.4.2 & §15.4.9):** The target has permanently moved. All future requests should use the new URI.
+- **Behavior:** The client follows the redirect chain to `d2`. If the chain consists exclusively of permanent redirects (`is_permanent_chain == true`), the shared `active_target` is updated to `d2` via `ArcSwap<ActiveTarget>`.
+- **Subsequent Connections:** Connect directly to `d2`, skipping the redirect round-trip.
+- **Fallback:** If `d2` fails to connect or times out (e.g., target server rotated or restarted), the client logs a warning and automatically falls back to the canonical configured server URL.
+
+#### B. Temporary Redirects (`302 Found` / `307 Temporary Redirect`)
+- **Semantics (RFC 9110 §15.4.3 & §15.4.8):** The target temporarily resides elsewhere. The canonical configured URL remains the authoritative target.
+- **Behavior:** The client follows the redirect to `d2` for this tunnel, but `active_target` is **not** updated.
+- **Subsequent Connections:** Query the canonical server URL again, ensuring dynamic redirects (such as rotating NAT ports) are continually re-evaluated.
+- **Mixed Chains:** If any hop in a redirect chain is temporary (`302` or `307`), the entire chain is marked temporary and not cached.
+
+---
+
+## 3. Configuration & CLI Options
+
+```text
+      --max-redirects <INT>
+          Maximum number of HTTP redirects (301, 302, 307, 308) to follow for server URL.
+          Set to 0 to disable redirect following.
+          
+          [env: WSTUNNEL_MAX_REDIRECTS=]
+          [default: 5]
+```
+
+- Default is `5` hops.
+- Set to `0` to strictly disallow redirect following.
+
+---
+
+## 4. Security & Edge-Case Protections
+
+| Scenario | Behavior |
+| :--- | :--- |
+| **Downgrade Attack** (`wss` $\rightarrow$ `ws` or `https` $\rightarrow$ `http`) | Strictly rejected with an error: *"Refusing to downgrade from secure TLS transport to insecure transport"*. |
+| **Cleartext to TLS** (`ws` $\rightarrow$ `wss` or `http` $\rightarrow$ `https`) | Synthesizes a TLS connector, inheriting the client's `--tls-verify-certificate` setting. |
+| **Redirect Loops** (A $\rightarrow$ B $\rightarrow$ A or A $\rightarrow$ A) | Fast cycle detection using `HashSet<String>` with scheme normalization (`http`/`ws` and `https`/`wss`). Triggers loop error immediately. |
+| **Custom Host Header** (`-H "Host: ..."`) | Custom host header is preserved on the initial hop (`redirect_count == 0`). On redirected hops, the `Host`/authority is dynamically derived from the redirected target. |
+| **TLS SNI Override** (`--tls-sni-override`) | Preserved when redirecting to the same hostname, but automatically reset to `None` if redirected across different hosts to prevent SNI mismatch. |
+| **mTLS Client Certificates** | Client certificates and TLS configuration are carried over across redirected hops. |
