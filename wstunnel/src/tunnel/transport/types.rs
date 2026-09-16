@@ -180,12 +180,26 @@ impl TransportAddr {
         }
     }
 
-    /// Returns the authority string (e.g. `example.com:443` or `[::1]:443`).
-    pub fn authority(&self) -> String {
-        match self.host() {
-            Host::Domain(d) => format!("{}:{}", d, self.port()),
-            Host::Ipv4(ip) => format!("{}:{}", ip, self.port()),
-            Host::Ipv6(ip) => format!("[{}]:{}", ip, self.port()),
+    /// Returns the authority to put in an HTTP request line, `Host` header or `:authority`
+    /// pseudo-header: `example.com` when the port is the default for the scheme (80 for
+    /// `ws`/`http`, 443 for `wss`/`https`/`wts`), `example.com:8443` otherwise.
+    ///
+    /// IPv6 hosts are bracketed (`[::1]:8443`). Eliding the default port matches what other HTTP
+    /// clients send and what the transports used before redirection was supported.
+    pub fn request_authority(&self) -> String {
+        let host = match self.host() {
+            Host::Domain(d) => d.clone(),
+            Host::Ipv4(ip) => ip.to_string(),
+            Host::Ipv6(ip) => format!("[{ip}]"),
+        };
+        let default_port = match self.scheme() {
+            TransportScheme::Ws | TransportScheme::Http => 80,
+            TransportScheme::Wss | TransportScheme::Https | TransportScheme::Wts => 443,
+        };
+        if self.port() == default_port {
+            host
+        } else {
+            format!("{host}:{}", self.port())
         }
     }
 
@@ -627,5 +641,42 @@ mod tests {
             .resolve_redirect("v1", "https://d2.example.com/v1/events", &mut visited, true)
             .unwrap();
         assert!(new_addr.tls().unwrap().tls_verify_certificate);
+    }
+
+    #[test]
+    fn test_request_authority_elides_default_ports() {
+        fn addr(scheme: TransportScheme, host: Host, port: u16) -> TransportAddr {
+            let tls = matches!(scheme, TransportScheme::Wss | TransportScheme::Https | TransportScheme::Wts)
+                .then(dummy_tls_config);
+            TransportAddr::new(scheme, host, port, tls).unwrap()
+        }
+        let domain = || Host::Domain("example.com".to_string());
+
+        // Default ports for the scheme are elided
+        assert_eq!(addr(TransportScheme::Ws, domain(), 80).request_authority(), "example.com");
+        assert_eq!(addr(TransportScheme::Http, domain(), 80).request_authority(), "example.com");
+        assert_eq!(addr(TransportScheme::Wss, domain(), 443).request_authority(), "example.com");
+        assert_eq!(addr(TransportScheme::Https, domain(), 443).request_authority(), "example.com");
+
+        // Non-default ports are kept
+        assert_eq!(
+            addr(TransportScheme::Ws, domain(), 8080).request_authority(),
+            "example.com:8080"
+        );
+        assert_eq!(
+            addr(TransportScheme::Wss, domain(), 8443).request_authority(),
+            "example.com:8443"
+        );
+
+        // A port that is only the default for another scheme is kept
+        assert_eq!(addr(TransportScheme::Wss, domain(), 80).request_authority(), "example.com:80");
+
+        // IPv6 hosts are bracketed
+        let ipv6 = "::1".parse::<std::net::Ipv6Addr>().unwrap();
+        assert_eq!(addr(TransportScheme::Wss, Host::Ipv6(ipv6), 443).request_authority(), "[::1]");
+        assert_eq!(
+            addr(TransportScheme::Wss, Host::Ipv6(ipv6), 8443).request_authority(),
+            "[::1]:8443"
+        );
     }
 }

@@ -9,6 +9,7 @@ use crate::tunnel::client::{Client, ClientConfig, TlsClientConfig};
 use crate::tunnel::downstream_listeners::{Socks5DownstreamListener, TcpDownstreamListener, UdpDownstreamListener};
 use crate::tunnel::server::{Server, ServerConfig, TlsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
+use crate::tunnel::{LocalProtocol, RemoteAddr};
 use bytes::{Bytes, BytesMut};
 use futures_util::{Stream, StreamExt};
 use http_body_util::Empty;
@@ -29,6 +30,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::pin;
 use tokio_rustls::TlsAcceptor;
 use url::Host;
+use uuid::Uuid;
 
 /// Ports already handed out by [`free_port`] in this process. A port becomes free again as soon
 /// as the probe socket is dropped, so without this two calls could hand out the same one.
@@ -140,7 +142,6 @@ async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> Cli
         http_upgrade_credentials: None,
         http_headers: HashMap::new(),
         http_headers_file: None,
-        http_header_host: HeaderValue::from_str(&format!("127.0.0.1:{server_port}")).unwrap(),
         custom_http_header_host: None,
         timeout_connect: Duration::from_secs(10),
         websocket_ping_frequency: Some(Duration::from_secs(10)),
@@ -175,18 +176,38 @@ async fn client_ws(server_port: u16, dns_resolver: DnsResolver) -> Client {
     client_ws_with_redirects(server_port, 5, dns_resolver).await
 }
 
-/// Creates a test `Client` instance configured with WebSocket transport and custom `max_redirects`.
-async fn client_ws_with_redirects(server_port: u16, max_redirects: usize, dns_resolver: DnsResolver) -> Client {
-    let client_config = ClientConfig {
-        remote_addr: TransportAddr::new(TransportScheme::Ws, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, None)
-            .unwrap(),
+/// Builds the `ClientConfig` used by the redirect tests.
+///
+/// `custom_host` stands for a `-H "Host: ..."` on the command line; when `None` the transports
+/// derive the host/authority from the address they are dialing.
+fn test_client_config(
+    scheme: TransportScheme,
+    server_port: u16,
+    max_redirects: usize,
+    custom_host: Option<&str>,
+    dns_resolver: DnsResolver,
+) -> ClientConfig {
+    let tls = matches!(scheme, TransportScheme::Wss | TransportScheme::Https).then(|| {
+        let connector =
+            crate::protocols::tls::tls_connector(false, scheme.alpn_protocols(), true, None, None, None).unwrap();
+        TlsClientConfig {
+            tls_sni_disabled: false,
+            tls_sni_override: None,
+            tls_verify_certificate: false,
+            tls_connector: Arc::new(parking_lot::RwLock::new(connector)),
+            tls_certificate_path: None,
+            tls_key_path: None,
+        }
+    });
+
+    ClientConfig {
+        remote_addr: TransportAddr::new(scheme, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, tls).unwrap(),
         socket_so_mark: SoMark::new(None),
         http_upgrade_path_prefix: "wstunnel".to_string(),
         http_upgrade_credentials: None,
         http_headers: HashMap::new(),
         http_headers_file: None,
-        http_header_host: HeaderValue::from_str(&format!("127.0.0.1:{server_port}")).unwrap(),
-        custom_http_header_host: None,
+        custom_http_header_host: custom_host.map(|host| HeaderValue::from_str(host).unwrap()),
         timeout_connect: Duration::from_secs(10),
         websocket_ping_frequency: Some(Duration::from_secs(10)),
         websocket_mask_frame: false,
@@ -195,8 +216,10 @@ async fn client_ws_with_redirects(server_port: u16, max_redirects: usize, dns_re
         webtransport: None,
         max_redirects,
         tls_verify_certificate: false,
-    };
+    }
+}
 
+async fn new_test_client(client_config: ClientConfig) -> Client {
     Client::new(
         client_config,
         1,
@@ -206,84 +229,42 @@ async fn client_ws_with_redirects(server_port: u16, max_redirects: usize, dns_re
     )
     .await
     .unwrap()
+}
+
+/// Creates a test `Client` instance configured with WebSocket transport and custom `max_redirects`.
+async fn client_ws_with_redirects(server_port: u16, max_redirects: usize, dns_resolver: DnsResolver) -> Client {
+    new_test_client(test_client_config(
+        TransportScheme::Ws,
+        server_port,
+        max_redirects,
+        None,
+        dns_resolver,
+    ))
+    .await
 }
 
 /// Creates a test `Client` instance configured with HTTP/2 transport and custom `max_redirects`.
 async fn client_h2_with_redirects(server_port: u16, max_redirects: usize, dns_resolver: DnsResolver) -> Client {
-    let client_config = ClientConfig {
-        remote_addr: TransportAddr::new(TransportScheme::Http, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, None)
-            .unwrap(),
-        socket_so_mark: SoMark::new(None),
-        http_upgrade_path_prefix: "wstunnel".to_string(),
-        http_upgrade_credentials: None,
-        http_headers: HashMap::new(),
-        http_headers_file: None,
-        http_header_host: HeaderValue::from_str(&format!("127.0.0.1:{server_port}")).unwrap(),
-        custom_http_header_host: None,
-        timeout_connect: Duration::from_secs(10),
-        websocket_ping_frequency: Some(Duration::from_secs(10)),
-        websocket_mask_frame: false,
-        dns_resolver,
-        http_proxy: None,
-        webtransport: None,
+    new_test_client(test_client_config(
+        TransportScheme::Http,
+        server_port,
         max_redirects,
-        tls_verify_certificate: false,
-    };
-
-    Client::new(
-        client_config,
-        1,
-        Duration::from_secs(1),
-        Duration::from_secs(1),
-        DefaultTokioExecutor::default(),
-    )
+        None,
+        dns_resolver,
+    ))
     .await
-    .unwrap()
 }
 
 /// Creates a test `Client` instance configured with WebSocket over TLS (`wss://`) and custom `max_redirects`.
 async fn client_wss_with_redirects(server_port: u16, max_redirects: usize, dns_resolver: DnsResolver) -> Client {
-    let tls_connector =
-        crate::protocols::tls::tls_connector(false, TransportScheme::Wss.alpn_protocols(), true, None, None, None)
-            .unwrap();
-    let tls = TlsClientConfig {
-        tls_sni_disabled: false,
-        tls_sni_override: None,
-        tls_verify_certificate: false,
-        tls_connector: Arc::new(parking_lot::RwLock::new(tls_connector)),
-        tls_certificate_path: None,
-        tls_key_path: None,
-    };
-
-    let client_config = ClientConfig {
-        remote_addr: TransportAddr::new(TransportScheme::Wss, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, Some(tls))
-            .unwrap(),
-        socket_so_mark: SoMark::new(None),
-        http_upgrade_path_prefix: "wstunnel".to_string(),
-        http_upgrade_credentials: None,
-        http_headers: HashMap::new(),
-        http_headers_file: None,
-        http_header_host: HeaderValue::from_str(&format!("127.0.0.1:{server_port}")).unwrap(),
-        custom_http_header_host: None,
-        timeout_connect: Duration::from_secs(10),
-        websocket_ping_frequency: Some(Duration::from_secs(10)),
-        websocket_mask_frame: false,
-        dns_resolver,
-        http_proxy: None,
-        webtransport: None,
+    new_test_client(test_client_config(
+        TransportScheme::Wss,
+        server_port,
         max_redirects,
-        tls_verify_certificate: false,
-    };
-
-    Client::new(
-        client_config,
-        1,
-        Duration::from_secs(1),
-        Duration::from_secs(1),
-        DefaultTokioExecutor::default(),
-    )
+        None,
+        dns_resolver,
+    ))
     .await
-    .unwrap()
 }
 
 fn test_tls_acceptor() -> TlsAcceptor {
@@ -302,7 +283,6 @@ fn test_tls_acceptor() -> TlsAcceptor {
 /// that responds with the specified status code and Location header.
 async fn start_auto_redirect_server(
     status_code: u16,
-    _status_text: &'static str,
     target_url: Arc<parking_lot::RwLock<String>>,
     tls_acceptor: Option<TlsAcceptor>,
 ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
@@ -349,10 +329,9 @@ async fn start_auto_redirect_server(
 /// Spawns a mock HTTP redirect server that responds with the specified status code and Location header.
 async fn start_redirect_server(
     status_code: u16,
-    status_text: &'static str,
     target_url: Arc<parking_lot::RwLock<String>>,
 ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
-    start_auto_redirect_server(status_code, status_text, target_url, None).await
+    start_auto_redirect_server(status_code, target_url, None).await
 }
 
 #[fixture]
@@ -753,7 +732,7 @@ async fn test_tcp_tunnel_websocket_redirect_301(
     let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
         "ws://127.0.0.1:{server_port}/wstunnel/events"
     )));
-    let (redirect_addr, redirect_h) = start_redirect_server(301, "Moved Permanently", redirect_target).await;
+    let (redirect_addr, redirect_h) = start_redirect_server(301, redirect_target).await;
     defer! { redirect_h.abort(); };
 
     // Point client to the redirect server
@@ -821,6 +800,231 @@ async fn test_tcp_tunnel_websocket_redirect_301(
 }
 
 #[rstest]
+#[timeout(Duration::from_secs(20))]
+#[tokio::test]
+#[serial]
+async fn test_temporary_redirect_drops_stale_cached_target(
+    server_no_tls: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    // The server the stale cached target redirects to.
+    let target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://127.0.0.1:{server_port}/wstunnel/events"
+    )));
+    // `cached` stands in for a target cached earlier through a permanent chain that now answers
+    // with a temporary redirect instead.
+    let (cached_addr, cached_h) = start_redirect_server(302, target).await;
+    defer! { cached_h.abort(); };
+
+    // The canonical server the client was configured with. It is never dialed in this test.
+    let canonical_target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://127.0.0.1:{server_port}/wstunnel/events"
+    )));
+    let (canonical_addr, canonical_h) = start_redirect_server(302, canonical_target).await;
+    defer! { canonical_h.abort(); };
+
+    // A real destination, since the wstunnel server dials it as part of accepting the tunnel.
+    let (endpoint_listen, endpoint_host) = free_addr();
+    let _endpoint_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+    let dest = RemoteAddr {
+        protocol: LocalProtocol::Tcp { proxy_protocol: false },
+        host: endpoint_host,
+        port: endpoint_listen.port(),
+    };
+
+    let client = client_ws_with_redirects(canonical_addr.port(), 5, dns_resolver).await;
+    client.set_active_target(
+        TransportAddr::new(TransportScheme::Ws, Host::Ipv4(Ipv4Addr::LOCALHOST), cached_addr.port(), None).unwrap(),
+        "wstunnel".to_string(),
+    );
+    assert_eq!(client.active_target().addr.port(), cached_addr.port());
+
+    // Connecting to the cached target succeeds, but only via a temporary redirect. The stale
+    // cache entry must be dropped so the next connection re-resolves from the canonical URL.
+    let _ = crate::tunnel::transport::websocket::connect(Uuid::new_v4(), &client, &dest)
+        .await
+        .expect("the redirect target should accept the tunnel");
+
+    assert_eq!(
+        client.active_target().addr.port(),
+        canonical_addr.port(),
+        "a temporary redirect must not leave the stale cached target in place"
+    );
+}
+
+/// A tunnel request for an arbitrary destination, used by the transport-level tests below.
+fn dummy_remote_addr() -> RemoteAddr {
+    RemoteAddr {
+        protocol: LocalProtocol::Tcp { proxy_protocol: false },
+        host: Host::Domain("target.invalid".to_string()),
+        port: 22,
+    }
+}
+
+/// Runs a WebSocket handshake that is expected to fail and returns the rendered error chain.
+async fn connect_ws_expect_err<E: crate::TokioExecutorRef>(client: &Client<E>, dest: &RemoteAddr) -> String {
+    match crate::tunnel::transport::websocket::connect(Uuid::new_v4(), client, dest).await {
+        Ok(_) => panic!("expected the websocket handshake to fail"),
+        Err(err) => format!("{err:#}"),
+    }
+}
+
+/// Spawns a mock server that records the first request it receives and never answers it.
+async fn start_recording_server() -> (SocketAddr, tokio::task::JoinHandle<()>, tokio::sync::oneshot::Receiver<String>) {
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    let handle = tokio::spawn(async move {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = vec![0u8; 4096];
+            if let Ok(n) = stream.read(&mut buf).await {
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
+            }
+        }
+    });
+
+    (addr, handle, rx)
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_websocket_custom_host_header_is_sent(dns_resolver: DnsResolver) {
+    let (mock_addr, mock_h, request_rx) = start_recording_server().await;
+    defer! { mock_h.abort(); };
+
+    let client = new_test_client(test_client_config(
+        TransportScheme::Ws,
+        mock_addr.port(),
+        5,
+        Some("custom.example.com"),
+        dns_resolver,
+    ))
+    .await;
+
+    // The mock never completes the handshake; only the request it received matters.
+    let _ = crate::tunnel::transport::websocket::connect(Uuid::new_v4(), &client, &dummy_remote_addr()).await;
+
+    let request = request_rx.await.unwrap().to_lowercase();
+    assert!(
+        request.contains("host: custom.example.com"),
+        "custom Host header was not sent:\n{request}"
+    );
+    assert!(
+        !request.contains(&format!("host: 127.0.0.1:{}", mock_addr.port())),
+        "auto-derived Host leaked instead of the custom one:\n{request}"
+    );
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(20))]
+#[tokio::test]
+#[serial]
+async fn test_tcp_tunnel_mixed_redirect_chain_is_not_cached(
+    server_no_tls: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    let (endpoint_listen, endpoint_host) = free_addr();
+
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    // Second hop answers with a temporary redirect to the wstunnel server.
+    let second_target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://127.0.0.1:{server_port}/wstunnel/events"
+    )));
+    let (second_addr, second_h) = start_redirect_server(302, second_target).await;
+    defer! { second_h.abort(); };
+
+    // First hop answers with a permanent redirect, so the chain is permanent -> temporary.
+    let first_target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://127.0.0.1:{}/wstunnel/events",
+        second_addr.port()
+    )));
+    let (first_addr, first_h) = start_redirect_server(301, first_target).await;
+    defer! { first_h.abort(); };
+
+    let client_ws = client_ws_with_redirects(first_addr.port(), 5, dns_resolver.clone()).await;
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+        .await
+        .unwrap();
+    let client_ws_clone = client_ws.clone();
+    tokio::spawn(async move {
+        client_ws_clone.run_tunnel(server).await.unwrap();
+    });
+
+    let mut tcp_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+
+    let mut client = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client.write_all(b"Hello mix").await.unwrap();
+    let mut dd = tcp_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    dd.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..9], b"Hello mix");
+    buf.clear();
+
+    dd.write_all(b"world mix").await.unwrap();
+    client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..9], b"world mix");
+
+    // A chain containing a temporary hop must not be cached: the canonical URL stays active.
+    assert_eq!(client_ws.active_target().addr.port(), first_addr.port());
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_websocket_redirect_loop_is_rejected(dns_resolver: DnsResolver) {
+    // A redirector that always points back at itself.
+    let target = Arc::new(parking_lot::RwLock::new(String::new()));
+    let (redirect_addr, redirect_h) = start_redirect_server(302, target.clone()).await;
+    defer! { redirect_h.abort(); };
+    *target.write() = format!("ws://127.0.0.1:{}/wstunnel/events", redirect_addr.port());
+
+    let client = client_ws_with_redirects(redirect_addr.port(), 5, dns_resolver).await;
+
+    let err = connect_ws_expect_err(&client, &dummy_remote_addr()).await;
+    assert!(err.contains("Redirect loop detected"), "unexpected error: {err}");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_websocket_secure_redirect_to_cleartext_is_rejected(dns_resolver: DnsResolver) {
+    // A TLS redirector asking the client to downgrade to cleartext.
+    let target = Arc::new(parking_lot::RwLock::new("ws://127.0.0.1:9/wstunnel/events".to_string()));
+    let tls_acceptor = test_tls_acceptor();
+    let (redirect_addr, redirect_h) = start_auto_redirect_server(301, target, Some(tls_acceptor)).await;
+    defer! { redirect_h.abort(); };
+
+    let client = client_wss_with_redirects(redirect_addr.port(), 5, dns_resolver).await;
+
+    let err = connect_ws_expect_err(&client, &dummy_remote_addr()).await;
+    assert!(err.contains("Refusing to downgrade"), "unexpected error: {err}");
+}
+
+#[rstest]
 #[timeout(Duration::from_secs(15))]
 #[tokio::test]
 #[serial]
@@ -840,7 +1044,7 @@ async fn test_tcp_tunnel_websocket_redirect_302(
     let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
         "ws://127.0.0.1:{server_port}/wstunnel/events"
     )));
-    let (redirect_addr, redirect_h) = start_redirect_server(302, "Found", redirect_target).await;
+    let (redirect_addr, redirect_h) = start_redirect_server(302, redirect_target).await;
     defer! { redirect_h.abort(); };
 
     let client_ws = client_ws_with_redirects(redirect_addr.port(), 5, dns_resolver.clone()).await;
@@ -924,7 +1128,7 @@ async fn test_tcp_tunnel_redirect_max_redirects_zero(
     let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
         "ws://127.0.0.1:{server_port}/wstunnel/events"
     )));
-    let (redirect_addr, redirect_h) = start_redirect_server(302, "Found", redirect_target).await;
+    let (redirect_addr, redirect_h) = start_redirect_server(302, redirect_target).await;
     defer! { redirect_h.abort(); };
 
     // Point client to redirect server, but with max_redirects = 0
@@ -986,7 +1190,7 @@ async fn test_tcp_tunnel_cached_redirect_fallback(dns_resolver: DnsResolver, no_
     let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
         "ws://127.0.0.1:{server1_port}/wstunnel/events"
     )));
-    let (redirect_addr, redirect_h) = start_redirect_server(301, "Moved Permanently", redirect_target.clone()).await;
+    let (redirect_addr, redirect_h) = start_redirect_server(301, redirect_target.clone()).await;
     defer! { redirect_h.abort(); };
 
     let client_ws = client_ws_with_redirects(redirect_addr.port(), 5, dns_resolver.clone()).await;
@@ -1096,7 +1300,7 @@ async fn test_tcp_tunnel_http2_redirect_301(
     let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
         "http://127.0.0.1:{server_port}/wstunnel/events"
     )));
-    let (redirect_addr, redirect_h) = start_auto_redirect_server(301, "Moved Permanently", redirect_target, None).await;
+    let (redirect_addr, redirect_h) = start_auto_redirect_server(301, redirect_target, None).await;
     defer! { redirect_h.abort(); };
 
     // Point client to the redirect server with HTTP/2 transport
@@ -1184,8 +1388,7 @@ async fn test_tcp_tunnel_websocket_redirect_tls(
         "wss://127.0.0.1:{server_port}/wstunnel/events"
     )));
     let tls_acceptor = test_tls_acceptor();
-    let (redirect_addr, redirect_h) =
-        start_auto_redirect_server(301, "Moved Permanently", redirect_target, Some(tls_acceptor)).await;
+    let (redirect_addr, redirect_h) = start_auto_redirect_server(301, redirect_target, Some(tls_acceptor)).await;
     defer! { redirect_h.abort(); };
 
     // Point client to the TLS redirect server with wss:// transport
@@ -1272,7 +1475,7 @@ async fn test_tcp_tunnel_websocket_redirect_cleartext_to_tls(
     let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
         "wss://127.0.0.1:{server_port}/wstunnel/events"
     )));
-    let (redirect_addr, redirect_h) = start_redirect_server(301, "Moved Permanently", redirect_target).await;
+    let (redirect_addr, redirect_h) = start_redirect_server(301, redirect_target).await;
     defer! { redirect_h.abort(); };
 
     // Client begins with plain ws://

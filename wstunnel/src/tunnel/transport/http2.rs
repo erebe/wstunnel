@@ -125,7 +125,8 @@ impl TransportWrite for Http2TransportWrite {
 /// Derives the HTTP/2 authority string (`host` or `host:port`) for `target_addr`.
 ///
 /// On the initial connection, honors any host override from `--http-headers-file` or `-H "Host: ..."`.
-/// For subsequent redirected hops, uses `target_addr.authority()`.
+/// Otherwise (including all redirected hops), derives the authority from `target_addr`, eliding
+/// the port when it is the default for the scheme.
 fn authority_for(
     target_addr: &TransportAddr,
     client_cfg: &ClientConfig,
@@ -142,7 +143,7 @@ fn authority_for(
             return s.to_string();
         }
     }
-    target_addr.authority()
+    target_addr.request_authority()
 }
 
 async fn do_connect(
@@ -282,6 +283,11 @@ async fn do_connect(
                     current_addr, current_path_prefix
                 );
                 client.set_active_target(current_addr, current_path_prefix);
+            } else if redirect_count > 0 {
+                // A temporary hop means any previously cached permanent target is no longer
+                // authoritative: drop it so the next connection re-resolves from the canonical
+                // server URL instead of keeping the stale hop alive until it fails.
+                client.reset_active_target();
             }
             let (parts, body) = response.into_parts();
             return Ok((
@@ -423,7 +429,6 @@ mod tests {
             http_upgrade_credentials: None,
             http_headers: HashMap::new(),
             http_headers_file: None,
-            http_header_host: HeaderValue::from_static("d1.example.com:8080"),
             custom_http_header_host: custom_host.map(|h| HeaderValue::from_str(h).unwrap()),
             timeout_connect: Duration::from_secs(10),
             websocket_ping_frequency: None,
@@ -458,5 +463,17 @@ mod tests {
         let initial_addr = cfg.remote_addr.clone();
         let auth_initial = authority_for(&initial_addr, &cfg, None, true);
         assert_eq!(auth_initial, "d1.example.com:8080");
+    }
+
+    #[test]
+    fn test_authority_elides_default_port() {
+        let mut cfg = make_test_cfg(None);
+        cfg.remote_addr =
+            TransportAddr::new(TransportScheme::Http, Host::Domain("d1.example.com".to_string()), 80, None).unwrap();
+
+        // Default port is elided, matching what wstunnel sent before redirection support
+        assert_eq!(authority_for(&cfg.remote_addr, &cfg, None, true), "d1.example.com");
+        // A redirected hop follows the same rule
+        assert_eq!(authority_for(&cfg.remote_addr, &cfg, None, false), "d1.example.com");
     }
 }

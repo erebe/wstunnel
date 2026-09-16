@@ -2,9 +2,9 @@ use super::io::{MAX_PACKET_LENGTH, TransportRead, TransportWrite};
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::connection_pool::{L4ReadHalf, L4Stream, L4WriteHalf, connect_l4_stream};
 use crate::tunnel::client::{Client, ClientConfig};
+use crate::tunnel::transport::TransportAddr;
 use crate::tunnel::transport::headers_from_file;
 use crate::tunnel::transport::jwt::{JWT_HEADER_PREFIX, tunnel_to_jwt_token};
-use crate::tunnel::transport::{TransportAddr, TransportScheme};
 use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
 use either::Either;
@@ -258,21 +258,19 @@ impl TransportRead for WebsocketTransportRead {
 /// provided by the user via `-H "Host: ..."` is honored.
 ///
 /// On subsequent redirected hops (`is_initial == false`) or if no custom host header was configured,
-/// the host authority string (including non-default port if applicable) is dynamically derived from `target_addr`.
-fn host_header_for(target_addr: &TransportAddr, client_cfg: &ClientConfig, is_initial: bool) -> HeaderValue {
+/// the authority is dynamically derived from `target_addr`, eliding the port when it is the
+/// default for the scheme.
+fn host_header_for(
+    target_addr: &TransportAddr,
+    client_cfg: &ClientConfig,
+    is_initial: bool,
+) -> anyhow::Result<HeaderValue> {
     if is_initial && let Some(custom_host) = &client_cfg.custom_http_header_host {
-        return custom_host.clone();
+        return Ok(custom_host.clone());
     }
-    let host_str = match target_addr.port() {
-        80 if matches!(target_addr.scheme(), TransportScheme::Ws | TransportScheme::Http) => {
-            target_addr.host().to_string()
-        }
-        443 if matches!(target_addr.scheme(), TransportScheme::Wss | TransportScheme::Https) => {
-            target_addr.host().to_string()
-        }
-        port => format!("{}:{}", target_addr.host(), port),
-    };
-    HeaderValue::from_str(&host_str).unwrap_or_else(|_| client_cfg.http_header_host.clone())
+    let authority = target_addr.request_authority();
+    HeaderValue::from_str(&authority)
+        .with_context(|| format!("cannot build the Host header for the server {target_addr:?}"))
 }
 
 /// Builds the HTTP/1.1 WebSocket upgrade request targeting `target_addr` at `/{path_prefix}/events`.
@@ -284,7 +282,7 @@ fn build_upgrade_request(
     dest_addr: &RemoteAddr,
     is_initial: bool,
 ) -> anyhow::Result<Request<Empty<Bytes>>> {
-    let host_val = host_header_for(target_addr, client_cfg, is_initial);
+    let host_val = host_header_for(target_addr, client_cfg, is_initial)?;
     let mut req = Request::builder()
         .method("GET")
         .uri(format!("/{}/events", path_prefix))
@@ -483,6 +481,11 @@ async fn do_connect(
                         current_addr, current_path_prefix
                     );
                     client.set_active_target(current_addr, current_path_prefix);
+                } else if redirect_count > 0 {
+                    // A temporary hop means any previously cached permanent target is no longer
+                    // authoritative: drop it so the next connection re-resolves from the canonical
+                    // server URL instead of keeping the stale hop alive until it fails.
+                    client.reset_active_target();
                 }
                 let (ws_rx, ws_tx) = mk_websocket_tunnel(*ws, Role::Client, client_cfg.websocket_mask_frame)?;
                 return Ok((ws_rx, ws_tx, parts));
@@ -622,6 +625,7 @@ mod tests {
     use super::*;
     use crate::DnsResolver;
     use crate::SoMark;
+    use crate::tunnel::transport::TransportScheme;
     use std::collections::HashMap;
     use std::time::Duration;
     use url::Host;
@@ -640,7 +644,6 @@ mod tests {
             http_upgrade_credentials: None,
             http_headers: HashMap::new(),
             http_headers_file: None,
-            http_header_host: HeaderValue::from_static("d1.example.com:8080"),
             custom_http_header_host: custom_host.map(|h| HeaderValue::from_str(h).unwrap()),
             timeout_connect: Duration::from_secs(10),
             websocket_ping_frequency: None,
@@ -661,11 +664,11 @@ mod tests {
             TransportAddr::new(TransportScheme::Ws, Host::Domain("d2.example.com".to_string()), 9090, None).unwrap();
 
         // Initial hop must use the custom host header
-        let host_initial = host_header_for(&initial_addr, &cfg, true);
+        let host_initial = host_header_for(&initial_addr, &cfg, true).unwrap();
         assert_eq!(host_initial.to_str().unwrap(), "custom.example.com");
 
         // Redirected hop must derive host authority dynamically
-        let host_redirected = host_header_for(&redirected_addr, &cfg, false);
+        let host_redirected = host_header_for(&redirected_addr, &cfg, false).unwrap();
         assert_eq!(host_redirected.to_str().unwrap(), "d2.example.com:9090");
     }
 
@@ -673,7 +676,17 @@ mod tests {
     fn test_host_header_auto_derived_when_no_custom_host() {
         let cfg = make_test_cfg(None);
         let initial_addr = cfg.remote_addr.clone();
-        let host_initial = host_header_for(&initial_addr, &cfg, true);
+        let host_initial = host_header_for(&initial_addr, &cfg, true).unwrap();
         assert_eq!(host_initial.to_str().unwrap(), "d1.example.com:8080");
+    }
+
+    #[test]
+    fn test_host_header_elides_default_port() {
+        let mut cfg = make_test_cfg(None);
+        cfg.remote_addr =
+            TransportAddr::new(TransportScheme::Ws, Host::Domain("d1.example.com".to_string()), 80, None).unwrap();
+
+        let host_initial = host_header_for(&cfg.remote_addr, &cfg, true).unwrap();
+        assert_eq!(host_initial.to_str().unwrap(), "d1.example.com");
     }
 }

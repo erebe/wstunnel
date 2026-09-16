@@ -82,9 +82,9 @@ flowchart TD
 
 | Scenario | Behavior |
 | :--- | :--- |
-| **Downgrade Attack** (`wss` $\rightarrow$ `ws` or `https` $\rightarrow$ `http`) | Strictly rejected with an error: *"Refusing to downgrade from secure TLS transport to insecure transport"*. |
+| **Downgrade Attack** (`wss` $\rightarrow$ `ws` or `https` $\rightarrow$ `http`) | Strictly rejected with an error: *"Refusing to downgrade from secure scheme (wss) to insecure scheme (http)"*. |
 | **Cleartext to TLS** (`ws` $\rightarrow$ `wss` or `http` $\rightarrow$ `https`) | Synthesizes a TLS connector, inheriting the client's `--tls-verify-certificate` setting. |
-| **Redirect Loops** (A $\rightarrow$ B $\rightarrow$ A or A $\rightarrow$ A) | Fast cycle detection using `HashSet<String>` with scheme normalization (`http`/`ws` and `https`/`wss`). Triggers loop error immediately. |
+| **Redirect Loops** (A $\rightarrow$ B $\rightarrow$ A or A $\rightarrow$ A) | Fast cycle detection using a `HashSet<Url>` with scheme normalization (`http`/`ws` and `https`/`wss`). Triggers loop error immediately. |
 | **Custom Host Header** (`-H "Host: ..."`) | Custom host header is preserved on the initial hop (`redirect_count == 0`). On redirected hops, the `Host`/authority is dynamically derived from the redirected target. |
 | **TLS SNI Override** (`--tls-sni-override`) | Preserved when redirecting to the same hostname, but automatically reset to `None` if redirected across different hosts to prevent SNI mismatch. |
 | **mTLS Client Certificates** | Client certificates and TLS configuration are carried over across redirected hops. |
