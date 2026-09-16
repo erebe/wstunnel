@@ -222,6 +222,7 @@ pub async fn create_client(
         http_proxy,
         webtransport,
         max_redirects: args.max_redirects,
+        tls_verify_certificate: args.tls_verify_certificate,
     };
 
     let client = Client::new(

@@ -183,9 +183,11 @@ async fn do_connect(
             });
 
     loop {
-        // If permitted and on attempt 0, take an already-pooled connection.
-        // Otherwise (for redirected hops or when connecting directly to a cached redirect target),
-        // dial directly via connect_l4_stream.
+        // The connection pool (cnx_pool) maintains pre-warmed L4 connections exclusively
+        // to the canonical configured server URL (client_cfg.remote_addr).
+        // Therefore, pooled connections can only be utilized on the initial attempt (redirect_count == 0)
+        // when dialing the canonical address. All redirected hops or connections to an updated active_target
+        // deliberately bypass the pool and establish a fresh L4 connection directly to the destination.
         let transport = if can_use_pool && redirect_count == 0 {
             let mut pooled_cnx = match client.cnx_pool.get().await {
                 Ok(cnx) => Ok(cnx),
@@ -294,10 +296,17 @@ async fn do_connect(
         } else if status.is_redirection() {
             cnx_poller.abort();
             if redirect_count >= max_redirects {
-                return Err(anyhow!(
-                    "too many redirects ({redirect_count}) when connecting to {:?}",
-                    client_cfg.remote_addr
-                ));
+                if max_redirects == 0 {
+                    return Err(anyhow!(
+                        "redirect following is disabled (max_redirects = 0) when connecting to {:?}",
+                        client_cfg.remote_addr
+                    ));
+                } else {
+                    return Err(anyhow!(
+                        "exceeded maximum of {max_redirects} redirects when connecting to {:?}",
+                        client_cfg.remote_addr
+                    ));
+                }
             }
             redirect_count += 1;
             let hop_is_permanent = matches!(
@@ -316,7 +325,12 @@ async fn do_connect(
             info!("Server redirected ({status}) to {location}");
 
             let (next_addr, next_prefix) = current_addr
-                .resolve_redirect(&current_path_prefix, &location, &mut visited)
+                .resolve_redirect(
+                    &current_path_prefix,
+                    &location,
+                    &mut visited,
+                    client_cfg.tls_verify_certificate,
+                )
                 .with_context(|| format!("failed to follow redirect from {current_addr:?} to {location}"))?;
 
             current_addr = next_addr;
@@ -431,6 +445,7 @@ mod tests {
             http_proxy: None,
             webtransport: None,
             max_redirects: 5,
+            tls_verify_certificate: false,
         }
     }
 

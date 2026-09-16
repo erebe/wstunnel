@@ -151,6 +151,7 @@ async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> Cli
             .unwrap(),
         )),
         max_redirects: 5,
+        tls_verify_certificate: false,
     };
 
     Client::new(
@@ -183,6 +184,7 @@ async fn client_ws(server_port: u16, dns_resolver: DnsResolver) -> Client {
         http_proxy: None,
         webtransport: None,
         max_redirects: 5,
+        tls_verify_certificate: false,
     };
 
     Client::new(
@@ -215,6 +217,7 @@ async fn client_ws_with_redirects(server_port: u16, max_redirects: usize, dns_re
         http_proxy: None,
         webtransport: None,
         max_redirects,
+        tls_verify_certificate: false,
     };
 
     Client::new(

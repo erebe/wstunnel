@@ -221,6 +221,7 @@ impl TransportAddr {
         current_path_prefix: &str,
         location: &str,
         visited: &mut HashSet<Url>,
+        tls_verify_certificate: bool,
     ) -> anyhow::Result<(Self, String)> {
         let trimmed_location = location.trim();
         if trimmed_location.is_empty() {
@@ -233,16 +234,30 @@ impl TransportAddr {
             .to_url_with_path(&base_path)
             .map_err(|err| anyhow!("Cannot construct base URL from current address: {err}"))?;
 
+        // Helper to normalize URL for cycle detection (translates http->ws, https->wss, strips query and fragment)
+        let normalize_for_cycle = |u: &Url| {
+            let mut norm = u.clone();
+            if norm.scheme() == "http" {
+                let _ = norm.set_scheme("ws");
+            } else if norm.scheme() == "https" {
+                let _ = norm.set_scheme("wss");
+            }
+            norm.set_query(None);
+            norm.set_fragment(None);
+            norm
+        };
+
+        // Cycle detection: ensure origin URL is seeded, then check whether target URL has already been visited
+        let normalized_base = normalize_for_cycle(&base_url);
+        visited.insert(normalized_base);
+
         // Parse target URL relative to base URL (handles absolute, protocol-relative, path-absolute, and relative paths)
         let new_url = base_url
             .join(trimmed_location)
             .map_err(|err| anyhow!("Invalid redirect Location '{location}': {err}"))?;
 
-        // Cycle detection: track visited URLs (normalized without query or fragment)
-        let mut normalized_url = new_url.clone();
-        normalized_url.set_query(None);
-        normalized_url.set_fragment(None);
-        if !visited.insert(normalized_url.clone()) {
+        let normalized_url = normalize_for_cycle(&new_url);
+        if visited.contains(&normalized_url) {
             return Err(anyhow!("Redirect loop detected: {normalized_url}"));
         }
 
@@ -335,7 +350,7 @@ impl TransportAddr {
             }
             None if matches!(new_scheme, TransportScheme::Wss | TransportScheme::Https) => {
                 let connector = crate::protocols::tls::tls_connector(
-                    false,
+                    tls_verify_certificate,
                     new_scheme.alpn_protocols(),
                     true,
                     None,
@@ -346,7 +361,7 @@ impl TransportAddr {
                 Some(TlsClientConfig {
                     tls_sni_disabled: false,
                     tls_sni_override: None,
-                    tls_verify_certificate: false,
+                    tls_verify_certificate,
                     tls_connector: Arc::new(RwLock::new(connector)),
                     tls_certificate_path: None,
                     tls_key_path: None,
@@ -383,6 +398,7 @@ impl TransportAddr {
             }
         };
 
+        visited.insert(normalized_url);
         Ok((new_transport_addr, new_prefix))
     }
 }
@@ -420,7 +436,7 @@ mod tests {
         };
         let mut visited = HashSet::new();
 
-        let (new_addr, new_prefix) = addr.resolve_redirect("v1", "/v2/events", &mut visited).unwrap();
+        let (new_addr, new_prefix) = addr.resolve_redirect("v1", "/v2/events", &mut visited, false).unwrap();
         assert_eq!(new_addr.host(), &Host::Domain("d1.example.com".to_string()));
         assert_eq!(new_addr.port(), 80);
         assert_eq!(new_prefix, "v2");
@@ -438,7 +454,7 @@ mod tests {
 
         // Testing dynamic server redirect like in Issue #479
         let (new_addr, new_prefix) = addr
-            .resolve_redirect("v1", "http://server1.com:8456", &mut visited)
+            .resolve_redirect("v1", "http://server1.com:8456", &mut visited, false)
             .unwrap();
         assert_eq!(new_addr.host(), &Host::Domain("server1.com".to_string()));
         assert_eq!(new_addr.port(), 8456);
@@ -458,7 +474,7 @@ mod tests {
 
         // An HTTPS redirect should map to WSS per RFC 6455
         let (new_addr, new_prefix) = addr
-            .resolve_redirect("v1", "https://d2.example.com/custom_prefix/events", &mut visited)
+            .resolve_redirect("v1", "https://d2.example.com/custom_prefix/events", &mut visited, false)
             .unwrap();
         assert_eq!(new_addr.host(), &Host::Domain("d2.example.com".to_string()));
         assert_eq!(new_addr.port(), 443);
@@ -478,12 +494,12 @@ mod tests {
 
         // Redirecting from wss:// to http:// or ws:// must fail
         let err = addr
-            .resolve_redirect("v1", "http://insecure.example.com/", &mut visited)
+            .resolve_redirect("v1", "http://insecure.example.com/", &mut visited, false)
             .unwrap_err();
         assert!(err.to_string().contains("Refusing to downgrade"));
 
         let err_ws = addr
-            .resolve_redirect("v1", "ws://insecure.example.com/", &mut visited)
+            .resolve_redirect("v1", "ws://insecure.example.com/", &mut visited, false)
             .unwrap_err();
         assert!(err_ws.to_string().contains("Refusing to downgrade"));
     }
@@ -499,12 +515,12 @@ mod tests {
 
         // First redirect to d2 succeeds
         let (d2_addr, _) = addr
-            .resolve_redirect("v1", "http://d2.example.com/v1/events", &mut visited)
+            .resolve_redirect("v1", "http://d2.example.com/v1/events", &mut visited, false)
             .unwrap();
 
         // Second redirect to d2 detects loop
         let err = d2_addr
-            .resolve_redirect("v1", "http://d2.example.com/v1/events", &mut visited)
+            .resolve_redirect("v1", "http://d2.example.com/v1/events", &mut visited, false)
             .unwrap_err();
         assert!(err.to_string().contains("Redirect loop detected"));
     }
@@ -520,7 +536,7 @@ mod tests {
         let mut visited = HashSet::new();
 
         let (new_addr, new_prefix) = addr
-            .resolve_redirect("v1", "//d2.example.com:8443/new_prefix/events", &mut visited)
+            .resolve_redirect("v1", "//d2.example.com:8443/new_prefix/events", &mut visited, false)
             .unwrap();
         assert_eq!(new_addr.host(), &Host::Domain("d2.example.com".to_string()));
         assert_eq!(new_addr.port(), 8443);
@@ -571,7 +587,7 @@ mod tests {
 
         // 1. Redirect to same host, different port: SNI override should be preserved
         let (same_host_addr, _) = addr
-            .resolve_redirect("v1", "https://d1.example.com:8443/v1/events", &mut visited)
+            .resolve_redirect("v1", "https://d1.example.com:8443/v1/events", &mut visited, false)
             .unwrap();
         assert_eq!(
             same_host_addr
@@ -583,7 +599,7 @@ mod tests {
 
         // 2. Redirect to different host: SNI override should be cleared
         let (diff_host_addr, _) = addr
-            .resolve_redirect("v1", "https://d2.example.com:443/v1/events", &mut visited)
+            .resolve_redirect("v1", "https://d2.example.com:443/v1/events", &mut visited, false)
             .unwrap();
         assert_eq!(
             diff_host_addr
@@ -591,5 +607,36 @@ mod tests {
                 .and_then(|t| t.tls_sni_override.as_ref()),
             None
         );
+    }
+
+    #[test]
+    fn test_resolve_redirect_cycle_detection_immediate_loop() {
+        let addr = TransportAddr::Ws {
+            scheme: TransportScheme::Ws,
+            host: Host::Domain("d1.example.com".to_string()),
+            port: 80,
+        };
+        let mut visited = HashSet::new();
+
+        // Redirect pointing back to self must be rejected immediately
+        let err = addr
+            .resolve_redirect("v1", "http://d1.example.com/v1/events", &mut visited, false)
+            .unwrap_err();
+        assert!(err.to_string().contains("Redirect loop detected"));
+    }
+
+    #[test]
+    fn test_resolve_redirect_synthesized_tls_inherits_verify() {
+        let addr = TransportAddr::Ws {
+            scheme: TransportScheme::Ws,
+            host: Host::Domain("d1.example.com".to_string()),
+            port: 80,
+        };
+        let mut visited = HashSet::new();
+
+        let (new_addr, _) = addr
+            .resolve_redirect("v1", "https://d2.example.com/v1/events", &mut visited, true)
+            .unwrap();
+        assert!(new_addr.tls().unwrap().tls_verify_certificate);
     }
 }
