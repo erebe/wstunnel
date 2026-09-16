@@ -31,6 +31,8 @@ pub struct ClientConfig {
     /// Built in `create_client`, so a bad TLS setup fails at startup rather than on the
     /// first tunnel.
     pub webtransport: Option<Arc<WebTransportEndpoint>>,
+    /// Maximum number of HTTP redirects to follow for server URL. 0 disables redirects.
+    pub max_redirects: usize,
 }
 
 impl ClientConfig {

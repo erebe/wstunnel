@@ -17,14 +17,31 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
+use arc_swap::ArcSwap;
+use crate::tunnel::transport::TransportAddr;
 use tracing::{Instrument, Level, Span, error, event, span};
 use url::Host;
 use uuid::Uuid;
+
+/// Represents the currently active remote target for client connections.
+#[derive(Clone, Debug)]
+pub struct ActiveTarget {
+    pub addr: TransportAddr,
+    pub path_prefix: String,
+}
+
+impl ActiveTarget {
+    /// Returns true if this target matches the given address and path prefix.
+    pub fn is_same_target(&self, addr: &TransportAddr, path_prefix: &str) -> bool {
+        self.addr.is_same_endpoint(addr) && self.path_prefix == path_prefix
+    }
+}
 
 #[derive(Clone)]
 pub struct Client<E: TokioExecutorRef = DefaultTokioExecutor> {
     pub config: Arc<ClientConfig>,
     pub cnx_pool: bb8::Pool<L4StreamManager>,
+    pub active_target: Arc<ArcSwap<ActiveTarget>>,
     reverse_tunnel_connection_retry_max_backoff: Duration,
     _tls_reloader: Arc<TlsReloader>,
     pub(crate) executor: E,
@@ -38,6 +55,10 @@ impl<E: TokioExecutorRef> Client<E> {
         reverse_tunnel_connection_retry_max_backoff: Duration,
         executor: E,
     ) -> anyhow::Result<Self> {
+        let active_target = Arc::new(ArcSwap::from_pointee(ActiveTarget {
+            addr: config.remote_addr.clone(),
+            path_prefix: config.http_upgrade_path_prefix.clone(),
+        }));
         let config = Arc::new(config);
 
         let cnx = L4StreamManager::new(config.clone());
@@ -54,10 +75,29 @@ impl<E: TokioExecutorRef> Client<E> {
         Ok(Self {
             config,
             cnx_pool,
+            active_target,
             reverse_tunnel_connection_retry_max_backoff,
             _tls_reloader: Arc::new(tls_reloader),
             executor,
         })
+    }
+
+    /// Load the current active remote target (lock-free).
+    pub fn active_target(&self) -> Arc<ActiveTarget> {
+        self.active_target.load_full()
+    }
+
+    /// Update the shared active remote target after following a redirect.
+    pub fn set_active_target(&self, addr: TransportAddr, path_prefix: String) {
+        self.active_target.store(Arc::new(ActiveTarget { addr, path_prefix }));
+    }
+
+    /// Reset the active remote target back to the configured canonical server URL.
+    pub fn reset_active_target(&self) {
+        self.active_target.store(Arc::new(ActiveTarget {
+            addr: self.config.remote_addr.clone(),
+            path_prefix: self.config.http_upgrade_path_prefix.clone(),
+        }));
     }
 
     pub async fn connect_to_server<R, W>(
@@ -295,5 +335,33 @@ impl<E: TokioExecutorRef> Client<E> {
 
             self.executor.spawn(task);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tunnel::transport::TransportScheme;
+
+    #[test]
+    fn test_active_target_equality() {
+        let addr1 = TransportAddr::Ws {
+            scheme: TransportScheme::Ws,
+            host: Host::Domain("d1.example.com".to_string()),
+            port: 80,
+        };
+        let addr2 = TransportAddr::Ws {
+            scheme: TransportScheme::Ws,
+            host: Host::Domain("d2.example.com".to_string()),
+            port: 80,
+        };
+        let target = ActiveTarget {
+            addr: addr1.clone(),
+            path_prefix: "v1".to_string(),
+        };
+
+        assert!(target.is_same_target(&addr1, "v1"));
+        assert!(!target.is_same_target(&addr2, "v1"));
+        assert!(!target.is_same_target(&addr1, "v2"));
     }
 }

@@ -150,17 +150,19 @@ fn authority_for(
     target_addr.authority()
 }
 
-/// Connect to a remote wstunnel server over HTTP/2, following HTTP 3xx redirects if encountered.
-pub async fn connect(
+async fn do_connect(
     request_id: Uuid,
     client: &Client<impl crate::TokioExecutorRef>,
     dest_addr: &RemoteAddr,
+    start_addr: TransportAddr,
+    start_path_prefix: String,
+    can_use_pool: bool,
 ) -> anyhow::Result<(Http2TransportRead, Http2TransportWrite, Parts)> {
     let client_cfg = &client.config;
-    let mut current_addr = client_cfg.remote_addr.clone();
-    let mut current_path_prefix = client_cfg.http_upgrade_path_prefix.clone();
+    let mut current_addr = start_addr;
+    let mut current_path_prefix = start_path_prefix;
     let mut visited = HashSet::new();
-    let max_redirects = 5;
+    let max_redirects = client_cfg.max_redirects;
     let mut redirect_count = 0;
 
     // In HTTP/2, the HOST header is not used directly; authority is set in the request URI.
@@ -185,9 +187,10 @@ pub async fn connect(
             });
 
     loop {
-        // On attempt 0, take an already-pooled connection. On subsequent redirect attempts,
-        // dial the new target directly via connect_l4_stream.
-        let transport = if redirect_count == 0 {
+        // If permitted and on attempt 0, take an already-pooled connection.
+        // Otherwise (for redirected hops or when connecting directly to a cached redirect target),
+        // dial directly via connect_l4_stream.
+        let transport = if can_use_pool && redirect_count == 0 {
             let mut pooled_cnx = match client.cnx_pool.get().await {
                 Ok(cnx) => Ok(cnx),
                 Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
@@ -204,7 +207,7 @@ pub async fn connect(
             &current_addr,
             client_cfg,
             headers_file_host.as_deref(),
-            redirect_count == 0,
+            can_use_pool && redirect_count == 0,
         );
 
         let uri_scheme = match current_addr.scheme() {
@@ -277,6 +280,9 @@ pub async fn connect(
 
         let status = response.status();
         if status.is_success() {
+            if redirect_count > 0 {
+                client.set_active_target(current_addr, current_path_prefix);
+            }
             let (parts, body) = response.into_parts();
             return Ok((
                 Http2TransportRead::new(BodyStream::new(body), Some(cnx_poller)),
@@ -324,5 +330,59 @@ pub async fn connect(
                 "Http2 server rejected the connection with status {status}{detail}"
             ));
         }
+    }
+}
+
+/// Connect to a remote wstunnel server over HTTP/2, following HTTP 3xx redirects if encountered.
+pub async fn connect(
+    request_id: Uuid,
+    client: &Client<impl crate::TokioExecutorRef>,
+    dest_addr: &RemoteAddr,
+) -> anyhow::Result<(Http2TransportRead, Http2TransportWrite, Parts)> {
+    let client_cfg = &client.config;
+    let active = client.active_target();
+    let is_cached = !active.is_same_target(&client_cfg.remote_addr, &client_cfg.http_upgrade_path_prefix);
+
+    if is_cached {
+        match do_connect(
+            request_id,
+            client,
+            dest_addr,
+            active.addr.clone(),
+            active.path_prefix.clone(),
+            false,
+        )
+        .await
+        {
+            Ok(res) => Ok(res),
+            Err(err) => {
+                warn!(
+                    "Failed to connect to cached redirect target {:?}: {:?}. Falling back to canonical server URL {:?}",
+                    active.addr,
+                    err,
+                    client_cfg.remote_addr
+                );
+                client.reset_active_target();
+                do_connect(
+                    request_id,
+                    client,
+                    dest_addr,
+                    client_cfg.remote_addr.clone(),
+                    client_cfg.http_upgrade_path_prefix.clone(),
+                    true,
+                )
+                .await
+            }
+        }
+    } else {
+        do_connect(
+            request_id,
+            client,
+            dest_addr,
+            client_cfg.remote_addr.clone(),
+            client_cfg.http_upgrade_path_prefix.clone(),
+            true,
+        )
+        .await
     }
 }

@@ -254,6 +254,20 @@ pub struct ClientCreationRequest {
         )
     )]
     pub dns_resolver_prefer_ipv4: bool,
+
+    /// Maximum number of HTTP redirects (301, 302, 307, 308) to follow for server URL.
+    /// Set to 0 to disable redirect following.
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long,
+            default_value = "5",
+            value_name = "INT",
+            verbatim_doc_comment,
+            env = "WSTUNNEL_MAX_REDIRECTS"
+        )
+    )]
+    pub max_redirects: usize,
 }
 
 #[derive(Debug)]

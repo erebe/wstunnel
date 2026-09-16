@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use url::{Host, Url};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TransportScheme {
     Ws,
     Wss,
@@ -187,6 +187,11 @@ impl TransportAddr {
             Host::Ipv4(ip) => format!("{}:{}", ip, self.port()),
             Host::Ipv6(ip) => format!("[{}]:{}", ip, self.port()),
         }
+    }
+
+    /// Returns true if both addresses share the same transport scheme, host, and port.
+    pub fn is_same_endpoint(&self, other: &Self) -> bool {
+        self.scheme() == other.scheme() && self.host() == other.host() && self.port() == other.port()
     }
 
     /// Converts this `TransportAddr` into a base `url::Url` with the given path.
@@ -514,5 +519,32 @@ mod tests {
         assert_eq!(new_addr.port(), 8443);
         assert_eq!(new_prefix, "new_prefix");
         assert!(matches!(new_addr.scheme(), TransportScheme::Wss));
+    }
+
+    #[test]
+    fn test_is_same_endpoint() {
+        let addr1 = TransportAddr::Ws {
+            scheme: TransportScheme::Ws,
+            host: Host::Domain("d1.example.com".to_string()),
+            port: 80,
+        };
+        let addr2 = TransportAddr::Ws {
+            scheme: TransportScheme::Ws,
+            host: Host::Domain("d1.example.com".to_string()),
+            port: 80,
+        };
+        let addr3 = TransportAddr::Ws {
+            scheme: TransportScheme::Ws,
+            host: Host::Domain("d2.example.com".to_string()),
+            port: 80,
+        };
+        let addr4 = TransportAddr::Ws {
+            scheme: TransportScheme::Ws,
+            host: Host::Domain("d1.example.com".to_string()),
+            port: 8080,
+        };
+        assert!(addr1.is_same_endpoint(&addr2));
+        assert!(!addr1.is_same_endpoint(&addr3));
+        assert!(!addr1.is_same_endpoint(&addr4));
     }
 }

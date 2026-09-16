@@ -219,6 +219,7 @@ pub async fn create_client(
         dns_resolver,
         http_proxy,
         webtransport,
+        max_redirects: args.max_redirects,
     };
 
     let client = Client::new(

@@ -149,6 +149,7 @@ async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> Cli
             )
             .unwrap(),
         )),
+        max_redirects: 5,
     };
 
     Client::new(
@@ -179,6 +180,7 @@ async fn client_ws(server_port: u16, dns_resolver: DnsResolver) -> Client {
         dns_resolver,
         http_proxy: None,
         webtransport: None,
+        max_redirects: 5,
     };
 
     Client::new(
