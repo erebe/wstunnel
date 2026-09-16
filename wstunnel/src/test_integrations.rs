@@ -768,7 +768,34 @@ async fn test_tcp_tunnel_websocket_redirect_302(
     dd.write_all(b"world 302").await.unwrap();
     client.read_buf(&mut buf).await.unwrap();
     assert_eq!(&buf[..9], b"world 302");
-    assert_eq!(client_ws.active_target().addr.port(), server_port);
+    buf.clear();
+
+    // Active target must NOT be updated because 302 is a temporary redirect
+    assert_eq!(client_ws.active_target().addr.port(), redirect_addr.port());
+
+    // Connection 2: should contact redirect server again and succeed
+    let mut client2 = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client2.write_all(b"Hello 302 again").await.unwrap();
+    let mut dd2 = tcp_listener.next().await.unwrap().unwrap();
+    dd2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..15], b"Hello 302 again");
+    buf.clear();
+
+    dd2.write_all(b"world 302 again").await.unwrap();
+    client2.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..15], b"world 302 again");
+
+    // Active target still remains the canonical redirect server
+    assert_eq!(client_ws.active_target().addr.port(), redirect_addr.port());
 }
 
 #[rstest]
@@ -851,7 +878,7 @@ async fn test_tcp_tunnel_cached_redirect_fallback(
 
     // Canonical redirect server pointing initially to Server 1
     let redirect_target = Arc::new(parking_lot::RwLock::new(format!("ws://127.0.0.1:{server1_port}/wstunnel/events")));
-    let (redirect_addr, redirect_h) = start_redirect_server(302, "Found", redirect_target.clone()).await;
+    let (redirect_addr, redirect_h) = start_redirect_server(301, "Moved Permanently", redirect_target.clone()).await;
     defer! { redirect_h.abort(); };
 
     let client_ws = client_ws_with_redirects(redirect_addr.port(), 5, dns_resolver.clone()).await;

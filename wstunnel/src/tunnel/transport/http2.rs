@@ -159,6 +159,7 @@ async fn do_connect(
     let mut visited = HashSet::new();
     let max_redirects = client_cfg.max_redirects;
     let mut redirect_count = 0;
+    let mut is_permanent_chain = true;
 
     // In HTTP/2, the HOST header is not used directly; authority is set in the request URI.
     let (headers_file, headers_file_host) =
@@ -275,7 +276,13 @@ async fn do_connect(
 
         let status = response.status();
         if status.is_success() {
-            if redirect_count > 0 {
+            // In accordance with RFC 9110, only permanent redirects (301/308) update the client's
+            // active target across connections. Temporary redirects (302/307) are not cached.
+            if redirect_count > 0 && is_permanent_chain {
+                info!(
+                    "Permanently updated active target to {:?} (path prefix: {:?})",
+                    current_addr, current_path_prefix
+                );
                 client.set_active_target(current_addr, current_path_prefix);
             }
             let (parts, body) = response.into_parts();
@@ -293,6 +300,13 @@ async fn do_connect(
                 ));
             }
             redirect_count += 1;
+            let hop_is_permanent = matches!(
+                status,
+                hyper::StatusCode::MOVED_PERMANENTLY | hyper::StatusCode::PERMANENT_REDIRECT
+            );
+            if !hop_is_permanent {
+                is_permanent_chain = false;
+            }
             let location = response
                 .headers()
                 .get(hyper::header::LOCATION)
