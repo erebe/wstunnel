@@ -476,10 +476,8 @@ async fn do_connect(
                 // In accordance with RFC 9110, only permanent redirects (301/308) update the client's
                 // active target across connections. Temporary redirects (302/307) are not cached.
                 if redirect_count > 0 && is_permanent_chain {
-                    info!(
-                        "Permanently updated active target to {:?} (path prefix: {:?})",
-                        current_addr, current_path_prefix
-                    );
+                    info!("Permanently updated active target to {current_addr:?}");
+                    debug!("Active target path prefix: {current_path_prefix:?}");
                     client.set_active_target(current_addr, current_path_prefix);
                 } else if redirect_count > 0 {
                     // A temporary hop means any previously cached permanent target is no longer
