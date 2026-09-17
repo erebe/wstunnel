@@ -15,7 +15,7 @@ use crate::tunnel::client::connection_pool::{L4Stream, connect_l4_stream};
 use crate::tunnel::transport::TransportAddr;
 use anyhow::{Context, anyhow};
 use either::Either;
-use hyper::header::LOCATION;
+use hyper::header::{AUTHORIZATION, COOKIE, LOCATION, PROXY_AUTHORIZATION};
 use hyper::{HeaderMap, StatusCode};
 use log::{debug, info, warn};
 use std::collections::HashSet;
@@ -30,6 +30,31 @@ pub(crate) enum HopOutcome<T> {
     Redirect { status: StatusCode, headers: HeaderMap },
 }
 
+/// What the chain knows about the hop a callback is about to perform, so it can decide which of the
+/// user's headers still apply. The rules follow curl:
+///
+/// - A `Host`/authority the user pinned stays in effect as long as the hop is on the same *host*
+///   (a different port or path is still the same service), and is derived from the new address once
+///   the host changes.
+/// - Credentials are scoped to the *origin* (scheme + host + port) they were configured for and are
+///   not forwarded to another origin unless the user opted in with `--forward-credentials-on-redirect`
+///   (curl's `--location-trusted`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HopPolicy {
+    /// Whether a user-pinned `Host`/authority still applies to this hop.
+    pub(crate) keep_pinned_host: bool,
+    /// Whether credentials (`Authorization`, cookies, `Proxy-Authorization`) may be sent to this hop.
+    pub(crate) keep_credentials: bool,
+}
+
+impl HopPolicy {
+    /// Whether `name` may be sent to this hop. Only the credentials above are origin scoped; every
+    /// other header the user configured is forwarded, as curl does.
+    pub(crate) fn allows_header(&self, name: &hyper::header::HeaderName) -> bool {
+        self.keep_credentials || !(name == AUTHORIZATION || name == COOKIE || name == PROXY_AUTHORIZATION)
+    }
+}
+
 /// Connects to the server of `client`, following redirects, and returns what the hop callback
 /// produced for the hop that finally succeeded.
 ///
@@ -40,7 +65,7 @@ pub(crate) enum HopOutcome<T> {
 pub(crate) async fn connect<T, E, F, Fut>(client: &Client<E>, hop: F) -> anyhow::Result<T>
 where
     E: TokioExecutorRef,
-    F: FnMut(L4Stream, TransportAddr, String, bool) -> Fut,
+    F: FnMut(L4Stream, TransportAddr, String, HopPolicy) -> Fut,
     Fut: Future<Output = anyhow::Result<HopOutcome<T>>>,
 {
     let client_cfg = &client.config;
@@ -96,7 +121,7 @@ async fn attempt<T, E, F, Fut>(
 ) -> anyhow::Result<T>
 where
     E: TokioExecutorRef,
-    F: FnMut(L4Stream, TransportAddr, String, bool) -> Fut,
+    F: FnMut(L4Stream, TransportAddr, String, HopPolicy) -> Fut,
     Fut: Future<Output = anyhow::Result<HopOutcome<T>>>,
 {
     let client_cfg = &client.config;
@@ -130,7 +155,16 @@ where
             connect_l4_stream(client_cfg, &current_addr).await?
         };
 
-        match hop(transport, current_addr.clone(), current_path_prefix.clone(), is_initial).await? {
+        let policy = {
+            let configured = &client_cfg.remote_addr;
+            HopPolicy {
+                keep_pinned_host: current_addr.host() == configured.host(),
+                keep_credentials: current_addr.is_same_endpoint(configured)
+                    || client_cfg.forward_credentials_on_redirect,
+            }
+        };
+
+        match hop(transport, current_addr.clone(), current_path_prefix.clone(), policy).await? {
             HopOutcome::Connected(value) => {
                 // In accordance with RFC 9110, only permanent redirects (301/308) update the client's
                 // active target across connections. Temporary redirects (302/307) are not cached.

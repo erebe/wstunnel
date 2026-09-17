@@ -15,7 +15,7 @@ This feature adds support for following HTTP 3xx redirects (`301`, `302`, `307`,
 ### Objectives & Guarantees
 1. **Minimal footprint:** Localized and idiomatic changes.
 2. **Zero new dependencies:** Relies strictly on existing dependencies (`hyper`, `fastwebsockets`, `url`, `tokio`, `bb8`, `arc-swap`, `parking_lot`).
-3. **Zero performance regression:** Normal connections (without redirection) experience **identical performance** to the baseline (no extra round-trips, no additional lock contention, no extra heap allocations).
+3. **No regression on the normal path:** Connections that are not redirected keep the same round trips, the same connection-pool behaviour and no additional locking. The `Host`/`:authority` value is derived from the address being dialed on each connection rather than precomputed once at startup, which costs one or two small allocations per connection — immaterial next to the TCP/TLS and HTTP handshake that follows.
 4. **RFC 9110 standard semantics:** Full compliance with standard HTTP redirect semantics across multiple client connections.
 5. **Security & robustness:** Downgrade attack protection, redirect loop detection, configurable hop limit (`--max-redirects`), and cached target fallback to canonical URL.
 
@@ -52,7 +52,7 @@ flowchart TD
 - **Semantics (RFC 9110 §15.4.2 & §15.4.9):** The target has permanently moved. All future requests should use the new URI.
 - **Behavior:** The client follows the redirect chain to `d2`. If the chain consists exclusively of permanent redirects (`is_permanent_chain == true`), the shared `active_target` is updated to `d2` via `ArcSwap<ActiveTarget>`.
 - **Subsequent Connections:** Connect directly to `d2`, skipping the redirect round-trip.
-- **Fallback:** If `d2` fails to connect or times out (e.g., target server rotated or restarted), the client logs a warning and automatically falls back to the canonical configured server URL.
+- **Fallback:** If `d2` fails to connect or times out (e.g., target server rotated or restarted), the client logs a warning and automatically falls back to the canonical configured server URL, dialing it directly rather than through the connection pool (see §2.4).
 
 #### B. Temporary Redirects (`302 Found` / `307 Temporary Redirect`)
 - **Semantics (RFC 9110 §15.4.3 & §15.4.8):** The target temporarily resides elsewhere. The canonical configured URL remains the authoritative target.
@@ -145,10 +145,18 @@ matters as a latency optimisation when `-c` is set.
           
           [env: WSTUNNEL_MAX_REDIRECTS=]
           [default: 5]
+
+      --forward-credentials-on-redirect
+          Forward the credentials configured for the server (`--http-upgrade-credentials`, an
+          `Authorization`/`Cookie` header, or one from `--http-headers-file`) to a redirect target on
+          another origin (scheme, host and port). Off by default, so credentials stay scoped to the
+          server URL they were configured for. Equivalent to curl's `--location-trusted`.
 ```
 
 - Default is `5` hops.
 - Set to `0` to strictly disallow redirect following.
+- Credentials are only sent to the configured origin unless `--forward-credentials-on-redirect` is
+  set (see §4).
 
 ---
 
@@ -159,6 +167,7 @@ matters as a latency optimisation when `-c` is set.
 | **Downgrade Attack** (`wss` $\rightarrow$ `ws` or `https` $\rightarrow$ `http`) | Strictly rejected with an error: *"Refusing to downgrade from secure scheme (wss) to insecure scheme (http)"*. |
 | **Cleartext to TLS** (`ws` $\rightarrow$ `wss` or `http` $\rightarrow$ `https`) | Synthesizes a TLS connector, inheriting the client's `--tls-verify-certificate` setting. |
 | **Redirect Loops** (A $\rightarrow$ B $\rightarrow$ A or A $\rightarrow$ A) | Fast cycle detection using a `HashSet<Url>` with scheme normalization (`http`/`ws` and `https`/`wss`). Triggers loop error immediately. |
-| **Custom Host Header** (`-H "Host: ..."`) | Custom host header is preserved on the initial hop (`redirect_count == 0`). On redirected hops, the `Host`/authority is dynamically derived from the redirected target. |
+| **Custom Host Header** (`-H "Host: ..."`, or a `Host` line in `--http-headers-file`) | Kept while the redirect target is on the same *host* as the configured server (a different port or path is still the same service), and derived from the new address once the host changes. This is what curl does with an explicit `Host` override; browsers forbid setting `Host` at all. |
+| **Credentials on redirect** (`Authorization` from `--http-upgrade-credentials`, `-H` or `--http-headers-file`; a user-supplied `Cookie`; `Proxy-Authorization`) | Sent only to the configured *origin* (scheme + host + port). A redirect to another origin — including a different port on the same host — drops them, unless `--forward-credentials-on-redirect` is set (curl's `--location-trusted`). Other headers the user configured are always forwarded, as curl does. |
 | **TLS SNI Override** (`--tls-sni-override`) | Preserved when redirecting to the same hostname, but automatically reset to `None` if redirected across different hosts to prevent SNI mismatch. |
 | **mTLS Client Certificates** | Client certificates and TLS configuration are carried over across redirected hops. |

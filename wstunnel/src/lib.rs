@@ -216,6 +216,7 @@ pub async fn create_client(
         http_proxy,
         webtransport,
         max_redirects: args.max_redirects,
+        forward_credentials_on_redirect: args.forward_credentials_on_redirect,
         tls_verify_certificate: args.tls_verify_certificate,
     };
 

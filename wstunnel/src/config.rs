@@ -268,6 +268,21 @@ pub struct ClientCreationRequest {
         )
     )]
     pub max_redirects: usize,
+
+    /// Forward the credentials configured for the server (`--http-upgrade-credentials`, an
+    /// `Authorization`/`Cookie` header, or one from `--http-headers-file`) to a redirect target on
+    /// another origin (scheme, host and port). Off by default, so credentials stay scoped to the
+    /// server URL they were configured for. Equivalent to curl's `--location-trusted`.
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long,
+            default_value = "false",
+            verbatim_doc_comment,
+            env = "WSTUNNEL_FORWARD_CREDENTIALS_ON_REDIRECT"
+        )
+    )]
+    pub forward_credentials_on_redirect: bool,
 }
 
 #[derive(Debug)]

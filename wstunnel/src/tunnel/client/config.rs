@@ -35,6 +35,9 @@ pub struct ClientConfig {
     pub webtransport: Option<Arc<WebTransportEndpoint>>,
     /// Maximum number of HTTP redirects to follow for server URL. 0 disables redirects.
     pub max_redirects: usize,
+    /// Forward the configured credentials (`Authorization`, cookies, `Proxy-Authorization`) to
+    /// redirect targets on another origin. Off by default, like curl without `--location-trusted`.
+    pub forward_credentials_on_redirect: bool,
     /// Whether TLS certificate verification is enabled for the client.
     pub tls_verify_certificate: bool,
 }

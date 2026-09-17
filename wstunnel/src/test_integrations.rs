@@ -157,6 +157,7 @@ async fn client_webtransport(server_port: u16, dns_resolver: DnsResolver) -> Cli
             .unwrap(),
         )),
         max_redirects: 5,
+        forward_credentials_on_redirect: false,
         tls_verify_certificate: false,
     };
 
@@ -215,6 +216,7 @@ fn test_client_config(
         http_proxy: None,
         webtransport: None,
         max_redirects,
+        forward_credentials_on_redirect: false,
         tls_verify_certificate: false,
     }
 }
@@ -800,6 +802,164 @@ async fn test_tcp_tunnel_websocket_redirect_301(
 }
 
 #[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_upgrade_request_keeps_origin_scoped_headers(dns_resolver: DnsResolver) {
+    // No redirect: the configured server is the origin the credentials belong to, so everything is
+    // sent.
+    let (mock_addr, mock_h, request_rx) = start_recording_server().await;
+    defer! { mock_h.abort(); };
+
+    let client = new_test_client(client_config_with_scoped_headers(
+        TransportScheme::Ws,
+        mock_addr.port(),
+        dns_resolver,
+    ))
+    .await;
+    let _ = crate::tunnel::transport::websocket::connect(Uuid::new_v4(), &client, &dummy_remote_addr()).await;
+
+    let request = request_rx.await.unwrap();
+    assert_eq!(request_header(&request, "authorization").as_deref(), Some("Basic dXNlcjpwYXNz"));
+    assert_eq!(request_header(&request, "cookie").as_deref(), Some("sid=abc"));
+    assert_eq!(request_header(&request, "host").as_deref(), Some("pinned.example.com"));
+    assert_eq!(request_header(&request, "x-custom").as_deref(), Some("keep-me"));
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_redirect_drops_credentials_on_other_origin(dns_resolver: DnsResolver) {
+    // The redirect target is the same host on another port: a different origin, so credentials must
+    // not be forwarded, while the pinned Host and non-sensitive headers still apply (curl's rules).
+    let (target_addr, target_h, request_rx) = start_recording_server().await;
+    defer! { target_h.abort(); };
+
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://127.0.0.1:{}/wstunnel/events",
+        target_addr.port()
+    )));
+    let (redirect_addr, redirect_h) = start_redirect_server(301, redirect_target).await;
+    defer! { redirect_h.abort(); };
+
+    let client = new_test_client(client_config_with_scoped_headers(
+        TransportScheme::Ws,
+        redirect_addr.port(),
+        dns_resolver,
+    ))
+    .await;
+    let _ = crate::tunnel::transport::websocket::connect(Uuid::new_v4(), &client, &dummy_remote_addr()).await;
+
+    let request = request_rx.await.unwrap();
+    assert_eq!(request_header(&request, "authorization"), None, "request was:\n{request}");
+    assert_eq!(request_header(&request, "cookie"), None, "request was:\n{request}");
+    assert_eq!(request_header(&request, "host").as_deref(), Some("pinned.example.com"));
+    assert_eq!(request_header(&request, "x-custom").as_deref(), Some("keep-me"));
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_redirect_drops_pinned_host_on_other_host(dns_resolver: DnsResolver) {
+    // A redirect to another host must derive the Host header from the new address instead of reusing
+    // the pinned one, and must not forward credentials either.
+    let other_host = Ipv4Addr::new(127, 0, 0, 2);
+    let (target_addr, target_h, request_rx) = start_recording_server_on(other_host).await;
+    defer! { target_h.abort(); };
+
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://{other_host}:{}/wstunnel/events",
+        target_addr.port()
+    )));
+    let (redirect_addr, redirect_h) = start_redirect_server(301, redirect_target).await;
+    defer! { redirect_h.abort(); };
+
+    let client = new_test_client(client_config_with_scoped_headers(
+        TransportScheme::Ws,
+        redirect_addr.port(),
+        dns_resolver,
+    ))
+    .await;
+    let _ = crate::tunnel::transport::websocket::connect(Uuid::new_v4(), &client, &dummy_remote_addr()).await;
+
+    let request = request_rx.await.unwrap();
+    assert_eq!(request_header(&request, "authorization"), None, "request was:\n{request}");
+    assert_eq!(
+        request_header(&request, "host").as_deref(),
+        Some(format!("{other_host}:{}", target_addr.port()).as_str()),
+        "request was:\n{request}"
+    );
+    assert_eq!(request_header(&request, "x-custom").as_deref(), Some("keep-me"));
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_redirect_forwards_credentials_with_flag(dns_resolver: DnsResolver) {
+    // `--forward-credentials-on-redirect` restores curl's `--location-trusted` behaviour.
+    let (target_addr, target_h, request_rx) = start_recording_server().await;
+    defer! { target_h.abort(); };
+
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "ws://127.0.0.1:{}/wstunnel/events",
+        target_addr.port()
+    )));
+    let (redirect_addr, redirect_h) = start_redirect_server(301, redirect_target).await;
+    defer! { redirect_h.abort(); };
+
+    let mut cfg = client_config_with_scoped_headers(TransportScheme::Ws, redirect_addr.port(), dns_resolver);
+    cfg.forward_credentials_on_redirect = true;
+    let client = new_test_client(cfg).await;
+    let _ = crate::tunnel::transport::websocket::connect(Uuid::new_v4(), &client, &dummy_remote_addr()).await;
+
+    let request = request_rx.await.unwrap();
+    assert_eq!(
+        request_header(&request, "authorization").as_deref(),
+        Some("Basic dXNlcjpwYXNz"),
+        "request was:\n{request}"
+    );
+    assert_eq!(request_header(&request, "cookie").as_deref(), Some("sid=abc"));
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_http2_redirect_scopes_credentials_but_keeps_pinned_authority(dns_resolver: DnsResolver) {
+    let (target_addr, target_h, request_rx) = start_h2_recording_server(Ipv4Addr::LOCALHOST).await;
+    defer! { target_h.abort(); };
+
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!(
+        "http://127.0.0.1:{}/wstunnel/events",
+        target_addr.port()
+    )));
+    let (redirect_addr, redirect_h) = start_auto_redirect_server(301, redirect_target, None).await;
+    defer! { redirect_h.abort(); };
+
+    let client = new_test_client(client_config_with_scoped_headers(
+        TransportScheme::Http,
+        redirect_addr.port(),
+        dns_resolver,
+    ))
+    .await;
+    let _ = crate::tunnel::transport::http2::connect(Uuid::new_v4(), &client, &dummy_remote_addr()).await;
+
+    let (headers, authority) = request_rx.await.unwrap();
+    let headers = headers.to_lowercase();
+    assert!(!headers.contains("authorization"), "headers were:\n{headers}");
+    assert!(
+        !headers.contains("sid=abc"),
+        "the user cookie must not be forwarded:\n{headers}"
+    );
+    assert!(headers.contains("x-custom: keep-me"), "headers were:\n{headers}");
+    // Same host, other port: the pinned authority still applies.
+    assert_eq!(authority, "pinned.example.com");
+}
+
+#[rstest]
 #[timeout(Duration::from_secs(10))]
 #[tokio::test]
 #[serial]
@@ -1022,9 +1182,39 @@ async fn connect_h2_expect_err<E: crate::TokioExecutorRef>(client: &Client<E>, d
     }
 }
 
+/// Reads a header out of a recorded HTTP/1.1 request.
+fn request_header(request: &str, name: &str) -> Option<String> {
+    request.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim().eq_ignore_ascii_case(name).then(|| value.trim().to_string())
+    })
+}
+
+/// A client config carrying the headers whose redirect scoping we test: credentials, a cookie, a
+/// pinned `Host` and a custom header.
+fn client_config_with_scoped_headers(scheme: TransportScheme, port: u16, dns_resolver: DnsResolver) -> ClientConfig {
+    let mut cfg = test_client_config(scheme, port, 5, None, dns_resolver);
+    cfg.http_upgrade_credentials = Some(HeaderValue::from_static("Basic dXNlcjpwYXNz"));
+    cfg.custom_http_header_host = Some(HeaderValue::from_static("pinned.example.com"));
+    cfg.http_headers
+        .insert(hyper::header::COOKIE, HeaderValue::from_static("sid=abc"));
+    cfg.http_headers.insert(
+        hyper::header::HeaderName::from_static("x-custom"),
+        HeaderValue::from_static("keep-me"),
+    );
+    cfg
+}
+
 /// Spawns a mock server that records the first request it receives and never answers it.
 async fn start_recording_server() -> (SocketAddr, tokio::task::JoinHandle<()>, tokio::sync::oneshot::Receiver<String>) {
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    start_recording_server_on(Ipv4Addr::LOCALHOST).await
+}
+
+/// Same as [`start_recording_server`], bound to a specific loopback address.
+async fn start_recording_server_on(
+    ip: Ipv4Addr,
+) -> (SocketAddr, tokio::task::JoinHandle<()>, tokio::sync::oneshot::Receiver<String>) {
+    let listener = tokio::net::TcpListener::bind((ip, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (tx, rx) = tokio::sync::oneshot::channel();
 
@@ -1034,6 +1224,61 @@ async fn start_recording_server() -> (SocketAddr, tokio::task::JoinHandle<()>, t
             if let Ok(n) = stream.read(&mut buf).await {
                 let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
             }
+        }
+    });
+
+    (addr, handle, rx)
+}
+
+/// Spawns an HTTP/2 mock that records the headers and authority of the first request it receives and
+/// answers 400, so the caller sees a clean failure after inspecting what was sent.
+async fn start_h2_recording_server(
+    ip: Ipv4Addr,
+) -> (
+    SocketAddr,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Receiver<(String, String)>,
+) {
+    use hyper::body::Incoming;
+    use hyper::service::service_fn;
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::server::conn::auto::Builder as AutoBuilder;
+
+    let listener = tokio::net::TcpListener::bind((ip, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+
+    let handle = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let service = service_fn(move |req: hyper::Request<Incoming>| {
+                    let tx = tx.clone();
+                    async move {
+                        let headers = req
+                            .headers()
+                            .iter()
+                            .map(|(name, value)| format!("{name}: {}", value.to_str().unwrap_or_default()))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let authority = req.uri().authority().map(|a| a.to_string()).unwrap_or_default();
+                        if let Some(tx) = tx.lock().unwrap().take() {
+                            let _ = tx.send((headers, authority));
+                        }
+                        Ok::<_, std::convert::Infallible>(
+                            hyper::Response::builder()
+                                .status(400)
+                                .body(Empty::<Bytes>::new())
+                                .unwrap(),
+                        )
+                    }
+                });
+                let io = TokioIo::new(stream);
+                let _ = AutoBuilder::new(TokioExecutor::new())
+                    .serve_connection_with_upgrades(io, service)
+                    .await;
+            });
         }
     });
 

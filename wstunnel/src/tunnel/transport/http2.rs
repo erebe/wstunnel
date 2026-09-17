@@ -122,16 +122,17 @@ impl TransportWrite for Http2TransportWrite {
 
 /// Derives the HTTP/2 authority string (`host` or `host:port`) for `target_addr`.
 ///
-/// On the initial connection, honors any host override from `--http-headers-file` or `-H "Host: ..."`.
-/// Otherwise (including all redirected hops), derives the authority from `target_addr`, eliding
-/// the port when it is the default for the scheme.
+/// A host override from `--http-headers-file` or `-H "Host: ..."` is honored while the hop is on the
+/// same host as the configured server (`keep_pinned_host`), matching what curl does with an explicit
+/// `Host` override. Once a redirect changes the host, the authority is derived from `target_addr`
+/// instead, eliding the port when it is the default for the scheme.
 fn authority_for(
     target_addr: &TransportAddr,
     client_cfg: &ClientConfig,
     headers_file_host: Option<&str>,
-    is_initial: bool,
+    keep_pinned_host: bool,
 ) -> String {
-    if is_initial {
+    if keep_pinned_host {
         if let Some(host) = headers_file_host {
             return host.to_string();
         }
@@ -175,8 +176,13 @@ pub async fn connect(
             });
     let (headers_file, headers_file_host) = (&headers_file, &headers_file_host);
 
-    redirect::connect(client, |transport, addr, path_prefix, is_initial| async move {
-        let authority = authority_for(&addr, client_cfg, headers_file_host.as_deref(), is_initial);
+    redirect::connect(client, |transport, addr, path_prefix, policy| async move {
+        let authority = authority_for(
+            &addr,
+            client_cfg,
+            headers_file_host.as_deref(),
+            policy.keep_pinned_host,
+        );
 
         let uri_scheme = match addr.scheme() {
             TransportScheme::Https | TransportScheme::Wss => "https",
@@ -202,17 +208,25 @@ pub async fn connect(
         };
 
         for (k, v) in &client_cfg.http_headers {
+            if !policy.allows_header(k) {
+                continue;
+            }
             let _ = headers.remove(k);
             headers.append(k, v.clone());
         }
 
-        if let Some(auth) = &client_cfg.http_upgrade_credentials {
+        if policy.keep_credentials
+            && let Some(auth) = &client_cfg.http_upgrade_credentials
+        {
             let _ = headers.remove(AUTHORIZATION);
             headers.append(AUTHORIZATION, auth.clone());
         }
 
         if let Some(headers_file) = headers_file {
             for (k, v) in headers_file {
+                if !policy.allows_header(k) {
+                    continue;
+                }
                 let _ = headers.remove(k);
                 headers.append(k, v.clone());
             }
@@ -242,10 +256,16 @@ pub async fn connect(
             }
         });
 
-        let response = request_sender
-            .send_request(req)
-            .await
-            .with_context(|| format!("failed to send http2 request with the server {addr:?}"))?;
+        let response = match request_sender.send_request(req).await {
+            Ok(response) => response,
+            Err(err) => {
+                // Abort the connection poller like the branches below do: a failed request can leave
+                // the connection open (the server may have reset the stream, not the connection), and
+                // then the task would keep polling it detached.
+                cnx_poller.abort();
+                return Err(err).with_context(|| format!("failed to send http2 request with the server {addr:?}"));
+            }
+        };
 
         let status = response.status();
         if status.is_success() {
@@ -304,24 +324,27 @@ mod tests {
             http_proxy: None,
             webtransport: None,
             max_redirects: 5,
+            forward_credentials_on_redirect: false,
             tls_verify_certificate: false,
         }
     }
 
     #[test]
-    fn test_authority_custom_on_initial_hop_only() {
+    fn test_authority_pinned_while_host_is_unchanged() {
         let cfg = make_test_cfg(Some("custom.example.com"));
-        let initial_addr = cfg.remote_addr.clone();
-        let redirected_addr =
+
+        // The configured host uses the pinned authority
+        assert_eq!(authority_for(&cfg.remote_addr, &cfg, None, true), "custom.example.com");
+
+        // Same host on another port is still the service the pin was meant for
+        let other_port =
+            TransportAddr::new(TransportScheme::Http, Host::Domain("d1.example.com".to_string()), 9090, None).unwrap();
+        assert_eq!(authority_for(&other_port, &cfg, None, true), "custom.example.com");
+
+        // Another host derives the authority from the address being dialed
+        let other_host =
             TransportAddr::new(TransportScheme::Http, Host::Domain("d2.example.com".to_string()), 9090, None).unwrap();
-
-        // Initial hop must use the custom host header as authority
-        let auth_initial = authority_for(&initial_addr, &cfg, None, true);
-        assert_eq!(auth_initial, "custom.example.com");
-
-        // Redirected hop must derive authority dynamically from redirected addr
-        let auth_redirected = authority_for(&redirected_addr, &cfg, None, false);
-        assert_eq!(auth_redirected, "d2.example.com:9090");
+        assert_eq!(authority_for(&other_host, &cfg, None, false), "d2.example.com:9090");
     }
 
     #[test]

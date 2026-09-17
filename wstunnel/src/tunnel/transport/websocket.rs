@@ -1,5 +1,5 @@
 use super::io::{MAX_PACKET_LENGTH, TransportRead, TransportWrite};
-use super::redirect::{self, HopOutcome};
+use super::redirect::{self, HopOutcome, HopPolicy};
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::connection_pool::{L4ReadHalf, L4Stream, L4WriteHalf};
 use crate::tunnel::client::{Client, ClientConfig};
@@ -275,13 +275,22 @@ impl HeadersFile {
         }
     }
 
-    /// Applies the file's headers, `Host` included, to `headers`.
-    fn apply(&self, headers: &mut HeaderMap) {
+    /// Applies the file's headers to `headers`.
+    ///
+    /// The `Host` line is only applied while the hop is on the same host as the configured server
+    /// (`keep_pinned_host`), matching what curl does with an explicit `Host` override. Origin-scoped
+    /// credentials are dropped unless the policy allows them.
+    fn apply(&self, headers: &mut HeaderMap, policy: HopPolicy) {
         for (name, value) in &self.headers {
+            if !policy.allows_header(name) {
+                continue;
+            }
             let _ = headers.remove(name);
             headers.append(name, value.clone());
         }
-        if let Some((name, value)) = &self.host {
+        if policy.keep_pinned_host
+            && let Some((name, value)) = &self.host
+        {
             let _ = headers.remove(name);
             headers.append(name, value.clone());
         }
@@ -290,18 +299,16 @@ impl HeadersFile {
 
 /// Derives the appropriate `Host` header for `target_addr`.
 ///
-/// On the initial connection attempt (`is_initial == true`), any explicit custom `Host` header
-/// provided by the user via `-H "Host: ..."` is honored.
-///
-/// On subsequent redirected hops (`is_initial == false`) or if no custom host header was configured,
-/// the authority is dynamically derived from `target_addr`, eliding the port when it is the
-/// default for the scheme.
+/// A custom `Host` the user pinned with `-H "Host: ..."` is honored while the hop is on the same
+/// host as the configured server (`keep_pinned_host`); once a redirect changes the host, the
+/// authority is derived from `target_addr` instead, eliding the port when it is the default for the
+/// scheme. This mirrors what curl does with an explicit `Host` override.
 fn host_header_for(
     target_addr: &TransportAddr,
     client_cfg: &ClientConfig,
-    is_initial: bool,
+    keep_pinned_host: bool,
 ) -> anyhow::Result<HeaderValue> {
-    if is_initial && let Some(custom_host) = &client_cfg.custom_http_header_host {
+    if keep_pinned_host && let Some(custom_host) = &client_cfg.custom_http_header_host {
         return Ok(custom_host.clone());
     }
     let authority = target_addr.request_authority();
@@ -313,6 +320,8 @@ fn host_header_for(
 ///
 /// `headers_file` carries the headers already parsed from `--http-headers-file`, so building a
 /// request (once per redirect hop) does not re-read and re-parse the file.
+///
+/// `policy` says which of the user's headers still apply to this hop (see [`HopPolicy`]).
 fn build_upgrade_request(
     client_cfg: &ClientConfig,
     headers_file: &HeadersFile,
@@ -320,9 +329,9 @@ fn build_upgrade_request(
     path_prefix: &str,
     request_id: Uuid,
     dest_addr: &RemoteAddr,
-    is_initial: bool,
+    policy: HopPolicy,
 ) -> anyhow::Result<Request<Empty<Bytes>>> {
-    let host_val = host_header_for(target_addr, client_cfg, is_initial)?;
+    let host_val = host_header_for(target_addr, client_cfg, policy.keep_pinned_host)?;
     let mut req = Request::builder()
         .method("GET")
         .uri(format!("/{}/events", path_prefix))
@@ -348,16 +357,21 @@ fn build_upgrade_request(
         }
     };
     for (k, v) in &client_cfg.http_headers {
+        if !policy.allows_header(k) {
+            continue;
+        }
         let _ = headers.remove(k);
         headers.append(k, v.clone());
     }
 
-    if let Some(auth) = &client_cfg.http_upgrade_credentials {
+    if policy.keep_credentials
+        && let Some(auth) = &client_cfg.http_upgrade_credentials
+    {
         let _ = headers.remove(AUTHORIZATION);
         headers.append(AUTHORIZATION, auth.clone());
     }
 
-    headers_file.apply(headers);
+    headers_file.apply(headers, policy);
 
     let req = req
         .body(Empty::<Bytes>::new())
@@ -443,9 +457,8 @@ pub async fn connect(
     let headers_file = HeadersFile::load(client_cfg);
     let headers_file = &headers_file;
 
-    let (ws, parts) = redirect::connect(client, |transport, addr, path_prefix, is_initial| async move {
-        let req =
-            build_upgrade_request(client_cfg, headers_file, &addr, &path_prefix, request_id, dest_addr, is_initial)?;
+    let (ws, parts) = redirect::connect(client, |transport, addr, path_prefix, policy| async move {
+        let req = build_upgrade_request(client_cfg, headers_file, &addr, &path_prefix, request_id, dest_addr, policy)?;
         debug!("with HTTP upgrade request {req:?}");
 
         do_websocket_handshake(transport, req, &client.executor)
@@ -532,24 +545,34 @@ mod tests {
             http_proxy: None,
             webtransport: None,
             max_redirects: 5,
+            forward_credentials_on_redirect: false,
             tls_verify_certificate: false,
         }
     }
 
     #[test]
-    fn test_host_header_custom_on_initial_hop_only() {
+    fn test_host_header_pinned_while_host_is_unchanged() {
         let cfg = make_test_cfg(Some("custom.example.com"));
-        let initial_addr = cfg.remote_addr.clone();
-        let redirected_addr =
-            TransportAddr::new(TransportScheme::Ws, Host::Domain("d2.example.com".to_string()), 9090, None).unwrap();
 
-        // Initial hop must use the custom host header
-        let host_initial = host_header_for(&initial_addr, &cfg, true).unwrap();
+        // The configured host uses the pinned header
+        let host_initial = host_header_for(&cfg.remote_addr, &cfg, true).unwrap();
         assert_eq!(host_initial.to_str().unwrap(), "custom.example.com");
 
-        // Redirected hop must derive host authority dynamically
-        let host_redirected = host_header_for(&redirected_addr, &cfg, false).unwrap();
-        assert_eq!(host_redirected.to_str().unwrap(), "d2.example.com:9090");
+        // Same host on another port is still the service the pin was meant for
+        let other_port =
+            TransportAddr::new(TransportScheme::Ws, Host::Domain("d1.example.com".to_string()), 9090, None).unwrap();
+        assert_eq!(
+            host_header_for(&other_port, &cfg, true).unwrap().to_str().unwrap(),
+            "custom.example.com"
+        );
+
+        // Another host derives the header from the address being dialed
+        let other_host =
+            TransportAddr::new(TransportScheme::Ws, Host::Domain("d2.example.com".to_string()), 9090, None).unwrap();
+        assert_eq!(
+            host_header_for(&other_host, &cfg, false).unwrap().to_str().unwrap(),
+            "d2.example.com:9090"
+        );
     }
 
     #[test]
@@ -592,11 +615,28 @@ mod tests {
         let redirected =
             TransportAddr::new(TransportScheme::Ws, Host::Domain("d2.example.com".to_string()), 9090, None).unwrap();
 
-        let initial =
-            build_upgrade_request(&cfg, &headers_file, &cfg.remote_addr.clone(), "v1", Uuid::new_v4(), &dest, true)
-                .unwrap();
+        // The first hop is the configured server (same host and origin); the second is another host,
+        // so only the non-sensitive file headers should survive it.
+        let keep_all = HopPolicy {
+            keep_pinned_host: true,
+            keep_credentials: true,
+        };
+        let keep_nothing = HopPolicy {
+            keep_pinned_host: false,
+            keep_credentials: false,
+        };
+        let initial = build_upgrade_request(
+            &cfg,
+            &headers_file,
+            &cfg.remote_addr.clone(),
+            "v1",
+            Uuid::new_v4(),
+            &dest,
+            keep_all,
+        )
+        .unwrap();
         let second_hop =
-            build_upgrade_request(&cfg, &headers_file, &redirected, "v1", Uuid::new_v4(), &dest, false).unwrap();
+            build_upgrade_request(&cfg, &headers_file, &redirected, "v1", Uuid::new_v4(), &dest, keep_nothing).unwrap();
 
         for req in [&initial, &second_hop] {
             assert_eq!(
