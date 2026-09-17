@@ -208,11 +208,15 @@ where
                     .and_then(|h| h.to_str().ok())
                     .ok_or_else(|| anyhow!("Redirect status code {status} without valid Location header"))?
                     .to_string();
-                info!("Server redirected ({status}) to {location}");
 
                 let (next_addr, next_prefix) = current_addr
                     .resolve_redirect(&current_path_prefix, &location, &mut visited, client_cfg.tls_verify_certificate)
                     .with_context(|| format!("failed to follow redirect from {current_addr:?} to {location}"))?;
+
+                // The full target URL can be long and may carry deployment specific paths, so it goes
+                // to debug; at info level only the origin we switch to is reported.
+                info!("Server redirected ({status}) to {next_addr:?}");
+                debug!("Redirect location {location} resolved to path prefix {next_prefix:?}");
 
                 current_addr = next_addr;
                 current_path_prefix = next_prefix;
