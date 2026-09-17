@@ -10,8 +10,9 @@ use bytes::{Bytes, BytesMut};
 use either::Either;
 use fastwebsockets::{CloseCode, Frame, OpCode, Payload, Role, WebSocket, WebSocketRead, WebSocketWrite};
 use http_body_util::Empty;
+use hyper::HeaderMap;
 use hyper::Request;
-use hyper::header::{AUTHORIZATION, HeaderValue, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
+use hyper::header::{AUTHORIZATION, HeaderName, HeaderValue, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::http::response::Parts;
 use hyper::upgrade::Upgraded;
@@ -252,6 +253,42 @@ impl TransportRead for WebsocketTransportRead {
     }
 }
 
+/// The headers of `--http-headers-file`, read once and reused for every hop of a connection attempt.
+///
+/// A request is built per hop, so reading the file inside the request builder would re-open and
+/// re-parse it for every redirect hop, and an edit mid-chain would change the request between hops.
+struct HeadersFile {
+    /// The file's `Host` line, if it has one.
+    host: Option<(HeaderName, HeaderValue)>,
+    /// Every other header in the file.
+    headers: Vec<(HeaderName, HeaderValue)>,
+}
+
+impl HeadersFile {
+    /// Reads `client_cfg.http_headers_file`, if one is configured.
+    fn load(client_cfg: &ClientConfig) -> Self {
+        match client_cfg.http_headers_file.as_deref().map(headers_from_file) {
+            Some((host, headers)) => Self { host, headers },
+            None => Self {
+                host: None,
+                headers: Vec::new(),
+            },
+        }
+    }
+
+    /// Applies the file's headers, `Host` included, to `headers`.
+    fn apply(&self, headers: &mut HeaderMap) {
+        for (name, value) in &self.headers {
+            let _ = headers.remove(name);
+            headers.append(name, value.clone());
+        }
+        if let Some((name, value)) = &self.host {
+            let _ = headers.remove(name);
+            headers.append(name, value.clone());
+        }
+    }
+}
+
 /// Derives the appropriate `Host` header for `target_addr`.
 ///
 /// On the initial connection attempt (`is_initial == true`), any explicit custom `Host` header
@@ -274,8 +311,12 @@ fn host_header_for(
 }
 
 /// Builds the HTTP/1.1 WebSocket upgrade request targeting `target_addr` at `/{path_prefix}/events`.
+///
+/// `headers_file` carries the headers already parsed from `--http-headers-file`, so building a
+/// request (once per redirect hop) does not re-read and re-parse the file.
 fn build_upgrade_request(
     client_cfg: &ClientConfig,
+    headers_file: &HeadersFile,
     target_addr: &TransportAddr,
     path_prefix: &str,
     request_id: Uuid,
@@ -317,17 +358,7 @@ fn build_upgrade_request(
         headers.append(AUTHORIZATION, auth.clone());
     }
 
-    if let Some(headers_file_path) = &client_cfg.http_headers_file {
-        let (host, headers_file) = headers_from_file(headers_file_path);
-        for (k, v) in headers_file {
-            let _ = headers.remove(&k);
-            headers.append(k, v);
-        }
-        if let Some((host, val)) = host {
-            let _ = headers.remove(&host);
-            headers.append(host, val);
-        }
-    }
+    headers_file.apply(headers);
 
     let req = req
         .body(Empty::<Bytes>::new())
@@ -430,6 +461,8 @@ async fn do_connect(
     let max_redirects = client_cfg.max_redirects;
     let mut redirect_count = 0;
     let mut is_permanent_chain = true;
+    // Read the headers file once for the whole attempt instead of once per hop.
+    let headers_file = HeadersFile::load(client_cfg);
 
     loop {
         // The connection pool (cnx_pool) maintains pre-warmed L4 connections exclusively
@@ -452,6 +485,7 @@ async fn do_connect(
 
         let req = build_upgrade_request(
             client_cfg,
+            &headers_file,
             &current_addr,
             &current_path_prefix,
             request_id,
@@ -678,5 +712,46 @@ mod tests {
 
         let host_initial = host_header_for(&cfg.remote_addr, &cfg, true).unwrap();
         assert_eq!(host_initial.to_str().unwrap(), "d1.example.com");
+    }
+
+    #[test]
+    fn test_headers_file_is_parsed_once_and_reused() {
+        let path = std::env::temp_dir().join(format!("wstunnel-headers-{}.txt", std::process::id()));
+        std::fs::write(&path, "Host: pinned.example.com\nX-Extra: 1\n").unwrap();
+
+        let mut cfg = make_test_cfg(None);
+        cfg.http_headers_file = Some(path.clone());
+
+        // Parsed once for the whole connection attempt...
+        let headers_file = HeadersFile::load(&cfg);
+        // ...and the file is gone before any request is built, so a builder that re-read it per hop
+        // would silently send no file headers at all.
+        std::fs::remove_file(&path).unwrap();
+
+        let dest = crate::tunnel::RemoteAddr {
+            protocol: crate::tunnel::LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Domain("target.invalid".to_string()),
+            port: 22,
+        };
+        let redirected =
+            TransportAddr::new(TransportScheme::Ws, Host::Domain("d2.example.com".to_string()), 9090, None).unwrap();
+
+        let initial =
+            build_upgrade_request(&cfg, &headers_file, &cfg.remote_addr.clone(), "v1", Uuid::new_v4(), &dest, true)
+                .unwrap();
+        let second_hop =
+            build_upgrade_request(&cfg, &headers_file, &redirected, "v1", Uuid::new_v4(), &dest, false).unwrap();
+
+        for req in [&initial, &second_hop] {
+            assert_eq!(
+                req.headers().get("x-extra").and_then(|v| v.to_str().ok()),
+                Some("1"),
+                "file headers must be reused from the parsed copy"
+            );
+        }
+        assert_eq!(
+            initial.headers().get(HOST).and_then(|v| v.to_str().ok()),
+            Some("pinned.example.com")
+        );
     }
 }
