@@ -1,13 +1,13 @@
 use super::io::{MAX_PACKET_LENGTH, TransportRead, TransportWrite};
+use super::redirect::{self, HopOutcome};
 use crate::tunnel::RemoteAddr;
-use crate::tunnel::client::connection_pool::{L4ReadHalf, L4Stream, L4WriteHalf, connect_l4_stream};
+use crate::tunnel::client::connection_pool::{L4ReadHalf, L4Stream, L4WriteHalf};
 use crate::tunnel::client::{Client, ClientConfig};
 use crate::tunnel::transport::TransportAddr;
 use crate::tunnel::transport::headers_from_file;
 use crate::tunnel::transport::jwt::{JWT_HEADER_PREFIX, tunnel_to_jwt_token};
 use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
-use either::Either;
 use fastwebsockets::{CloseCode, Frame, OpCode, Payload, Role, WebSocket, WebSocketRead, WebSocketWrite};
 use http_body_util::Empty;
 use hyper::HeaderMap;
@@ -17,8 +17,7 @@ use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::http::response::Parts;
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
-use log::{debug, warn};
-use std::collections::HashSet;
+use log::debug;
 use std::io;
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -30,7 +29,7 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_rustls::server::TlsStream;
-use tracing::{info, trace};
+use tracing::trace;
 use uuid::Uuid;
 
 pub struct WebsocketTransportWrite {
@@ -366,23 +365,12 @@ fn build_upgrade_request(
     Ok(req)
 }
 
-/// The outcome of a WebSocket handshake attempt.
-enum HandshakeOutcome {
-    /// Server accepted the upgrade with 101 Switching Protocols.
-    Success(Box<WebSocket<TokioIo<Upgraded>>>, Parts),
-    /// Server responded with an HTTP 3xx redirection and a `Location` header.
-    Redirect {
-        status: hyper::StatusCode,
-        location: String,
-    },
-}
-
 /// Performs a WebSocket handshake over the given `transport` stream, intercepting HTTP 3xx redirects.
 async fn do_websocket_handshake(
     transport: L4Stream,
     req: Request<Empty<Bytes>>,
     executor: &impl crate::TokioExecutorRef,
-) -> anyhow::Result<HandshakeOutcome> {
+) -> anyhow::Result<HopOutcome<(Box<WebSocket<TokioIo<Upgraded>>>, Parts)>> {
     let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(transport))
         .await
         .with_context(|| "failed to establish HTTP/1.1 handshake with server")?;
@@ -428,125 +416,19 @@ async fn do_websocket_handshake(
             .await
             .with_context(|| "failed to upgrade HTTP connection to WebSocket")?;
         let ws = WebSocket::after_handshake(TokioIo::new(upgraded), Role::Client);
-        Ok(HandshakeOutcome::Success(Box::new(ws), response.into_parts().0))
+        Ok(HopOutcome::Connected((Box::new(ws), response.into_parts().0)))
     } else if status.is_redirection() {
-        let location = response
-            .headers()
-            .get(hyper::header::LOCATION)
-            .and_then(|h| h.to_str().ok())
-            .ok_or_else(|| anyhow!("Redirect status code {status} without valid Location header"))?
-            .to_string();
-        Ok(HandshakeOutcome::Redirect { status, location })
+        // The chain logic reads `Location` (and, later, cache directives) from these headers.
+        Ok(HopOutcome::Redirect {
+            status,
+            headers: response.headers().clone(),
+        })
     } else {
         // The reply body is never parsed by wstunnel: the status is what matters, and the caller
         // reports it with the server URL. Reading it would make this path wait for a body that a
         // misbehaving server may never finish (there is no timeout around the handshake) and would
         // buffer whatever it does send. Drop it and let the connection go.
         Err(anyhow!("WebSocket handshake rejected by server with status {status}"))
-    }
-}
-
-async fn do_connect(
-    request_id: Uuid,
-    client: &Client<impl crate::TokioExecutorRef>,
-    dest_addr: &RemoteAddr,
-    start_addr: TransportAddr,
-    start_path_prefix: String,
-    can_use_pool: bool,
-) -> anyhow::Result<(WebsocketTransportRead, WebsocketTransportWrite, Parts)> {
-    let client_cfg = &client.config;
-    let mut current_addr = start_addr;
-    let mut current_path_prefix = start_path_prefix;
-    let mut visited = HashSet::new();
-    let max_redirects = client_cfg.max_redirects;
-    let mut redirect_count = 0;
-    let mut is_permanent_chain = true;
-    // Read the headers file once for the whole attempt instead of once per hop.
-    let headers_file = HeadersFile::load(client_cfg);
-
-    loop {
-        // The connection pool (cnx_pool) maintains pre-warmed L4 connections exclusively
-        // to the canonical configured server URL (client_cfg.remote_addr).
-        // Therefore, pooled connections can only be utilized on the initial attempt (redirect_count == 0)
-        // when dialing the canonical address. All redirected hops or connections to an updated active_target
-        // deliberately bypass the pool and establish a fresh L4 connection directly to the destination.
-        // Trade-off (redirected tunnels are not pre-warmed, the pool keeps filling the canonical
-        // URL): see "Connection pooling and redirects" in docs/server_url_redirection.md.
-        let transport = if can_use_pool && redirect_count == 0 {
-            let mut pooled_cnx = match client.cnx_pool.get().await {
-                Ok(cnx) => Ok(cnx),
-                Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
-            }?;
-            pooled_cnx
-                .take()
-                .and_then(Either::left)
-                .ok_or_else(|| anyhow!("the connection pool did not return a TCP stream"))?
-        } else {
-            connect_l4_stream(client_cfg, &current_addr).await?
-        };
-
-        let req = build_upgrade_request(
-            client_cfg,
-            &headers_file,
-            &current_addr,
-            &current_path_prefix,
-            request_id,
-            dest_addr,
-            redirect_count == 0,
-        )?;
-        debug!("with HTTP upgrade request {req:?}");
-
-        match do_websocket_handshake(transport, req, &client.executor)
-            .await
-            .with_context(|| format!("failed to do websocket handshake with the server {:?}", current_addr))?
-        {
-            HandshakeOutcome::Success(ws, parts) => {
-                // In accordance with RFC 9110, only permanent redirects (301/308) update the client's
-                // active target across connections. Temporary redirects (302/307) are not cached.
-                if redirect_count > 0 && is_permanent_chain {
-                    info!("Permanently updated active target to {current_addr:?}");
-                    debug!("Active target path prefix: {current_path_prefix:?}");
-                    client.set_active_target(current_addr, current_path_prefix);
-                } else if redirect_count > 0 {
-                    // A temporary hop means any previously cached permanent target is no longer
-                    // authoritative: drop it so the next connection re-resolves from the canonical
-                    // server URL instead of keeping the stale hop alive until it fails.
-                    client.reset_active_target();
-                }
-                let (ws_rx, ws_tx) = mk_websocket_tunnel(*ws, Role::Client, client_cfg.websocket_mask_frame)?;
-                return Ok((ws_rx, ws_tx, parts));
-            }
-            HandshakeOutcome::Redirect { status, location } => {
-                if redirect_count >= max_redirects {
-                    if max_redirects == 0 {
-                        return Err(anyhow!(
-                            "redirect following is disabled (max_redirects = 0) when connecting to {:?}",
-                            client_cfg.remote_addr
-                        ));
-                    } else {
-                        return Err(anyhow!(
-                            "exceeded maximum of {max_redirects} redirects when connecting to {:?}",
-                            client_cfg.remote_addr
-                        ));
-                    }
-                }
-                redirect_count += 1;
-                let hop_is_permanent = matches!(
-                    status,
-                    hyper::StatusCode::MOVED_PERMANENTLY | hyper::StatusCode::PERMANENT_REDIRECT
-                );
-                if !hop_is_permanent {
-                    is_permanent_chain = false;
-                }
-                info!("Server redirected ({status}) to {location}");
-                let (next_addr, next_prefix) = current_addr
-                    .resolve_redirect(&current_path_prefix, &location, &mut visited, client_cfg.tls_verify_certificate)
-                    .with_context(|| format!("failed to follow redirect from {current_addr:?} to {location}"))?;
-
-                current_addr = next_addr;
-                current_path_prefix = next_prefix;
-            }
-        }
     }
 }
 
@@ -557,51 +439,23 @@ pub async fn connect(
     dest_addr: &RemoteAddr,
 ) -> anyhow::Result<(WebsocketTransportRead, WebsocketTransportWrite, Parts)> {
     let client_cfg = &client.config;
-    let active = client.active_target();
-    let is_cached = !active.is_same_target(&client_cfg.remote_addr, &client_cfg.http_upgrade_path_prefix);
+    // Read the headers file once for the whole connection attempt, not once per hop.
+    let headers_file = HeadersFile::load(client_cfg);
+    let headers_file = &headers_file;
 
-    if is_cached {
-        match do_connect(
-            request_id,
-            client,
-            dest_addr,
-            active.addr.clone(),
-            active.path_prefix.clone(),
-            false,
-        )
-        .await
-        {
-            Ok(res) => Ok(res),
-            Err(err) => {
-                warn!(
-                    "Failed to connect to cached redirect target {:?}: {:?}. Falling back to canonical server URL {:?}",
-                    active.addr, err, client_cfg.remote_addr
-                );
-                client.reset_active_target();
-                // When falling back after a cached target failure, establish a fresh L4 connection directly
-                // rather than borrowing potentially stale/closed sockets from the connection pool.
-                do_connect(
-                    request_id,
-                    client,
-                    dest_addr,
-                    client_cfg.remote_addr.clone(),
-                    client_cfg.http_upgrade_path_prefix.clone(),
-                    false,
-                )
-                .await
-            }
-        }
-    } else {
-        do_connect(
-            request_id,
-            client,
-            dest_addr,
-            client_cfg.remote_addr.clone(),
-            client_cfg.http_upgrade_path_prefix.clone(),
-            true,
-        )
-        .await
-    }
+    let (ws, parts) = redirect::connect(client, |transport, addr, path_prefix, is_initial| async move {
+        let req =
+            build_upgrade_request(client_cfg, headers_file, &addr, &path_prefix, request_id, dest_addr, is_initial)?;
+        debug!("with HTTP upgrade request {req:?}");
+
+        do_websocket_handshake(transport, req, &client.executor)
+            .await
+            .with_context(|| format!("failed to do websocket handshake with the server {addr:?}"))
+    })
+    .await?;
+
+    let (ws_rx, ws_tx) = mk_websocket_tunnel(*ws, Role::Client, client_cfg.websocket_mask_frame)?;
+    Ok((ws_rx, ws_tx, parts))
 }
 
 pub fn mk_websocket_tunnel(

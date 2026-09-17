@@ -1,20 +1,18 @@
 use super::io::{MAX_PACKET_LENGTH, TransportRead, TransportWrite};
+use super::redirect::{self, HopOutcome};
 use crate::tunnel::RemoteAddr;
-use crate::tunnel::client::connection_pool::connect_l4_stream;
 use crate::tunnel::client::{Client, ClientConfig};
 use crate::tunnel::transport::jwt::tunnel_to_jwt_token;
 use crate::tunnel::transport::{TransportAddr, TransportScheme, headers_from_file};
 use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
-use either::Either;
 use http_body_util::{BodyStream, StreamBody};
 use hyper::Request;
 use hyper::body::{Frame, Incoming};
 use hyper::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE};
 use hyper::http::response::Parts;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
-use log::{debug, error, info, warn};
-use std::collections::HashSet;
+use log::{debug, error, warn};
 use std::future::Future;
 use std::io;
 use std::io::ErrorKind;
@@ -146,23 +144,16 @@ fn authority_for(
     target_addr.request_authority()
 }
 
-async fn do_connect(
+/// Connect to a remote wstunnel server over HTTP/2, following HTTP 3xx redirects if encountered.
+pub async fn connect(
     request_id: Uuid,
     client: &Client<impl crate::TokioExecutorRef>,
     dest_addr: &RemoteAddr,
-    start_addr: TransportAddr,
-    start_path_prefix: String,
-    can_use_pool: bool,
 ) -> anyhow::Result<(Http2TransportRead, Http2TransportWrite, Parts)> {
     let client_cfg = &client.config;
-    let mut current_addr = start_addr;
-    let mut current_path_prefix = start_path_prefix;
-    let mut visited = HashSet::new();
-    let max_redirects = client_cfg.max_redirects;
-    let mut redirect_count = 0;
-    let mut is_permanent_chain = true;
 
-    // In HTTP/2, the HOST header is not used directly; authority is set in the request URI.
+    // In HTTP/2, the HOST header is not used directly; authority is set in the request URI. Parse the
+    // headers file once for the whole attempt rather than once per hop.
     let (headers_file, headers_file_host) =
         client_cfg
             .http_headers_file
@@ -182,38 +173,19 @@ async fn do_connect(
 
                 (Some(headers), host)
             });
+    let (headers_file, headers_file_host) = (&headers_file, &headers_file_host);
 
-    loop {
-        // The connection pool (cnx_pool) maintains pre-warmed L4 connections exclusively
-        // to the canonical configured server URL (client_cfg.remote_addr).
-        // Therefore, pooled connections can only be utilized on the initial attempt (redirect_count == 0)
-        // when dialing the canonical address. All redirected hops or connections to an updated active_target
-        // deliberately bypass the pool and establish a fresh L4 connection directly to the destination.
-        // Trade-off (redirected tunnels are not pre-warmed, the pool keeps filling the canonical
-        // URL): see "Connection pooling and redirects" in docs/server_url_redirection.md.
-        let transport = if can_use_pool && redirect_count == 0 {
-            let mut pooled_cnx = match client.cnx_pool.get().await {
-                Ok(cnx) => Ok(cnx),
-                Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
-            }?;
-            pooled_cnx
-                .take()
-                .and_then(Either::left)
-                .ok_or_else(|| anyhow!("the connection pool did not return a TCP stream"))?
-        } else {
-            connect_l4_stream(client_cfg, &current_addr).await?
-        };
+    redirect::connect(client, |transport, addr, path_prefix, is_initial| async move {
+        let authority = authority_for(&addr, client_cfg, headers_file_host.as_deref(), is_initial);
 
-        let authority = authority_for(&current_addr, client_cfg, headers_file_host.as_deref(), redirect_count == 0);
-
-        let uri_scheme = match current_addr.scheme() {
+        let uri_scheme = match addr.scheme() {
             TransportScheme::Https | TransportScheme::Wss => "https",
             _ => "http",
         };
 
         let mut req = Request::builder()
             .method("POST")
-            .uri(format!("{uri_scheme}://{authority}/{current_path_prefix}/events"))
+            .uri(format!("{uri_scheme}://{authority}/{path_prefix}/events"))
             .header(COOKIE, tunnel_to_jwt_token(request_id, dest_addr))
             .header(CONTENT_TYPE, "application/json")
             .version(hyper::Version::HTTP_2);
@@ -223,8 +195,8 @@ async fn do_connect(
             None => {
                 return Err(anyhow!(
                     "failed to build HTTP request to contact the server {:?}. Most likely path_prefix `{}` or http headers is not valid",
-                    current_addr,
-                    current_path_prefix
+                    addr,
+                    path_prefix
                 ));
             }
         };
@@ -239,7 +211,7 @@ async fn do_connect(
             headers.append(AUTHORIZATION, auth.clone());
         }
 
-        if let Some(ref headers_file) = headers_file {
+        if let Some(headers_file) = headers_file {
             for (k, v) in headers_file {
                 let _ = headers.remove(k);
                 headers.append(k, v.clone());
@@ -251,7 +223,7 @@ async fn do_connect(
             StreamBody::new(ReceiverStream::new(rx).map(|s| -> anyhow::Result<Frame<Bytes>> { Ok(Frame::data(s)) }));
         let req = req
             .body(body)
-            .with_context(|| format!("failed to build HTTP request to contact the server {current_addr:?}"))?;
+            .with_context(|| format!("failed to build HTTP request to contact the server {addr:?}"))?;
         debug!("with HTTP upgrade request {req:?}");
 
         let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
@@ -262,7 +234,7 @@ async fn do_connect(
             .keep_alive_while_idle(false)
             .handshake(TokioIo::new(transport))
             .await
-            .with_context(|| format!("failed to do http2 handshake with the server {current_addr:?}"))?;
+            .with_context(|| format!("failed to do http2 handshake with the server {addr:?}"))?;
 
         let cnx_poller = client.executor.spawn(async move {
             if let Err(err) = cnx.await {
@@ -273,127 +245,31 @@ async fn do_connect(
         let response = request_sender
             .send_request(req)
             .await
-            .with_context(|| format!("failed to send http2 request with the server {current_addr:?}"))?;
+            .with_context(|| format!("failed to send http2 request with the server {addr:?}"))?;
 
         let status = response.status();
         if status.is_success() {
-            // In accordance with RFC 9110, only permanent redirects (301/308) update the client's
-            // active target across connections. Temporary redirects (302/307) are not cached.
-            if redirect_count > 0 && is_permanent_chain {
-                info!("Permanently updated active target to {current_addr:?}");
-                debug!("Active target path prefix: {current_path_prefix:?}");
-                client.set_active_target(current_addr, current_path_prefix);
-            } else if redirect_count > 0 {
-                // A temporary hop means any previously cached permanent target is no longer
-                // authoritative: drop it so the next connection re-resolves from the canonical
-                // server URL instead of keeping the stale hop alive until it fails.
-                client.reset_active_target();
-            }
             let (parts, body) = response.into_parts();
-            return Ok((
+            Ok(HopOutcome::Connected((
                 Http2TransportRead::new(BodyStream::new(body), Some(cnx_poller)),
                 Http2TransportWrite::new(tx),
                 parts,
-            ));
+            )))
         } else if status.is_redirection() {
             cnx_poller.abort();
-            if redirect_count >= max_redirects {
-                if max_redirects == 0 {
-                    return Err(anyhow!(
-                        "redirect following is disabled (max_redirects = 0) when connecting to {:?}",
-                        client_cfg.remote_addr
-                    ));
-                } else {
-                    return Err(anyhow!(
-                        "exceeded maximum of {max_redirects} redirects when connecting to {:?}",
-                        client_cfg.remote_addr
-                    ));
-                }
-            }
-            redirect_count += 1;
-            let hop_is_permanent = matches!(
+            Ok(HopOutcome::Redirect {
                 status,
-                hyper::StatusCode::MOVED_PERMANENTLY | hyper::StatusCode::PERMANENT_REDIRECT
-            );
-            if !hop_is_permanent {
-                is_permanent_chain = false;
-            }
-            let location = response
-                .headers()
-                .get(hyper::header::LOCATION)
-                .and_then(|h| h.to_str().ok())
-                .ok_or_else(|| anyhow!("Redirect status code {status} without valid Location header"))?
-                .to_string();
-            info!("Server redirected ({status}) to {location}");
-
-            let (next_addr, next_prefix) = current_addr
-                .resolve_redirect(&current_path_prefix, &location, &mut visited, client_cfg.tls_verify_certificate)
-                .with_context(|| format!("failed to follow redirect from {current_addr:?} to {location}"))?;
-
-            current_addr = next_addr;
-            current_path_prefix = next_prefix;
+                headers: response.headers().clone(),
+            })
         } else {
             cnx_poller.abort();
             // The reply body is never parsed by wstunnel: the status is what matters. Reading it
             // would stall on a body the server may never finish and buffer whatever it does send;
             // it was also racy, since the connection poller is aborted just above.
-            return Err(anyhow!("Http2 server rejected the connection with status {status}"));
+            Err(anyhow!("Http2 server rejected the connection with status {status}"))
         }
-    }
-}
-
-/// Connect to a remote wstunnel server over HTTP/2, following HTTP 3xx redirects if encountered.
-pub async fn connect(
-    request_id: Uuid,
-    client: &Client<impl crate::TokioExecutorRef>,
-    dest_addr: &RemoteAddr,
-) -> anyhow::Result<(Http2TransportRead, Http2TransportWrite, Parts)> {
-    let client_cfg = &client.config;
-    let active = client.active_target();
-    let is_cached = !active.is_same_target(&client_cfg.remote_addr, &client_cfg.http_upgrade_path_prefix);
-
-    if is_cached {
-        match do_connect(
-            request_id,
-            client,
-            dest_addr,
-            active.addr.clone(),
-            active.path_prefix.clone(),
-            false,
-        )
-        .await
-        {
-            Ok(res) => Ok(res),
-            Err(err) => {
-                warn!(
-                    "Failed to connect to cached redirect target {:?}: {:?}. Falling back to canonical server URL {:?}",
-                    active.addr, err, client_cfg.remote_addr
-                );
-                client.reset_active_target();
-                // When falling back after a cached target failure, establish a fresh L4 connection directly
-                // rather than borrowing potentially stale/closed sockets from the connection pool.
-                do_connect(
-                    request_id,
-                    client,
-                    dest_addr,
-                    client_cfg.remote_addr.clone(),
-                    client_cfg.http_upgrade_path_prefix.clone(),
-                    false,
-                )
-                .await
-            }
-        }
-    } else {
-        do_connect(
-            request_id,
-            client,
-            dest_addr,
-            client_cfg.remote_addr.clone(),
-            client_cfg.http_upgrade_path_prefix.clone(),
-            true,
-        )
-        .await
-    }
+    })
+    .await
 }
 
 #[cfg(test)]
