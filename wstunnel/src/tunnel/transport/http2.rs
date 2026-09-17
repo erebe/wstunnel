@@ -7,7 +7,7 @@ use crate::tunnel::transport::{TransportAddr, TransportScheme, headers_from_file
 use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
 use either::Either;
-use http_body_util::{BodyExt, BodyStream, StreamBody};
+use http_body_util::{BodyStream, StreamBody};
 use hyper::Request;
 use hyper::body::{Frame, Incoming};
 use hyper::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE};
@@ -332,19 +332,10 @@ async fn do_connect(
             current_path_prefix = next_prefix;
         } else {
             cnx_poller.abort();
-            let body_bytes = response
-                .into_body()
-                .collect()
-                .await
-                .map(|c| c.to_bytes())
-                .unwrap_or_default();
-            let body_str = String::from_utf8_lossy(&body_bytes);
-            let detail = if body_str.is_empty() {
-                String::new()
-            } else {
-                format!(": {body_str}")
-            };
-            return Err(anyhow!("Http2 server rejected the connection with status {status}{detail}"));
+            // The reply body is never parsed by wstunnel: the status is what matters. Reading it
+            // would stall on a body the server may never finish and buffer whatever it does send;
+            // it was also racy, since the connection poller is aborted just above.
+            return Err(anyhow!("Http2 server rejected the connection with status {status}"));
         }
     }
 }

@@ -800,6 +800,85 @@ async fn test_tcp_tunnel_websocket_redirect_301(
 }
 
 #[rstest]
+#[timeout(Duration::from_secs(10))]
+#[tokio::test]
+#[serial]
+async fn test_websocket_error_body_is_not_read(dns_resolver: DnsResolver) {
+    // Answers 403 with a body it starts and never finishes, then keeps the socket open. A client
+    // that read the error body would stall here until the test timeout and would leak the partial
+    // body into the error message; the status must be reported without touching the body.
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let h = tokio::spawn(async move {
+        let mut open_connections = Vec::new();
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = vec![0u8; 4096];
+            let _ = stream.read(&mut buf).await;
+            let _ = stream
+                .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 1048576\r\n\r\nLEAKED-BODY-PREFIX")
+                .await;
+            let _ = stream.flush().await;
+            open_connections.push(stream);
+        }
+    });
+    defer! { h.abort(); };
+
+    let client = client_ws_with_redirects(addr.port(), 5, dns_resolver).await;
+    let err = connect_ws_expect_err(&client, &dummy_remote_addr()).await;
+
+    assert!(err.contains("403"), "unexpected error: {err}");
+    assert!(
+        !err.contains("LEAKED-BODY-PREFIX"),
+        "the error body should not be included: {err}"
+    );
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(10))]
+#[tokio::test]
+#[serial]
+async fn test_http2_error_body_is_not_read(dns_resolver: DnsResolver) {
+    use hyper::body::{Frame, Incoming};
+    use hyper::service::service_fn;
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::server::conn::auto::Builder as AutoBuilder;
+
+    // Answers 403 with one body frame and then never completes the body: a client that read the
+    // error body would leak that partial frame into the message and then stall.
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let h = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let svc = service_fn(|_req: hyper::Request<Incoming>| async {
+                    let body = http_body_util::StreamBody::new(
+                        futures_util::stream::once(async {
+                            Ok::<_, std::convert::Infallible>(Frame::data(Bytes::from_static(b"LEAKED-BODY-PREFIX")))
+                        })
+                        .chain(futures_util::stream::pending()),
+                    );
+                    Ok::<_, std::convert::Infallible>(hyper::Response::builder().status(403).body(body).unwrap())
+                });
+                let io = TokioIo::new(stream);
+                let _ = AutoBuilder::new(TokioExecutor::new())
+                    .serve_connection_with_upgrades(io, svc)
+                    .await;
+            });
+        }
+    });
+    defer! { h.abort(); };
+
+    let client = client_h2_with_redirects(addr.port(), 5, dns_resolver).await;
+    let err = connect_h2_expect_err(&client, &dummy_remote_addr()).await;
+
+    assert!(err.contains("403"), "unexpected error: {err}");
+    assert!(
+        !err.contains("LEAKED-BODY-PREFIX"),
+        "the error body should not be included: {err}"
+    );
+}
+
+#[rstest]
 #[timeout(Duration::from_secs(15))]
 #[tokio::test]
 #[serial]
@@ -931,6 +1010,14 @@ fn dummy_remote_addr() -> RemoteAddr {
 async fn connect_ws_expect_err<E: crate::TokioExecutorRef>(client: &Client<E>, dest: &RemoteAddr) -> String {
     match crate::tunnel::transport::websocket::connect(Uuid::new_v4(), client, dest).await {
         Ok(_) => panic!("expected the websocket handshake to fail"),
+        Err(err) => format!("{err:#}"),
+    }
+}
+
+/// Runs an HTTP/2 handshake that is expected to fail and returns the rendered error chain.
+async fn connect_h2_expect_err<E: crate::TokioExecutorRef>(client: &Client<E>, dest: &RemoteAddr) -> String {
+    match crate::tunnel::transport::http2::connect(Uuid::new_v4(), client, dest).await {
+        Ok(_) => panic!("expected the http2 handshake to fail"),
         Err(err) => format!("{err:#}"),
     }
 }

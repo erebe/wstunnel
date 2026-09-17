@@ -9,7 +9,7 @@ use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
 use either::Either;
 use fastwebsockets::{CloseCode, Frame, OpCode, Payload, Role, WebSocket, WebSocketRead, WebSocketWrite};
-use http_body_util::{BodyExt, Empty};
+use http_body_util::Empty;
 use hyper::Request;
 use hyper::header::{AUTHORIZATION, HeaderValue, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
@@ -407,19 +407,11 @@ async fn do_websocket_handshake(
             .to_string();
         Ok(HandshakeOutcome::Redirect { status, location })
     } else {
-        let body_bytes = response
-            .into_body()
-            .collect()
-            .await
-            .map(|c| c.to_bytes())
-            .unwrap_or_default();
-        let body_str = String::from_utf8_lossy(&body_bytes);
-        let detail = if body_str.is_empty() {
-            String::new()
-        } else {
-            format!(": {body_str}")
-        };
-        Err(anyhow!("WebSocket handshake rejected by server with status {status}{detail}"))
+        // The reply body is never parsed by wstunnel: the status is what matters, and the caller
+        // reports it with the server URL. Reading it would make this path wait for a body that a
+        // misbehaving server may never finish (there is no timeout around the handshake) and would
+        // buffer whatever it does send. Drop it and let the connection go.
+        Err(anyhow!("WebSocket handshake rejected by server with status {status}"))
     }
 }
 
