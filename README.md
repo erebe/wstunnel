@@ -284,6 +284,21 @@ Options:
           
           [env: WSTUNNEL_DNS_PREFER_IPV4=]
 
+      --max-redirects <INT>
+          Maximum number of HTTP redirects (301, 302, 307, 308) to follow for server URL.
+          Set to 0 to disable redirect following.
+          
+          [env: WSTUNNEL_MAX_REDIRECTS=]
+          [default: 5]
+
+      --forward-credentials-on-redirect
+          Forward the credentials configured for the server (`--http-upgrade-credentials`, an
+          `Authorization`/`Cookie` header, or one from `--http-headers-file`) to a redirect target on
+          another origin (scheme, host and port). Off by default, so credentials stay scoped to the
+          server URL they were configured for. Equivalent to curl's `--location-trusted`.
+          
+          [env: WSTUNNEL_FORWARD_CREDENTIALS_ON_REDIRECT=]
+
   -h, --help
           Print help (see a summary with '-h')
 ```

@@ -254,6 +254,35 @@ pub struct ClientCreationRequest {
         )
     )]
     pub dns_resolver_prefer_ipv4: bool,
+
+    /// Maximum number of HTTP redirects (301, 302, 307, 308) to follow for server URL.
+    /// Set to 0 to disable redirect following.
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long,
+            default_value = "5",
+            value_name = "INT",
+            verbatim_doc_comment,
+            env = "WSTUNNEL_MAX_REDIRECTS"
+        )
+    )]
+    pub max_redirects: usize,
+
+    /// Forward the credentials configured for the server (`--http-upgrade-credentials`, an
+    /// `Authorization`/`Cookie` header, or one from `--http-headers-file`) to a redirect target on
+    /// another origin (scheme, host and port). Off by default, so credentials stay scoped to the
+    /// server URL they were configured for. Equivalent to curl's `--location-trusted`.
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long,
+            default_value = "false",
+            verbatim_doc_comment,
+            env = "WSTUNNEL_FORWARD_CREDENTIALS_ON_REDIRECT"
+        )
+    )]
+    pub forward_credentials_on_redirect: bool,
 }
 
 #[derive(Debug)]

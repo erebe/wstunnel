@@ -21,7 +21,9 @@ pub struct ClientConfig {
     pub http_upgrade_credentials: Option<HeaderValue>,
     pub http_headers: HashMap<HeaderName, HeaderValue>,
     pub http_headers_file: Option<PathBuf>,
-    pub http_header_host: HeaderValue,
+    /// Host header explicitly supplied by the user via `-H "Host: ..."`.
+    /// `None` if the host/authority must be derived from the address being dialed.
+    pub custom_http_header_host: Option<HeaderValue>,
     pub timeout_connect: Duration,
     pub websocket_ping_frequency: Option<Duration>,
     pub websocket_mask_frame: bool,
@@ -31,6 +33,13 @@ pub struct ClientConfig {
     /// Built in `create_client`, so a bad TLS setup fails at startup rather than on the
     /// first tunnel.
     pub webtransport: Option<Arc<WebTransportEndpoint>>,
+    /// Maximum number of HTTP redirects to follow for server URL. 0 disables redirects.
+    pub max_redirects: usize,
+    /// Forward the configured credentials (`Authorization`, cookies, `Proxy-Authorization`) to
+    /// redirect targets on another origin. Off by default, like curl without `--location-trusted`.
+    pub forward_credentials_on_redirect: bool,
+    /// Whether TLS certificate verification is enabled for the client.
+    pub tls_verify_certificate: bool,
 }
 
 impl ClientConfig {
@@ -47,15 +56,19 @@ impl ClientConfig {
                 |sni_override| sni_override.as_ref().to_string(),
             )
     }
-    pub fn tls_server_name(&self) -> ServerName<'static> {
+    /// Derive the TLS `ServerName` (for SNI and certificate verification) for a specific target address.
+    ///
+    /// If `--tls-sni-override` was specified on the TLS configuration, that name is used.
+    /// Otherwise, the host from `remote_addr` (domain name or IP address) is used.
+    pub fn tls_server_name_for(&self, remote_addr: &TransportAddr) -> ServerName<'static> {
         static INVALID_DNS_NAME: LazyLock<DnsName> =
             LazyLock::new(|| DnsName::try_from("dns-name-invalid.com").unwrap());
 
-        self.remote_addr
+        remote_addr
             .tls()
             .and_then(|tls| tls.tls_sni_override.as_ref())
             .map_or_else(
-                || match &self.remote_addr.host() {
+                || match remote_addr.host() {
                     Host::Domain(domain) => ServerName::DnsName(
                         DnsName::try_from(domain.clone()).unwrap_or_else(|_| INVALID_DNS_NAME.clone()),
                     ),
@@ -64,6 +77,11 @@ impl ClientConfig {
                 },
                 |sni_override| ServerName::DnsName(sni_override.clone()),
             )
+    }
+
+    /// Derive the TLS `ServerName` for the client's configured default `remote_addr`.
+    pub fn tls_server_name(&self) -> ServerName<'static> {
+        self.tls_server_name_for(&self.remote_addr)
     }
 }
 

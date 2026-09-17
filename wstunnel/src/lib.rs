@@ -28,7 +28,6 @@ use crate::tunnel::{RemoteAddr, to_host_port};
 use anyhow::{Context, anyhow};
 use futures_util::future::BoxFuture;
 use hyper::header::HOST;
-use hyper::http::HeaderValue;
 use log::debug;
 use parking_lot::{Mutex, RwLock};
 use std::str::FromStr;
@@ -149,16 +148,13 @@ pub async fn create_client(
         }
     };
 
-    // Extract host header from http_headers
-    let host_header = if let Some((_, host_val)) = args.http_headers.iter().find(|(h, _)| *h == HOST) {
-        host_val.clone()
-    } else {
-        let host = match args.remote_addr.port_or_known_default() {
-            None | Some(80) | Some(443) => args.remote_addr.host().unwrap().to_string(),
-            Some(port) => format!("{}:{}", args.remote_addr.host().unwrap(), port),
-        };
-        HeaderValue::from_str(&host)?
-    };
+    // Extract the custom host header, if the user pinned one with `-H "Host: ..."`. When absent,
+    // each transport derives the host/authority from the address it is actually dialing.
+    let custom_host_header = args
+        .http_headers
+        .iter()
+        .find(|(h, _)| *h == HOST)
+        .map(|(_, host_val)| host_val.clone());
     if let Some(path) = &args.http_headers_file
         && !path.exists()
     {
@@ -212,13 +208,16 @@ pub async fn create_client(
         http_upgrade_credentials: args.http_upgrade_credentials,
         http_headers: args.http_headers.into_iter().filter(|(k, _)| k != HOST).collect(),
         http_headers_file: args.http_headers_file,
-        http_header_host: host_header,
+        custom_http_header_host: custom_host_header,
         timeout_connect: Duration::from_secs(10),
         websocket_ping_frequency,
         websocket_mask_frame: args.websocket_mask_frame,
         dns_resolver,
         http_proxy,
         webtransport,
+        max_redirects: args.max_redirects,
+        forward_credentials_on_redirect: args.forward_credentials_on_redirect,
+        tls_verify_certificate: args.tls_verify_certificate,
     };
 
     let client = Client::new(

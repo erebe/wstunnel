@@ -242,9 +242,17 @@ pub fn quic_client_config(
     Ok(config)
 }
 
-pub async fn connect(client_cfg: &ClientConfig, tcp_stream: TcpStream) -> anyhow::Result<TlsStream<TcpStream>> {
-    let sni = client_cfg.tls_server_name();
-    let tls_config = match &client_cfg.remote_addr {
+/// Complete a client-side TLS handshake over an existing TCP stream toward `remote_addr`.
+///
+/// Uses the TLS connector and certificate settings from `client_cfg`, deriving the SNI
+/// name and verification identity from `remote_addr`.
+pub async fn connect_addr(
+    client_cfg: &ClientConfig,
+    remote_addr: &TransportAddr,
+    tcp_stream: TcpStream,
+) -> anyhow::Result<TlsStream<TcpStream>> {
+    let sni = client_cfg.tls_server_name_for(remote_addr);
+    let tls_config = match remote_addr {
         TransportAddr::Wss { tls, .. } => tls,
         TransportAddr::Https { tls, .. } => tls,
         // WebTransport does its own TLS 1.3 handshake inside QUIC, over UDP. It never goes
@@ -252,25 +260,25 @@ pub async fn connect(client_cfg: &ClientConfig, tcp_stream: TcpStream) -> anyhow
         TransportAddr::WebTransport { .. } => {
             return Err(anyhow!(
                 "WebTransport does not use a TCP TLS stream, it handshakes inside QUIC: {}",
-                client_cfg.remote_addr.scheme()
+                remote_addr.scheme()
             ));
         }
         TransportAddr::Http { .. } | TransportAddr::Ws { .. } => {
-            return Err(anyhow!("Transport does not support TLS: {}", client_cfg.remote_addr.scheme()));
+            return Err(anyhow!("Transport does not support TLS: {}", remote_addr.scheme()));
         }
     };
 
     if tls_config.tls_sni_disabled {
         info!(
             "Doing TLS handshake without SNI with the server {}:{}",
-            client_cfg.remote_addr.host(),
-            client_cfg.remote_addr.port()
+            remote_addr.host(),
+            remote_addr.port()
         );
     } else {
         info!(
             "Doing TLS handshake using SNI {sni:?} with the server {}:{}",
-            client_cfg.remote_addr.host(),
-            client_cfg.remote_addr.port()
+            remote_addr.host(),
+            remote_addr.port()
         );
     }
 

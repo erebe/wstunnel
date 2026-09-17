@@ -1,20 +1,21 @@
 use super::io::{MAX_PACKET_LENGTH, TransportRead, TransportWrite};
+use super::redirect::{self, HopOutcome, HopPolicy};
 use crate::tunnel::RemoteAddr;
-use crate::tunnel::client::Client;
 use crate::tunnel::client::connection_pool::{L4ReadHalf, L4Stream, L4WriteHalf};
+use crate::tunnel::client::{Client, ClientConfig};
+use crate::tunnel::transport::TransportAddr;
 use crate::tunnel::transport::headers_from_file;
 use crate::tunnel::transport::jwt::{JWT_HEADER_PREFIX, tunnel_to_jwt_token};
 use anyhow::{Context, anyhow};
 use bytes::{Bytes, BytesMut};
-use either::Either;
 use fastwebsockets::{CloseCode, Frame, OpCode, Payload, Role, WebSocket, WebSocketRead, WebSocketWrite};
 use http_body_util::Empty;
+use hyper::HeaderMap;
 use hyper::Request;
-use hyper::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
+use hyper::header::{AUTHORIZATION, HeaderName, HeaderValue, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use hyper::header::{CONNECTION, HOST, SEC_WEBSOCKET_KEY};
 use hyper::http::response::Parts;
 use hyper::upgrade::Upgraded;
-use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::debug;
 use std::io;
@@ -251,21 +252,90 @@ impl TransportRead for WebsocketTransportRead {
     }
 }
 
-pub async fn connect(
-    request_id: Uuid,
-    client: &Client<impl crate::TokioExecutorRef>,
-    dest_addr: &RemoteAddr,
-) -> anyhow::Result<(WebsocketTransportRead, WebsocketTransportWrite, Parts)> {
-    let client_cfg = &client.config;
-    let mut pooled_cnx = match client.cnx_pool.get().await {
-        Ok(cnx) => Ok(cnx),
-        Err(err) => Err(anyhow!("failed to get a connection to the server from the pool: {err:?}")),
-    }?;
+/// The headers of `--http-headers-file`, read once and reused for every hop of a connection attempt.
+///
+/// A request is built per hop, so reading the file inside the request builder would re-open and
+/// re-parse it for every redirect hop, and an edit mid-chain would change the request between hops.
+struct HeadersFile {
+    /// The file's `Host` line, if it has one.
+    host: Option<(HeaderName, HeaderValue)>,
+    /// Every other header in the file.
+    headers: Vec<(HeaderName, HeaderValue)>,
+}
 
+impl HeadersFile {
+    /// Reads `client_cfg.http_headers_file`, if one is configured.
+    fn load(client_cfg: &ClientConfig) -> Self {
+        match client_cfg.http_headers_file.as_deref().map(headers_from_file) {
+            Some((host, headers)) => Self { host, headers },
+            None => Self {
+                host: None,
+                headers: Vec::new(),
+            },
+        }
+    }
+
+    /// Applies the file's headers to `headers`.
+    ///
+    /// The `Host` line is only applied while the hop is on the same host as the configured server
+    /// (`keep_pinned_host`), matching what curl does with an explicit `Host` override. Origin-scoped
+    /// credentials are dropped unless the policy allows them.
+    fn apply(&self, headers: &mut HeaderMap, policy: HopPolicy) {
+        for (name, value) in &self.headers {
+            if !policy.allows_header(name) {
+                continue;
+            }
+            let _ = headers.remove(name);
+            headers.append(name, value.clone());
+        }
+        if policy.keep_pinned_host
+            && let Some((name, value)) = &self.host
+        {
+            let _ = headers.remove(name);
+            headers.append(name, value.clone());
+        }
+    }
+}
+
+/// Derives the appropriate `Host` header for `target_addr`.
+///
+/// A custom `Host` the user pinned with `-H "Host: ..."` is honored while the hop is on the same
+/// host as the configured server (`keep_pinned_host`); once a redirect changes the host, the
+/// authority is derived from `target_addr` instead, eliding the port when it is the default for the
+/// scheme. This mirrors what curl does with an explicit `Host` override.
+fn host_header_for(
+    target_addr: &TransportAddr,
+    client_cfg: &ClientConfig,
+    keep_pinned_host: bool,
+) -> anyhow::Result<HeaderValue> {
+    if keep_pinned_host && let Some(custom_host) = &client_cfg.custom_http_header_host {
+        return Ok(custom_host.clone());
+    }
+    let authority = target_addr.request_authority();
+    HeaderValue::from_str(&authority)
+        .with_context(|| format!("cannot build the Host header for the server {target_addr:?}"))
+}
+
+/// Builds the HTTP/1.1 WebSocket upgrade request targeting `target_addr` at `/{path_prefix}/events`.
+///
+/// `headers_file` carries the headers already parsed from `--http-headers-file`, so building a
+/// request (once per redirect hop) does not re-read and re-parse the file.
+///
+/// `policy` says which of the user's headers still apply to this hop (see [`HopPolicy`]).
+fn build_upgrade_request(
+    client_cfg: &ClientConfig,
+    headers_file: &HeadersFile,
+    target_addr: &TransportAddr,
+    path_prefix: &str,
+    request_id: Uuid,
+    dest_addr: &RemoteAddr,
+    policy: HopPolicy,
+) -> anyhow::Result<Request<Empty<Bytes>>> {
+    let host_val = host_header_for(target_addr, client_cfg, policy.keep_pinned_host)?;
     let mut req = Request::builder()
         .method("GET")
-        .uri(format!("/{}/events", client_cfg.http_upgrade_path_prefix))
-        .header(HOST, &client_cfg.http_header_host)
+        .uri(format!("/{}/events", path_prefix))
+        .header(HOST, host_val)
         .header(UPGRADE, "websocket")
         .header(CONNECTION, "upgrade")
         .header(SEC_WEBSOCKET_KEY, fastwebsockets::handshake::generate_key())
@@ -281,51 +351,124 @@ pub async fn connect(
         None => {
             return Err(anyhow!(
                 "failed to build HTTP request to contact the server {:?}. Most likely path_prefix `{}` or http headers is not valid",
-                req.body(Empty::<Bytes>::new()),
-                client_cfg.http_upgrade_path_prefix
+                target_addr,
+                path_prefix
             ));
         }
     };
     for (k, v) in &client_cfg.http_headers {
+        if !policy.allows_header(k) {
+            continue;
+        }
         let _ = headers.remove(k);
         headers.append(k, v.clone());
     }
 
-    if let Some(auth) = &client_cfg.http_upgrade_credentials {
+    if policy.keep_credentials
+        && let Some(auth) = &client_cfg.http_upgrade_credentials
+    {
         let _ = headers.remove(AUTHORIZATION);
         headers.append(AUTHORIZATION, auth.clone());
     }
 
-    if let Some(headers_file_path) = &client_cfg.http_headers_file {
-        let (host, headers_file) = headers_from_file(headers_file_path);
-        for (k, v) in headers_file {
-            let _ = headers.remove(&k);
-            headers.append(k, v);
-        }
-        if let Some((host, val)) = host {
-            let _ = headers.remove(&host);
-            headers.append(host, val);
-        }
-    }
+    headers_file.apply(headers, policy);
 
-    let req = req.body(Empty::<Bytes>::new()).with_context(|| {
-        format!(
-            "failed to build HTTP request to contact the server {:?}",
-            client_cfg.remote_addr
-        )
-    })?;
-    debug!("with HTTP upgrade request {req:?}");
-    let transport = pooled_cnx
-        .take()
-        .and_then(Either::left)
-        .ok_or_else(|| anyhow!("the connection pool did not return a TCP stream"))?;
+    let req = req
+        .body(Empty::<Bytes>::new())
+        .with_context(|| format!("failed to build HTTP request to contact the server {target_addr:?}"))?;
+    Ok(req)
+}
 
-    let (ws, response) = fastwebsockets::handshake::client(&TokioExecutor::new(), req, transport)
+/// Performs a WebSocket handshake over the given `transport` stream, intercepting HTTP 3xx redirects.
+async fn do_websocket_handshake(
+    transport: L4Stream,
+    req: Request<Empty<Bytes>>,
+    executor: &impl crate::TokioExecutorRef,
+) -> anyhow::Result<HopOutcome<(Box<WebSocket<TokioIo<Upgraded>>>, Parts)>> {
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(transport))
         .await
-        .with_context(|| format!("failed to do websocket handshake with the server {:?}", client_cfg.remote_addr))?;
+        .with_context(|| "failed to establish HTTP/1.1 handshake with server")?;
 
-    let (ws_rx, ws_tx) = mk_websocket_tunnel(ws, Role::Client, client_cfg.websocket_mask_frame)?;
-    Ok((ws_rx, ws_tx, response.into_parts().0))
+    executor.spawn(async move {
+        if let Err(err) = conn.with_upgrades().await {
+            debug!("HTTP/1.1 connection driver ended: {err:?}");
+        }
+    });
+
+    let mut response = sender
+        .send_request(req)
+        .await
+        .with_context(|| "failed to send WebSocket upgrade request")?;
+
+    let status = response.status();
+    if status == hyper::StatusCode::SWITCHING_PROTOCOLS {
+        let is_upgrade_ws = response
+            .headers()
+            .get(UPGRADE)
+            .and_then(|h| h.to_str().ok())
+            .map(|h| h.eq_ignore_ascii_case("websocket"))
+            .unwrap_or(false);
+        if !is_upgrade_ws {
+            return Err(anyhow!(
+                "Server responded with 101 Switching Protocols but missing or invalid Upgrade header"
+            ));
+        }
+
+        let is_conn_upgrade = response
+            .headers()
+            .get(CONNECTION)
+            .and_then(|h| h.to_str().ok())
+            .map(|h| h.split(',').any(|part| part.trim().eq_ignore_ascii_case("upgrade")))
+            .unwrap_or(false);
+        if !is_conn_upgrade {
+            return Err(anyhow!(
+                "Server responded with 101 Switching Protocols but missing or invalid Connection header"
+            ));
+        }
+
+        let upgraded = hyper::upgrade::on(&mut response)
+            .await
+            .with_context(|| "failed to upgrade HTTP connection to WebSocket")?;
+        let ws = WebSocket::after_handshake(TokioIo::new(upgraded), Role::Client);
+        Ok(HopOutcome::Connected((Box::new(ws), response.into_parts().0)))
+    } else if status.is_redirection() {
+        // The chain logic reads `Location` (and, later, cache directives) from these headers.
+        Ok(HopOutcome::Redirect {
+            status,
+            headers: response.headers().clone(),
+        })
+    } else {
+        // The reply body is never parsed by wstunnel: the status is what matters, and the caller
+        // reports it with the server URL. Reading it would make this path wait for a body that a
+        // misbehaving server may never finish (there is no timeout around the handshake) and would
+        // buffer whatever it does send. Drop it and let the connection go.
+        Err(anyhow!("WebSocket handshake rejected by server with status {status}"))
+    }
+}
+
+/// Connect to a remote wstunnel server over WebSocket, following HTTP 3xx redirects if encountered.
+pub async fn connect(
+    request_id: Uuid,
+    client: &Client<impl crate::TokioExecutorRef>,
+    dest_addr: &RemoteAddr,
+) -> anyhow::Result<(WebsocketTransportRead, WebsocketTransportWrite, Parts)> {
+    let client_cfg = &client.config;
+    // Read the headers file once for the whole connection attempt, not once per hop.
+    let headers_file = HeadersFile::load(client_cfg);
+    let headers_file = &headers_file;
+
+    let (ws, parts) = redirect::connect(client, |transport, addr, path_prefix, policy| async move {
+        let req = build_upgrade_request(client_cfg, headers_file, &addr, &path_prefix, request_id, dest_addr, policy)?;
+        debug!("with HTTP upgrade request {req:?}");
+
+        do_websocket_handshake(transport, req, &client.executor)
+            .await
+            .with_context(|| format!("failed to do websocket handshake with the server {addr:?}"))
+    })
+    .await?;
+
+    let (ws_rx, ws_tx) = mk_websocket_tunnel(*ws, Role::Client, client_cfg.websocket_mask_frame)?;
+    Ok((ws_rx, ws_tx, parts))
 }
 
 pub fn mk_websocket_tunnel(
@@ -368,4 +511,143 @@ pub fn mk_websocket_tunnel(
     let in_flight_ping = Arc::new(AtomicUsize::new(0));
     let (ws_rx, pending_ops) = WebsocketTransportRead::new(ws_rx, in_flight_ping.clone());
     Ok((ws_rx, WebsocketTransportWrite::new(ws_tx, pending_ops, in_flight_ping)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DnsResolver;
+    use crate::SoMark;
+    use crate::tunnel::transport::TransportScheme;
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use url::Host;
+
+    fn make_test_cfg(custom_host: Option<&str>) -> ClientConfig {
+        ClientConfig {
+            remote_addr: TransportAddr::new(
+                TransportScheme::Ws,
+                Host::Domain("d1.example.com".to_string()),
+                8080,
+                None,
+            )
+            .unwrap(),
+            socket_so_mark: SoMark::new(None),
+            http_upgrade_path_prefix: "v1".to_string(),
+            http_upgrade_credentials: None,
+            http_headers: HashMap::new(),
+            http_headers_file: None,
+            custom_http_header_host: custom_host.map(|h| HeaderValue::from_str(h).unwrap()),
+            timeout_connect: Duration::from_secs(10),
+            websocket_ping_frequency: None,
+            websocket_mask_frame: false,
+            dns_resolver: DnsResolver::System,
+            http_proxy: None,
+            webtransport: None,
+            max_redirects: 5,
+            forward_credentials_on_redirect: false,
+            tls_verify_certificate: false,
+        }
+    }
+
+    #[test]
+    fn test_host_header_pinned_while_host_is_unchanged() {
+        let cfg = make_test_cfg(Some("custom.example.com"));
+
+        // The configured host uses the pinned header
+        let host_initial = host_header_for(&cfg.remote_addr, &cfg, true).unwrap();
+        assert_eq!(host_initial.to_str().unwrap(), "custom.example.com");
+
+        // Same host on another port is still the service the pin was meant for
+        let other_port =
+            TransportAddr::new(TransportScheme::Ws, Host::Domain("d1.example.com".to_string()), 9090, None).unwrap();
+        assert_eq!(
+            host_header_for(&other_port, &cfg, true).unwrap().to_str().unwrap(),
+            "custom.example.com"
+        );
+
+        // Another host derives the header from the address being dialed
+        let other_host =
+            TransportAddr::new(TransportScheme::Ws, Host::Domain("d2.example.com".to_string()), 9090, None).unwrap();
+        assert_eq!(
+            host_header_for(&other_host, &cfg, false).unwrap().to_str().unwrap(),
+            "d2.example.com:9090"
+        );
+    }
+
+    #[test]
+    fn test_host_header_auto_derived_when_no_custom_host() {
+        let cfg = make_test_cfg(None);
+        let initial_addr = cfg.remote_addr.clone();
+        let host_initial = host_header_for(&initial_addr, &cfg, true).unwrap();
+        assert_eq!(host_initial.to_str().unwrap(), "d1.example.com:8080");
+    }
+
+    #[test]
+    fn test_host_header_elides_default_port() {
+        let mut cfg = make_test_cfg(None);
+        cfg.remote_addr =
+            TransportAddr::new(TransportScheme::Ws, Host::Domain("d1.example.com".to_string()), 80, None).unwrap();
+
+        let host_initial = host_header_for(&cfg.remote_addr, &cfg, true).unwrap();
+        assert_eq!(host_initial.to_str().unwrap(), "d1.example.com");
+    }
+
+    #[test]
+    fn test_headers_file_is_parsed_once_and_reused() {
+        let path = std::env::temp_dir().join(format!("wstunnel-headers-{}.txt", std::process::id()));
+        std::fs::write(&path, "Host: pinned.example.com\nX-Extra: 1\n").unwrap();
+
+        let mut cfg = make_test_cfg(None);
+        cfg.http_headers_file = Some(path.clone());
+
+        // Parsed once for the whole connection attempt...
+        let headers_file = HeadersFile::load(&cfg);
+        // ...and the file is gone before any request is built, so a builder that re-read it per hop
+        // would silently send no file headers at all.
+        std::fs::remove_file(&path).unwrap();
+
+        let dest = crate::tunnel::RemoteAddr {
+            protocol: crate::tunnel::LocalProtocol::Tcp { proxy_protocol: false },
+            host: Host::Domain("target.invalid".to_string()),
+            port: 22,
+        };
+        let redirected =
+            TransportAddr::new(TransportScheme::Ws, Host::Domain("d2.example.com".to_string()), 9090, None).unwrap();
+
+        // The first hop is the configured server (same host and origin); the second is another host,
+        // so only the non-sensitive file headers should survive it.
+        let keep_all = HopPolicy {
+            keep_pinned_host: true,
+            keep_credentials: true,
+        };
+        let keep_nothing = HopPolicy {
+            keep_pinned_host: false,
+            keep_credentials: false,
+        };
+        let initial = build_upgrade_request(
+            &cfg,
+            &headers_file,
+            &cfg.remote_addr.clone(),
+            "v1",
+            Uuid::new_v4(),
+            &dest,
+            keep_all,
+        )
+        .unwrap();
+        let second_hop =
+            build_upgrade_request(&cfg, &headers_file, &redirected, "v1", Uuid::new_v4(), &dest, keep_nothing).unwrap();
+
+        for req in [&initial, &second_hop] {
+            assert_eq!(
+                req.headers().get("x-extra").and_then(|v| v.to_str().ok()),
+                Some("1"),
+                "file headers must be reused from the parsed copy"
+            );
+        }
+        assert_eq!(
+            initial.headers().get(HOST).and_then(|v| v.to_str().ok()),
+            Some("pinned.example.com")
+        );
+    }
 }
