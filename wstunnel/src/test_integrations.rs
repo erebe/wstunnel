@@ -800,6 +800,67 @@ async fn test_tcp_tunnel_websocket_redirect_301(
 }
 
 #[rstest]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_tcp_tunnel_websocket_redirect_to_empty_prefix(
+    server_no_tls: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let (tunnel_listen, tunnel_host) = free_addr();
+    let (endpoint_listen, endpoint_host) = free_addr();
+
+    let server_port = server_no_tls.config.bind.port();
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    // The target serves the upgrade on "/events", i.e. with an empty path prefix ("//events" on the
+    // wire). A redirect to "/events" must be followed literally instead of being read as "keep the
+    // configured prefix".
+    let redirect_target = Arc::new(parking_lot::RwLock::new(format!("ws://127.0.0.1:{server_port}/events")));
+    let (redirect_addr, redirect_h) = start_redirect_server(301, redirect_target).await;
+    defer! { redirect_h.abort(); };
+
+    // The client itself is configured with the default "wstunnel" prefix.
+    let client_ws = client_ws_with_redirects(redirect_addr.port(), 5, dns_resolver.clone()).await;
+
+    let server = TcpDownstreamListener::new(tunnel_listen, (endpoint_host, endpoint_listen.port()), false)
+        .await
+        .unwrap();
+    let client_ws_clone = client_ws.clone();
+    tokio::spawn(async move {
+        client_ws_clone.run_tunnel(server).await.unwrap();
+    });
+
+    let mut tcp_listener = protocols::tcp::run_server(endpoint_listen, false).await.unwrap();
+
+    let mut client = protocols::tcp::connect(
+        &tunnel_host,
+        tunnel_listen.port(),
+        SoMark::new(None),
+        Duration::from_secs(10),
+        &dns_resolver,
+    )
+    .await
+    .unwrap();
+
+    client.write_all(b"Hello 0pfx").await.unwrap();
+    let mut dd = tcp_listener.next().await.unwrap().unwrap();
+    let mut buf = BytesMut::new();
+    dd.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..10], b"Hello 0pfx");
+    buf.clear();
+
+    dd.write_all(b"world 0pfx").await.unwrap();
+    client.read_buf(&mut buf).await.unwrap();
+    assert_eq!(&buf[..10], b"world 0pfx");
+
+    // The redirect target was accepted with the empty prefix, and that is what got cached.
+    assert_eq!(client_ws.active_target().path_prefix, "");
+}
+
+#[rstest]
 #[timeout(Duration::from_secs(20))]
 #[tokio::test]
 #[serial]

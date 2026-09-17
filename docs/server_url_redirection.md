@@ -60,6 +60,30 @@ flowchart TD
 - **Subsequent Connections:** Query the canonical server URL again, ensuring dynamic redirects (such as rotating NAT ports) are continually re-evaluated.
 - **Mixed Chains:** If any hop in a redirect chain is temporary (`302` or `307`), the entire chain is marked temporary and not cached.
 
+### 2.3 Resolving the redirect target
+
+The `Location` value is resolved against the URL currently being dialed (`{scheme}://{host}:{port}/{prefix}/events`)
+following RFC 3986, so absolute URLs, protocol-relative references (`//host/...`), absolute paths and
+relative paths all work. Default ports are filled in from the scheme (80 for `ws`/`http`, 443 for
+`wss`/`https`), and the scheme is translated per RFC 6455 (`http` → `ws`, `https` → `wss`) while
+keeping the transport family the client was started with: a websocket client stays on websocket, an
+HTTP/2 client stays on HTTP/2.
+
+The path prefix for the next hop is derived from the resolved path:
+
+| Resolved path | Prefix used | Wire path |
+| :--- | :--- | :--- |
+| absent, `/` | unchanged (configured prefix) | `/{configured}/events` |
+| `/v2/events` | `v2` | `/v2/events` |
+| `/events` | empty | `//events` |
+| `/v2` | `v2` | `/v2/events` |
+| `/v2/events/` | `v2` | `/v2/events` |
+
+Trailing slashes are ignored. Note the difference between "no path" (the target host is the same
+service, so the configured prefix is kept) and an explicit `/events`, which means the target serves
+the upgrade with an empty prefix — that is spelled `//events` on the wire, which is what a client
+configured with `-P ""` sends today.
+
 ---
 
 ## 3. Configuration & CLI Options

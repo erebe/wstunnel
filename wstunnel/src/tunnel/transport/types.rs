@@ -329,20 +329,20 @@ impl TransportAddr {
             TransportScheme::Wss | TransportScheme::Https | TransportScheme::Wts => 443,
         });
 
-        // Determine path prefix:
-        // - If redirect path is empty or "/", preserve existing prefix (e.g. server host redirect)
-        // - If redirect path ends with "/events", extract prefix preceding it (e.g. "/v2/events" -> "v2")
-        // - Otherwise, extract non-empty path segment as prefix
-        let path = new_url.path();
-        let new_prefix = if path.is_empty() || path == "/" {
+        // Determine the path prefix from the redirect target. Trailing slashes are ignored, so
+        // "/v2/events/" resolves like "/v2/events".
+        // - No path at all ("/" or empty) carries no prefix information, so the configured prefix
+        //   is kept (the common "same path, different host/port" redirect).
+        // - A path ending in "/events" is the upgrade path itself, so the prefix is whatever
+        //   precedes it. Note that this includes the empty prefix: "/events" means the target
+        //   server expects the upgrade on "//events" (that is how the empty prefix is spelled on
+        //   the wire, see `extract_path_prefix` server side), which is *not* the same as "no path".
+        // - Anything else is taken as the prefix itself, so a redirect to "/v2" still works.
+        let path = new_url.path().trim_end_matches('/');
+        let new_prefix = if path.is_empty() {
             current_path_prefix.to_string()
         } else if let Some(stripped) = path.strip_suffix("/events") {
-            let p = stripped.trim_matches('/');
-            if p.is_empty() {
-                current_path_prefix.to_string()
-            } else {
-                p.to_string()
-            }
+            stripped.trim_matches('/').to_string()
         } else {
             let p = path.trim_matches('/');
             if p.is_empty() {
@@ -449,6 +449,40 @@ mod tests {
         assert_eq!(new_addr.port(), 80);
         assert_eq!(new_prefix, "v2");
         assert!(matches!(new_addr.scheme(), TransportScheme::Ws));
+    }
+
+    #[test]
+    fn test_resolve_redirect_path_prefix() {
+        let addr = TransportAddr::Ws {
+            scheme: TransportScheme::Ws,
+            host: Host::Domain("d1.example.com".to_string()),
+            port: 80,
+        };
+        let prefix_for = |location: &str| {
+            let mut visited = HashSet::new();
+            addr.resolve_redirect("v1", location, &mut visited, false).unwrap().1
+        };
+
+        // No path carries no information: keep the configured prefix
+        assert_eq!(prefix_for("/"), "v1");
+        assert_eq!(prefix_for("ws://d2.example.com"), "v1");
+        assert_eq!(prefix_for("https://d2.example.com:8443"), "v1");
+
+        // "/events" is the upgrade path itself, i.e. the empty prefix, not "no path"
+        assert_eq!(prefix_for("/events"), "");
+        assert_eq!(prefix_for("ws://d2.example.com//events"), "");
+
+        // The prefix preceding "/events" is extracted, with or without a trailing slash
+        assert_eq!(prefix_for("/v2/events"), "v2");
+        assert_eq!(prefix_for("/v2/events/"), "v2");
+        assert_eq!(prefix_for("/a/b/events"), "a/b");
+        // A protocol-relative reference carries the host, not the empty prefix
+        assert_eq!(prefix_for("//d2.example.com/v2/events"), "v2");
+        assert_eq!(prefix_for("//d2.example.com/events"), "");
+
+        // A path without the "/events" suffix is taken as the prefix itself
+        assert_eq!(prefix_for("/v2"), "v2");
+        assert_eq!(prefix_for("/v2/"), "v2");
     }
 
     #[test]
