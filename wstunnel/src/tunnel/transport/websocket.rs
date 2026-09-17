@@ -470,6 +470,8 @@ async fn do_connect(
         // Therefore, pooled connections can only be utilized on the initial attempt (redirect_count == 0)
         // when dialing the canonical address. All redirected hops or connections to an updated active_target
         // deliberately bypass the pool and establish a fresh L4 connection directly to the destination.
+        // Trade-off (redirected tunnels are not pre-warmed, the pool keeps filling the canonical
+        // URL): see "Connection pooling and redirects" in docs/server_url_redirection.md.
         let transport = if can_use_pool && redirect_count == 0 {
             let mut pooled_cnx = match client.cnx_pool.get().await {
                 Ok(cnx) => Ok(cnx),

@@ -84,6 +84,56 @@ service, so the configured prefix is kept) and an explicit `/events`, which mean
 the upgrade with an empty prefix — that is spelled `//events` on the wire, which is what a client
 configured with `-P ""` sends today.
 
+### 2.4 Connection pooling and redirects
+
+The client keeps a pool of pre-warmed Layer 4 connections so that establishing a tunnel does not pay
+a TCP + TLS handshake every time (`-c` / `--connection-min-idle`, default `0`; connections have a
+30 s maximum lifetime and the pool reaper tops the idle set back up). The pool's manager is built
+from the configured server URL and always dials that address, so a pooled connection only ever
+points at the canonical URL.
+
+How the different paths interact with it (websocket and HTTP/2; webtransport has no redirect support
+and keeps its session in the pool instead of taking it):
+
+| Situation | Pool used? |
+| :--- | :--- |
+| First hop of a connection to the canonical URL | yes — one pooled stream is taken for the upgrade request |
+| First hop of a connection to a cached redirect target | no — dialed directly |
+| Any hop after a redirect, even to the same host | no — dialed directly |
+| Connections while a temporary redirect is in play (never cached) | yes — every connection starts at the canonical URL |
+| Retry against the canonical URL after a cached target failed | no — dialed directly, deliberately |
+
+**Why redirected hops bypass the pool.** The pool cannot dial a different address; making it follow
+the active target would mean rebuilding the pool whenever the target changes (and deciding what to do
+when it changes back). Redirection exists to save one round trip, so the simple rule — pool for the
+configured URL, direct dial for everything else — is deliberate. It is also why `connect_l4_stream`
+was extracted: the transports dial one specific address, while the pool is pinned to the configured
+one.
+
+**Consequences worth knowing.**
+
+- *Redirected tunnels are not pre-warmed.* With `-c N > 0`, a direct setup takes a pooled connection
+  and pays no handshake, whereas a setup behind a permanent redirect dials the cached target afresh
+  (TCP + TLS) for every tunnel. "Skips the redirector" removes one HTTP round trip but gives up the
+  warm connection, so under `-c` it is not automatically a latency win. With the default `-c 0` there
+  is no pool to give up and the redirect costs exactly the extra round trip.
+- *The pool keeps warming the configured URL.* After a permanent redirect, the canonical URL is a
+  redirector whose pooled connections are never taken again. Because connections expire after 30 s
+  and the reaper keeps `min_idle` slots filled, `-c N` makes the client keep re-establishing N
+  connections to an address it no longer uses. With `-c 0` nothing is maintained and the point is
+  moot.
+- *The pool is not corrupted by a redirect.* Taking a pooled stream leaves its slot empty and
+  `has_broken` reports it, so the entry is discarded rather than handed out again; the pool refills
+  if it is used later.
+- *The fallback retry dials directly.* When a cached target fails, the client re-resolves from the
+  canonical URL over a fresh connection instead of borrowing a pooled one: after a long-lived
+  redirect those entries may be stale, and a recovery path should not add another way to fail.
+
+Making the pool follow the active target (re-pointing the manager when a permanent redirect is
+cached, invalidating it when the cache is reset) would restore pre-warming for redirected setups. It
+is deliberately out of scope: it changes pool lifecycle, races with in-flight checkouts, and only
+matters as a latency optimisation when `-c` is set.
+
 ---
 
 ## 3. Configuration & CLI Options
