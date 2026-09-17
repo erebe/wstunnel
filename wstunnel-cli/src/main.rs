@@ -26,7 +26,13 @@ pub struct Wstunnel {
     commands: Commands,
 
     /// Disable color output in logs
-    #[arg(long, global = true, verbatim_doc_comment, env = "NO_COLOR")]
+    #[arg(
+        long,
+        global = true,
+        verbatim_doc_comment,
+        env = "NO_COLOR",
+        value_parser = wstunnel::config::parse_boolish_env
+    )]
     no_color: bool,
 
     /// Control the number of threads that will be used.
