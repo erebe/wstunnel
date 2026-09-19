@@ -17,7 +17,7 @@ pub struct TcpUpstreamConnector {
     dns_resolver: DnsResolver,
 }
 
-impl<'a> TcpUpstreamConnector {
+impl TcpUpstreamConnector {
     pub fn new(
         host: Host,
         port: u16,

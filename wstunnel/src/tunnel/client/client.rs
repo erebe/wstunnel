@@ -176,6 +176,7 @@ impl<E: TokioExecutorRef> Client<E> {
         remote_addr: RemoteAddr,
         connector: impl UpstreamConnector,
     ) -> anyhow::Result<()> {
+        const REVERSE_TUNNEL_REPLY_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 5 } else { 30 });
         fn new_reconnect_delay(max_delay: Duration) -> impl FnMut() -> Duration {
             let mut reconnect_delay = Duration::from_secs(1);
 
@@ -197,55 +198,46 @@ impl<E: TokioExecutorRef> Client<E> {
                 id = request_id.to_string(),
                 remote = format!("{}:{}", remote_addr.host, remote_addr.port)
             );
-            // Correctly configure tunnel cfg
-            let (ws_rx, ws_tx, response) = match client.config.remote_addr.scheme() {
-                TransportScheme::Ws | TransportScheme::Wss => {
-                    match tunnel::transport::websocket::connect(request_id, &client, &remote_addr)
-                        .instrument(span.clone())
-                        .await
-                    {
-                        Ok((r, w, response)) => {
-                            (TransportReader::Websocket(r), TransportWriter::Websocket(w), response)
-                        }
-                        Err(err) => {
-                            let reconnect_delay = reconnect_delay();
-                            event!(parent: &span, Level::ERROR, "Retrying in {:?}, cannot connect to remote server: {:?}", reconnect_delay, err);
-                            tokio::time::sleep(reconnect_delay).await;
-                            continue;
-                        }
+            // A reverse request waits for an incoming connection before the server replies.
+            // WebSocket pings have not started yet, so a silently lost request needs a deadline.
+            let connect = async {
+                match client.config.remote_addr.scheme() {
+                    TransportScheme::Ws | TransportScheme::Wss => {
+                        tunnel::transport::websocket::connect(request_id, &client, &remote_addr)
+                            .await
+                            .map(|(r, w, response)| {
+                                (TransportReader::Websocket(r), TransportWriter::Websocket(w), response)
+                            })
                     }
+                    TransportScheme::Http | TransportScheme::Https => {
+                        tunnel::transport::http2::connect(request_id, &client, &remote_addr)
+                            .await
+                            .map(|(r, w, response)| (TransportReader::Http2(r), TransportWriter::Http2(w), response))
+                    }
+                    TransportScheme::Wts => tunnel::transport::webtransport::connect(request_id, &client, &remote_addr)
+                        .await
+                        .map(|(r, w, response)| {
+                            (
+                                TransportReader::WebTransport(Box::new(r)),
+                                TransportWriter::WebTransport(Box::new(w)),
+                                response,
+                            )
+                        }),
                 }
-                TransportScheme::Http | TransportScheme::Https => {
-                    match tunnel::transport::http2::connect(request_id, &client, &remote_addr)
-                        .instrument(span.clone())
-                        .await
-                    {
-                        Ok((r, w, response)) => (TransportReader::Http2(r), TransportWriter::Http2(w), response),
-                        Err(err) => {
-                            let reconnect_delay = reconnect_delay();
-                            event!(parent: &span, Level::ERROR, "Retrying in {:?}, cannot connect to remote server: {:?}", reconnect_delay, err);
-                            tokio::time::sleep(reconnect_delay).await;
-                            continue;
-                        }
-                    }
+            }
+            .instrument(span.clone());
+
+            let (ws_rx, ws_tx, response) = match tokio::time::timeout(REVERSE_TUNNEL_REPLY_TIMEOUT, connect).await {
+                Ok(Ok(tunnel)) => tunnel,
+                Ok(Err(err)) => {
+                    let delay = reconnect_delay();
+                    event!(parent: &span, Level::ERROR, "Retrying in {:?}, cannot connect to remote server: {:?}", delay, err);
+                    tokio::time::sleep(delay).await;
+                    continue;
                 }
-                TransportScheme::Wts => {
-                    match tunnel::transport::webtransport::connect(request_id, &client, &remote_addr)
-                        .instrument(span.clone())
-                        .await
-                    {
-                        Ok((r, w, response)) => (
-                            TransportReader::WebTransport(Box::new(r)),
-                            TransportWriter::WebTransport(Box::new(w)),
-                            response,
-                        ),
-                        Err(err) => {
-                            let reconnect_delay = reconnect_delay();
-                            event!(parent: &span, Level::ERROR, "Retrying in {:?}, cannot connect to remote server: {:?}", reconnect_delay, err);
-                            tokio::time::sleep(reconnect_delay).await;
-                            continue;
-                        }
-                    }
+                Err(_) => {
+                    // Timeout waiting for new reverse tunnel, retrying immediately
+                    continue;
                 }
             };
             reconnect_delay = new_reconnect_delay(self.reverse_tunnel_connection_retry_max_backoff);

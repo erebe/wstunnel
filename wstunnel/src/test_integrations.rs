@@ -9,6 +9,8 @@ use crate::tunnel::client::{Client, ClientConfig, TlsClientConfig};
 use crate::tunnel::downstream_listeners::{Socks5DownstreamListener, TcpDownstreamListener, UdpDownstreamListener};
 use crate::tunnel::server::{Server, ServerConfig, TlsServerConfig};
 use crate::tunnel::transport::{TransportAddr, TransportScheme};
+use crate::tunnel::upstream_connectors::TcpUpstreamConnector;
+use crate::tunnel::{LocalProtocol, RemoteAddr};
 use bytes::BytesMut;
 use futures_util::{Stream, StreamExt};
 use hyper::http::HeaderValue;
@@ -19,10 +21,14 @@ use scopeguard::defer;
 use serial_test::serial;
 use std::collections::{BTreeSet, HashMap};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::pin;
+use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use url::Host;
 
 /// Ports already handed out by [`free_port`] in this process. A port becomes free again as soon
@@ -267,6 +273,168 @@ async fn test_tcp_tunnel(server_no_tls: Server, no_restrictions: RestrictionsRul
     dd.write_all(b"world!").await.unwrap();
     client.read_buf(&mut buf).await.unwrap();
     assert_eq!(&buf[..6], b"world!");
+}
+
+#[rstest]
+#[case(TransportScheme::Ws)]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_reverse_tunnel_timeout_recovers(
+    server_no_tls: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+    #[case] scheme: TransportScheme,
+) {
+    let server_addr = server_no_tls.config.bind;
+    let server_h = tokio::spawn(server_no_tls.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    let proxy = TcpListener::bind(free_addr().0).await.unwrap();
+    let proxy_port = proxy.local_addr().unwrap().port();
+    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+    let proxy_h = tokio::spawn(async move {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let mut connections = JoinSet::new();
+        loop {
+            let (mut downstream, _) = proxy.accept().await.unwrap();
+            let attempts = attempts.clone();
+            let events = events_tx.clone();
+            connections.spawn(async move {
+                let mut buf = [0; 4096];
+                let len = downstream.read(&mut buf).await.unwrap();
+                if len == 0 {
+                    return; // Ignore unused connections from the client's pool.
+                }
+                let attempt = attempts.fetch_add(1, Ordering::SeqCst) + 1;
+                let mut upstream = TcpStream::connect(server_addr).await.unwrap();
+                upstream.write_all(&buf[..len]).await.unwrap();
+                events.send((attempt, "opened")).unwrap();
+                if attempt == 2 {
+                    // Silently stall the next pending request while keeping TCP open.
+                    // Established sessions and later attempts still pass through normally.
+                    while let Ok(len) = downstream.read(&mut buf).await {
+                        if len == 0 {
+                            break;
+                        }
+                    }
+                } else {
+                    let _ = tokio::io::copy_bidirectional(&mut downstream, &mut upstream).await;
+                }
+                drop(upstream);
+                drop(downstream);
+                let _ = events.send((attempt, "closed"));
+            });
+        }
+    });
+    defer! { proxy_h.abort(); };
+
+    let client = client_ws(proxy_port, dns_resolver.clone()).await;
+    let mut config = (*client.config).clone();
+    drop(client);
+    config.remote_addr = TransportAddr::new(scheme, Host::Ipv4(Ipv4Addr::LOCALHOST), proxy_port, None).unwrap();
+    // Avoid unused pooled connections so every connection belongs to one attempt.
+    let client = Client::new(
+        config,
+        0,
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        DefaultTokioExecutor::default(),
+    )
+    .await
+    .unwrap();
+    let endpoint = TcpListener::bind(free_addr().0).await.unwrap();
+    let (reverse_addr, reverse_host) = free_addr();
+    let connector = TcpUpstreamConnector::new(
+        Host::Ipv4(Ipv4Addr::LOCALHOST),
+        endpoint.local_addr().unwrap().port(),
+        SoMark::new(None),
+        Duration::from_secs(1),
+        dns_resolver,
+    );
+    let client_h = tokio::spawn(client.run_reverse_tunnel(
+        RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: reverse_host,
+            port: reverse_addr.port(),
+        },
+        connector,
+    ));
+    defer! { client_h.abort(); };
+
+    assert_eq!(events_rx.recv().await, Some((1, "opened")));
+    // The proxy observes the request just before the server binds the reverse listener.
+    let mut first = loop {
+        match TcpStream::connect(reverse_addr).await {
+            Ok(stream) => break stream,
+            Err(err) if err.kind() == std::io::ErrorKind::ConnectionRefused => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(err) => panic!("Cannot connect to reverse listener: {err}"),
+        }
+    };
+    let (mut first_endpoint, _) = endpoint.accept().await.unwrap();
+
+    assert_eq!(events_rx.recv().await, Some((2, "opened")));
+    // Expiry must close the old TCP connection, not just abandon the handshake future.
+    assert_eq!(events_rx.recv().await, Some((2, "closed")));
+    assert_eq!(events_rx.recv().await, Some((3, "opened")));
+    // Also expire a healthy idle request, to exercise cleanup of the server's waiter.
+    assert_eq!(events_rx.recv().await, Some((3, "closed")));
+    assert_eq!(events_rx.recv().await, Some((4, "opened")));
+
+    first.write_all(b"still alive").await.unwrap();
+    let mut buf = [0; 11];
+    first_endpoint.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"still alive");
+    first_endpoint.write_all(b"still alive").await.unwrap();
+    first.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"still alive");
+
+    // An expired waiter must not consume the new application connection.
+    let mut second = TcpStream::connect(reverse_addr).await.unwrap();
+    let (mut second_endpoint, _) = endpoint.accept().await.unwrap();
+    second.write_all(b"new session").await.unwrap();
+    second_endpoint.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"new session");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(5))]
+#[tokio::test]
+async fn test_reverse_tunnel_timeout_disabled(dns_resolver: DnsResolver) {
+    let server = TcpListener::bind(free_addr().0).await.unwrap();
+    let client = client_ws(server.local_addr().unwrap().port(), dns_resolver.clone()).await;
+    let (reverse_addr, reverse_host) = free_addr();
+    let connector = TcpUpstreamConnector::new(
+        Host::Ipv4(Ipv4Addr::LOCALHOST),
+        free_port(),
+        SoMark::new(None),
+        Duration::from_secs(1),
+        dns_resolver,
+    );
+    let client_h = tokio::spawn(client.run_reverse_tunnel(
+        RemoteAddr {
+            protocol: LocalProtocol::ReverseTcp,
+            host: reverse_host,
+            port: reverse_addr.port(),
+        },
+        connector,
+    ));
+    defer! { client_h.abort(); };
+
+    let (mut pending, _) = server.accept().await.unwrap();
+    let mut request = Vec::new();
+    while !request.ends_with(b"\r\n\r\n") {
+        request.push(pending.read_u8().await.unwrap());
+    }
+    assert!(request.starts_with(b"GET "));
+    // Zero means unlimited waiting, rather than an immediately expired attempt.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), pending.read_u8())
+            .await
+            .is_err()
+    );
 }
 
 #[rstest]
