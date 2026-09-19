@@ -164,9 +164,7 @@ jobs:
 
       - name: Setup Android SDK
         if: contains(matrix.platform.target, 'android')
-        uses: android-actions/setup-android@v3
-        with:
-          packages: ''
+        uses: android-actions/setup-android@v4
 
       - name: Checkout Git repo
         uses: actions/checkout@v3
