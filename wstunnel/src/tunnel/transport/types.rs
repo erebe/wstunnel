@@ -677,6 +677,57 @@ mod tests {
         assert!(new_addr.tls().unwrap().tls_verify_certificate);
     }
 
+    /// A `Location` header is attacker controlled: whatever it contains must produce a value or a
+    /// clean error, never a panic, a hang or a nonsensical target.
+    #[test]
+    fn test_resolve_redirect_tolerates_hostile_locations() {
+        let addr = TransportAddr::Ws {
+            scheme: TransportScheme::Ws,
+            host: Host::Domain("d1.example.com".to_string()),
+            port: 80,
+        };
+        let resolve = |location: &str| {
+            let mut visited = HashSet::new();
+            addr.resolve_redirect("v1", location, &mut visited, false)
+        };
+
+        let mut cases: Vec<String> = vec![
+            "".into(),
+            "   ".into(),
+            "/".into(),
+            "//".into(),
+            "http://".into(),
+            "https:///events".into(),
+            "ftp://d2.example.com/x".into(),
+            "wts://d2.example.com/x".into(),
+            "ws://d2.example.com:99999/x".into(),
+            "https://d2.example.com:0/x".into(),
+            "https://[::1]:65535/x".into(),
+            "/events".into(),
+            "/../events".into(),
+            "/%2Fevents".into(),
+            "/\u{0}/events".into(),
+            "https://user:pass@d2.example.com/v1/events".into(),
+            "https://d2.example.com/v1/events?x=1#frag".into(),
+            "https://d2.example.com/../../../../etc/passwd".into(),
+            "ws:///events".into(),
+        ];
+        cases.push(format!("https://d2.example.com/{}events", "a/".repeat(4000)));
+
+        for location in &cases {
+            // Either outcome is acceptable here as long as it returns.
+            let _ = resolve(location);
+        }
+
+        // A few of them must be rejected with a clear reason.
+        let empty = resolve("").unwrap_err().to_string();
+        assert!(empty.contains("Empty Location header"), "{empty}");
+        let scheme = resolve("ftp://d2.example.com/x").unwrap_err().to_string();
+        assert!(scheme.contains("Unsupported redirect scheme"), "{scheme}");
+        let bad_port = resolve("ws://d2.example.com:99999/x").unwrap_err().to_string();
+        assert!(bad_port.contains("Invalid redirect Location"), "{bad_port}");
+    }
+
     #[test]
     fn test_request_authority_elides_default_ports() {
         fn addr(scheme: TransportScheme, host: Host, port: u16) -> TransportAddr {
