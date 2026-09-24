@@ -509,6 +509,12 @@ impl<E: crate::TokioExecutorRef> Server<E> {
                                 if let Some(ping) = server.config.websocket_ping_frequency {
                                     conn_builder.keep_alive_interval(ping);
                                 }
+                                // Set the flow control window explicitly (the server default of 1 MB is
+                                // not enough to saturate a high RTT link).
+                                // Note: the receive window of the server governs the client -> server throughput.
+                                conn_builder
+                                    .initial_stream_window_size(crate::tunnel::transport::http2::H2_WINDOW_SIZE)
+                                    .initial_connection_window_size(crate::tunnel::transport::http2::H2_WINDOW_SIZE);
 
                                 let http_upgrade_fn =
                                     mk_http_upgrade_fn(server, restrictions, restrict_path, peer_addr);
