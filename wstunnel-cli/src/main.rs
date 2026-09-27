@@ -20,7 +20,7 @@ static GLOBAL: Jemalloc = Jemalloc;
 /// Use Websocket or HTTP2 protocol to tunnel {TCP,UDP} traffic
 /// wsTunnelClient <---> wsTunnelServer <---> RemoteHost
 #[derive(clap::Parser, Debug)]
-#[command(author, version, about, verbatim_doc_comment, long_about = None)]
+#[command(name = "fcon", author, version, about, verbatim_doc_comment, long_about = None)]
 pub struct Wstunnel {
     #[command(subcommand)]
     commands: Commands,
@@ -113,14 +113,14 @@ fn main() -> anyhow::Result<()> {
                     run_client(*args, DefaultTokioExecutor::default())
                         .await
                         .unwrap_or_else(|err| {
-                            panic!("Cannot start wstunnel client: {err:?}");
+                            panic!("Cannot start fcon client: {err:?}");
                         });
                 }
                 Commands::Server(args) => {
                     run_server(*args, DefaultTokioExecutor::default())
                         .await
                         .unwrap_or_else(|err| {
-                            panic!("Cannot start wstunnel server: {err:?}");
+                            panic!("Cannot start fcon server: {err:?}");
                         });
                 }
             }

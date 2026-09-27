@@ -1,5 +1,5 @@
 [package]
-name = "wstunnel-cli"
+name = "fcon"
 version = "11.0.0"
 edition = "2024"
 
@@ -22,5 +22,5 @@ ring = ["wstunnel/ring"]
 aws-lc-rs-bindgen = ["wstunnel/aws-lc-rs-bindgen"]
 
 [[bin]]
-name = "wstunnel"
+name = "fcon"
 path = "src/main.rs"

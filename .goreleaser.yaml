@@ -1,3 +1,4 @@
+project_name: fcon
 builds:
   - goos:
       - linux
@@ -13,7 +14,7 @@ builds:
     goarm:
       - "6"
       - "7"
-    binary: wstunnel
+    binary: fcon
     ignore:
       - goos: windows
         goarch: arm

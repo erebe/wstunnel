@@ -170,7 +170,7 @@ fi
 if (( BUILD )); then
   echo "==> building wstunnel (profile=$PROFILE call-graph=$CALL_GRAPH ${FEATURES[*]:-})"
   [[ -n "${CARGO_ENV[*]:-}" ]] && echo "    with frame pointers, into $TARGET_ROOT/ (first run rebuilds everything)"
-  ${CARGO_ENV[@]+"${CARGO_ENV[@]}"} cargo build -p wstunnel-cli --profile "$PROFILE" \
+  ${CARGO_ENV[@]+"${CARGO_ENV[@]}"} cargo build -p fcon --profile "$PROFILE" \
     --target-dir "$TARGET_ROOT" "${FEATURES[@]}" >/dev/null
 fi
 # cargo puts `dev` in target/debug, not target/dev
@@ -179,7 +179,7 @@ case "$PROFILE" in
   bench)    TARGET_DIR=release ;;
   *)        TARGET_DIR="$PROFILE" ;;
 esac
-WSTUNNEL="$TARGET_ROOT/$TARGET_DIR/wstunnel"
+WSTUNNEL="$TARGET_ROOT/$TARGET_DIR/fcon"
 [[ -x "$WSTUNNEL" ]] || { echo "binary not found: $WSTUNNEL (drop --no-build?)" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------- helpers
