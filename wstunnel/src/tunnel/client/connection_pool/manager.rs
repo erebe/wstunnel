@@ -71,7 +71,7 @@ impl L4StreamManager {
             // the common symptom of a firewall or port mapping that only forwards TCP.
             let handshake = async {
                 let cnx = webtransport
-                    .endpoint
+                    .endpoint_for(*addr)
                     .connect_with(webtransport.config.clone(), *addr, &sni)
                     .with_context(|| format!("cannot start a QUIC connection to {addr}"))?
                     .await
