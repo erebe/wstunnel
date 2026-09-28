@@ -25,6 +25,14 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
+/// Flow control window size, used for both the stream and the connection level.
+///
+/// The HTTP/2 spec default is only 64 KB, and the throughput is bounded by `window / RTT`, so on a
+/// long fat network the tunnel gets stuck in the tens of Mbps. Measured: ~45 Mbps at 154 ms RTT
+/// with the default. Sized from `target throughput * worst expected RTT` and rounded up to 8 MB
+/// (measured: 1 MB is not enough, 8 MB plateaus, 32 MB brings no further gain).
+pub const H2_WINDOW_SIZE: u32 = 8 * 1024 * 1024;
+
 pub struct Http2TransportRead {
     inner: BodyStream<Incoming>,
     cnx_poller: Option<AbortHandle>,
@@ -206,12 +214,17 @@ pub async fn connect(
         .take()
         .and_then(Either::left)
         .ok_or_else(|| anyhow!("the connection pool did not return a TCP stream"))?;
-    let (mut request_sender, cnx) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
+    let mut h2_builder = hyper::client::conn::http2::Builder::new(TokioExecutor::new());
+    h2_builder
         .timer(TokioTimer::new())
-        .adaptive_window(true)
         .keep_alive_interval(client.config.websocket_ping_frequency)
         .keep_alive_timeout(Duration::from_secs(10))
         .keep_alive_while_idle(false)
+        // Set the flow control window explicitly. Do NOT enable adaptive_window(true) alongside it:
+        // it overrides these values and forces the window back to the 64 KB spec default.
+        .initial_stream_window_size(H2_WINDOW_SIZE)
+        .initial_connection_window_size(H2_WINDOW_SIZE);
+    let (mut request_sender, cnx) = h2_builder
         .handshake(TokioIo::new(transport))
         .await
         .with_context(|| format!("failed to do http2 handshake with the server {:?}", client.config.remote_addr))?;
