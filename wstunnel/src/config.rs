@@ -250,6 +250,7 @@ pub struct ClientCreationRequest {
             long,
             default_value = "false",
             env = "WSTUNNEL_DNS_PREFER_IPV4",
+            value_parser = parse_boolish_env,
             verbatim_doc_comment
         )
     )]
@@ -322,6 +323,7 @@ pub struct ServerCreationRequest {
             long,
             default_value = "false",
             env = "WSTUNNEL_DNS_PREFER_IPV4",
+            value_parser = parse_boolish_env,
             verbatim_doc_comment
         )
     )]
@@ -431,6 +433,25 @@ pub struct LocalToRemote {
 }
 
 #[cfg(feature = "clap")]
+/// Value parser for boolean flags that can also be set through the environment.
+///
+/// clap's default parser only accepts the literals `true` and `false`, so the usual spellings were
+/// rejected: `NO_COLOR=1` (the value the NO_COLOR convention documents, and the one shown in the
+/// generated help) and `WSTUNNEL_DNS_PREFER_IPV4=0` both aborted with "invalid value", while an
+/// environment variable that is set but empty (`NO_COLOR=`, which the convention says to ignore)
+/// aborted with "a value is required". An empty value is treated as unset here.
+#[cfg(feature = "clap")]
+pub fn parse_boolish_env(arg: &str) -> Result<bool, std::io::Error> {
+    match arg.trim().to_ascii_lowercase().as_str() {
+        "" | "0" | "n" | "no" | "f" | "false" | "off" => Ok(false),
+        "1" | "y" | "yes" | "t" | "true" | "on" => Ok(true),
+        other => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("cannot parse boolean from {other}"),
+        )),
+    }
+}
+
 mod parsers {
     use super::LocalToRemote;
     use crate::tunnel::LocalProtocol;
