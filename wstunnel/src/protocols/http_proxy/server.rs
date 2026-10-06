@@ -47,13 +47,21 @@ fn handle_http_connect_request(
         *dest.lock() = Some(forward_to);
         Ok(Response::builder().status(200).body(Empty::new()).unwrap())
     };
-    fn err_response() -> Result<Response<Empty<Bytes>>, &'static str> {
+    fn bad_request(reason: &'static str) -> Result<Response<Empty<Bytes>>, &'static str> {
+        info!("{reason}");
+        Ok(Response::builder().status(400).body(Empty::new()).unwrap())
+    }
+    fn proxy_auth_required() -> Result<Response<Empty<Bytes>>, &'static str> {
         info!("Un-authorized connection to http proxy");
-        Ok(Response::builder().status(401).body(Empty::new()).unwrap())
+        Ok(Response::builder()
+            .status(407)
+            .header(hyper::header::PROXY_AUTHENTICATE, "Basic realm=\"wstunnel\"")
+            .body(Empty::new())
+            .unwrap())
     }
 
     if req.method() != hyper::Method::CONNECT {
-        return future::ready(err_response());
+        return future::ready(bad_request("Bad HTTP method for http proxy"));
     }
 
     debug!("HTTP Proxy CONNECT request to {}", req.uri());
@@ -62,7 +70,7 @@ fn handle_http_connect_request(
         .map(|h| (h, req.uri().port_u16().unwrap_or(443)));
 
     let Some(forward_to) = forward_to else {
-        return future::ready(err_response());
+        return future::ready(bad_request("Bad CONNECT target for http proxy"));
     };
 
     let header = req
@@ -71,7 +79,7 @@ fn handle_http_connect_request(
         .and_then(|h| h.to_str().ok());
 
     if !verify_credentials(credentials, &header) {
-        return future::ready(err_response());
+        return future::ready(proxy_auth_required());
     }
 
     future::ready(ok_response(forward_to))
@@ -294,14 +302,37 @@ mod tests {
 
     #[rstest]
     // No host available, it should fail
-    #[case("CONNECT / HTTP/1.0\r\n\r\n", None, None)]
-    #[case("CONNECT google.com:80 HTTP/1.1\r\n\r\n", None, Some((Host::Domain("google.com".to_string()), 80)))]
-    #[case("CONNECT google.com HTTP/1.1\r\n\r\n", None, Some((Host::Domain("google.com".to_string()), 443)))]
-    #[case("CONNECT google.com HTTP/1.1\r\nProxy-Authorization: Basic toto\r\n\r\n", Some("toto"), Some((Host::Domain("google.com".to_string()), 443)))]
+    #[case("CONNECT / HTTP/1.0\r\n\r\n", None, None, "HTTP/1.0 400 Bad Request\r\n")]
+    #[case(
+        "CONNECT google.com:80 HTTP/1.1\r\n\r\n",
+        None,
+        Some((Host::Domain("google.com".to_string()), 80)),
+        "HTTP/1.1 200 OK\r\n"
+    )]
+    #[case(
+        "CONNECT google.com HTTP/1.1\r\n\r\n",
+        None,
+        Some((Host::Domain("google.com".to_string()), 443)),
+        "HTTP/1.1 200 OK\r\n"
+    )]
+    #[case(
+        "CONNECT google.com HTTP/1.1\r\nProxy-Authorization: Basic toto\r\n\r\n",
+        Some("toto"),
+        Some((Host::Domain("google.com".to_string()), 443)),
+        "HTTP/1.1 200 OK\r\n"
+    )]
     #[case(
         "CONNECT google.com HTTP/1.0\r\nProxy-Authorization: Basic toto\r\n\r\n",
         Some("tata"),
-        None
+        None,
+        "HTTP/1.0 407 Proxy Authentication Required\r\n"
+    )]
+    // Credentials configured, but no Proxy-Authorization header
+    #[case(
+        "CONNECT google.com HTTP/1.0\r\n\r\n",
+        Some("toto"),
+        None,
+        "HTTP/1.0 407 Proxy Authentication Required\r\n"
     )]
     #[timeout(Duration::from_secs(10))]
     #[tokio::test]
@@ -311,6 +342,7 @@ mod tests {
         #[case] input: impl AsRef<[u8]>,
         #[case] auth: Option<&str>,
         #[case] expected_result: Option<(Host, u16)>,
+        #[case] expected_status: &str,
     ) {
         let (mut client, stream) = connected_client;
         let auth_header = auth.map(|x| x.to_string());
@@ -323,10 +355,13 @@ mod tests {
 
         let mut buf = Vec::with_capacity(1024);
         client.read_to_end(&mut buf).await.unwrap();
-        if expected_result.is_some() {
-            assert_eq!(String::from_utf8_lossy(&buf)[..17], *"HTTP/1.1 200 OK\r\n");
+        let response = String::from_utf8_lossy(&buf);
+        assert_eq!(&response[..expected_status.len()], expected_status);
+        let response_lower = response.to_ascii_lowercase();
+        if expected_status.contains("407") {
+            assert!(response_lower.contains("proxy-authenticate: basic realm=\"wstunnel\""));
         } else {
-            assert_eq!(String::from_utf8_lossy(&buf)[..27], *"HTTP/1.0 401 Unauthorized\r\n");
+            assert!(!response_lower.contains("proxy-authenticate"));
         }
     }
 }
