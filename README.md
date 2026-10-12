@@ -89,6 +89,7 @@ curl -k https://localhost:4443
 ## Command line <a name="cmd"></a>
 
 ```
+CLIENT
 Usage: wstunnel client [OPTIONS] <ws[s]|http[s]|wts://wstunnel.server.com[:port]>
 
 Arguments:
@@ -415,6 +416,137 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+```
+
+```
+RUN
+Usage: wstunnel run [OPTIONS]
+
+Run multiple tunnels concurrently managed by a configuration file (TOML or YAML)
+
+Options:
+      --config <CONFIG_PATH>
+          Path to the configuration file (TOML or YAML)
+          [default: config.yaml]
+
+      --no-color
+          Disable color output in logs
+          [env: NO_COLOR=]
+
+      --nb-worker-threads <INT>
+          Control the number of threads that will be used.
+          By default, it is equal the number of cpus
+          [env: TOKIO_WORKER_THREADS=]
+
+      --log-lvl <LOG_LEVEL>
+          Control the log verbosity. i.e: TRACE, DEBUG, INFO, WARN, ERROR, OFF
+          for more details: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#example-syntax
+          [env: RUST_LOG=]
+          [default: INFO]
+
+  -h, --help
+          Print help
+```
+
+### Configuration file (for `run` command) <a name="config-file"></a>
+
+The `run` subcommand starts multiple client and/or server tunnels simultaneously using a single TOML or YAML configuration file.
+
+#### Global Settings
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `log_lvl` | String | `"INFO"` | Log verbosity (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `OFF`) |
+| `no_color` | Boolean | `false` | Disable color output in logs |
+| `nb_worker_threads` | Integer | (Number of CPUs) | Tokio worker thread count |
+| `tunnels` | List | (Required) | List of tunnels to run concurrently |
+
+#### Tunnel Formats
+
+Each entry in the `tunnels` list can be specified in either of two ways:
+
+1. **Structured format (Table / Mapping)**:
+   - For a client tunnel: `client = "<URL>"` with sibling options as key-value pairs.
+   - For a server tunnel: `server = "<URL>"` with sibling options as key-value pairs.
+   - Option names support both `snake_case` (e.g. `local_to_remote`) and `kebab-case` (e.g. `local-to-remote`).
+   - Repeatable options (like `-L`, `-R`, `--restrict-to`) accept an array of values.
+   - Boolean flags (like `--tls-verify-certificate`, `--enable-webtransport`) accept `true` / `false`.
+
+2. **Command string format**:
+   - Provide the complete command-line string as you would in the terminal (e.g. `"client -L tcp://1212:google.com:443 wss://my.server.com"`).
+
+#### Configuration Examples
+
+##### YAML (`config.yaml`)
+
+```yaml
+log_lvl: INFO
+no_color: false
+nb_worker_threads: 4
+
+tunnels:
+  # Structured client tunnel
+  - client: wss://wstunnel.example.com:443
+    local_to_remote:
+      - tcp://1212:google.com:443
+      - udp://1214:1.1.1.1:53
+      - socks5://127.0.0.1:1080
+    connection_min_idle: 2
+    tls_verify_certificate: true
+
+  # Structured server tunnel
+  - server: wss://0.0.0.0:8080
+    restrict_to:
+      - google.com:443
+      - localhost:22
+    websocket_ping_frequency: 30s
+
+  # Raw CLI command string
+  - "client -L tcp://8080:localhost:80 wss://wstunnel.example.com:443"
+```
+
+##### TOML (`config.toml`)
+
+```toml
+log_lvl = "INFO"
+no_color = false
+nb_worker_threads = 4
+
+# Structured client tunnel
+[[tunnels]]
+client = "wss://wstunnel.example.com:443"
+local_to_remote = [
+    "tcp://1212:google.com:443",
+    "udp://1214:1.1.1.1:53",
+    "socks5://127.0.0.1:1080",
+]
+connection_min_idle = 2
+tls_verify_certificate = true
+
+# Structured server tunnel
+[[tunnels]]
+server = "wss://0.0.0.0:8080"
+restrict_to = [
+    "google.com:443",
+    "localhost:22",
+]
+websocket_ping_frequency = "30s"
+```
+
+Or using raw command strings in TOML:
+
+```toml
+tunnels = [
+    "client -L tcp://1212:google.com:443 wss://wstunnel.example.com:443",
+    "server --restrict-to google.com:443 wss://0.0.0.0:8080",
+]
+```
+
+Run with your config file:
+```bash
+wstunnel run --config config.yaml
+# or with TOML
+wstunnel run --config config.toml
 ```
 
 ## Release <a name="release"></a>

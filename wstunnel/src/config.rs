@@ -256,7 +256,7 @@ pub struct ClientCreationRequest {
     pub dns_resolver_prefer_ipv4: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
 pub struct ServerCreationRequest {
     /// Address of the wstunnel server to bind to

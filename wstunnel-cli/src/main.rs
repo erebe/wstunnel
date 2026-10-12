@@ -1,4 +1,5 @@
-use clap::Parser;
+mod config;
+
 use std::io;
 use std::str::FromStr;
 use tracing::warn;
@@ -57,10 +58,13 @@ pub struct Wstunnel {
 pub enum Commands {
     Client(Box<ClientCreationRequest>),
     Server(Box<ServerCreationRequest>),
+    Run(Box<config::RunArgs>),
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Wstunnel::parse();
+    let Some((args, config, tunnels)) = crate::config::Config::parse_args()? else {
+        return Ok(());
+    };
 
     // Setup logging
     let mut env_filter = EnvFilter::builder().parse(&args.log_lvl).expect("Invalid log level");
@@ -84,6 +88,8 @@ fn main() -> anyhow::Result<()> {
         } else {
             logger.init()
         }
+    } else if config.as_ref().is_some_and(|v| v.use_stdio) {
+        logger.with_writer(io::stderr).init();
     } else {
         logger.init();
     };
@@ -122,6 +128,13 @@ fn main() -> anyhow::Result<()> {
                         .unwrap_or_else(|err| {
                             panic!("Cannot start wstunnel server: {err:?}");
                         });
+                }
+                Commands::Run(_) => {
+                    if let Some(config) = config {
+                        config.run(tunnels).await.unwrap_or_else(|err| {
+                            panic!("Cannot run wstunnel: {err:?}");
+                        });
+                    }
                 }
             }
         };
