@@ -51,6 +51,16 @@ fn handle_http_connect_request(
         info!("Un-authorized connection to http proxy");
         Ok(Response::builder().status(401).body(Empty::new()).unwrap())
     }
+    // RFC 7235 §3.2: a proxy asks for credentials with a 407 carrying a challenge,
+    // so clients that wait for it before sending Proxy-Authorization can authenticate
+    fn proxy_auth_required_response() -> Result<Response<Empty<Bytes>>, &'static str> {
+        info!("Un-authorized connection to http proxy");
+        Ok(Response::builder()
+            .status(hyper::StatusCode::PROXY_AUTHENTICATION_REQUIRED)
+            .header(hyper::header::PROXY_AUTHENTICATE, "Basic realm=\"wstunnel\"")
+            .body(Empty::new())
+            .unwrap())
+    }
 
     if req.method() != hyper::Method::CONNECT {
         return future::ready(err_response());
@@ -71,7 +81,7 @@ fn handle_http_connect_request(
         .and_then(|h| h.to_str().ok());
 
     if !verify_credentials(credentials, &header) {
-        return future::ready(err_response());
+        return future::ready(proxy_auth_required_response());
     }
 
     future::ready(ok_response(forward_to))
@@ -303,6 +313,8 @@ mod tests {
         Some("tata"),
         None
     )]
+    // Credentials expected but none sent, the client must be challenged
+    #[case("CONNECT google.com HTTP/1.0\r\n\r\n", Some("toto"), None)]
     #[timeout(Duration::from_secs(10))]
     #[tokio::test]
     #[awt]
@@ -323,10 +335,18 @@ mod tests {
 
         let mut buf = Vec::with_capacity(1024);
         client.read_to_end(&mut buf).await.unwrap();
+        let response = String::from_utf8_lossy(&buf);
         if expected_result.is_some() {
-            assert_eq!(String::from_utf8_lossy(&buf)[..17], *"HTTP/1.1 200 OK\r\n");
+            assert_eq!(response[..17], *"HTTP/1.1 200 OK\r\n");
+        } else if auth.is_some() {
+            assert_eq!(response[..44], *"HTTP/1.0 407 Proxy Authentication Required\r\n");
+            assert!(
+                response
+                    .to_ascii_lowercase()
+                    .contains("\r\nproxy-authenticate: basic realm=\"wstunnel\"\r\n")
+            );
         } else {
-            assert_eq!(String::from_utf8_lossy(&buf)[..27], *"HTTP/1.0 401 Unauthorized\r\n");
+            assert_eq!(response[..27], *"HTTP/1.0 401 Unauthorized\r\n");
         }
     }
 }
