@@ -55,11 +55,7 @@ pub async fn run_server() -> Result<((impl AsyncRead, tokio::io::DuplexStream), 
             });
             let mut stdout = io::stdout().lock();
             let mut buf = [0u8; 65536];
-            loop {
-                let Ok(n) = recv.read(&mut buf).await else {
-                    break;
-                };
-
+            while let Ok(n) = recv.read(&mut buf).await {
                 if n == 0 {
                     break;
                 }

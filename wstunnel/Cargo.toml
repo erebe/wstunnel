@@ -39,7 +39,6 @@ notify = { version = "8.2.0", features = [] }
 httparse = { version = "1.10.1", features = [] }
 
 rustls-native-certs = { version = "0.8.4", features = [] }
-rustls-pemfile = { version = "2.2.0", features = [] }
 # WebTransport (HTTP/3 over QUIC) transport. Takes our own rustls config, so the
 # crypto provider follows from the aws-lc-rs/ring features below. Re-exports quinn.
 # Its default feature is aws-lc-rs, which would pull aws-lc-sys into the ring builds.

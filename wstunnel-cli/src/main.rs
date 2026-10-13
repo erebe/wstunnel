@@ -17,8 +17,8 @@ use tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
-/// Use Websocket or HTTP2 protocol to tunnel {TCP,UDP} traffic
-/// wsTunnelClient <---> wsTunnelServer <---> RemoteHost
+/// Tunnel TCP/UDP over WebSocket, HTTP/2, or WebTransport (QUIC).
+/// UDP defaults to reliable streams; opt in with ?transport=datagram on a wts:// server.
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, verbatim_doc_comment, long_about = None)]
 pub struct Wstunnel {

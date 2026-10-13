@@ -93,7 +93,10 @@ where
                 Some(anyhow::Ok((
                     (stream, stream_writer),
                     RemoteAddr {
-                        protocol: LocalProtocol::Udp { timeout: this.timeout },
+                        protocol: LocalProtocol::Udp {
+                            timeout: this.timeout,
+                            transport: Default::default(),
+                        },
                         host,
                         port,
                     },

@@ -110,7 +110,8 @@ pub struct UdpStream {
     #[pin]
     watchdog_deadline: Option<Interval>,
     data_read_before_deadline: bool,
-    has_been_notified: bool,
+    has_read_packet: bool,
+    drop_unread_initial_packet: bool,
     #[pin]
     pending_notification: Option<Notified<'static>>,
     io: Pin<Arc<IoInner>>,
@@ -120,6 +121,12 @@ pub struct UdpStream {
 #[pinned_drop]
 impl PinnedDrop for UdpStream {
     fn drop(self: Pin<&mut Self>) {
+        if self.drop_unread_initial_packet && !self.has_read_packet {
+            // The listener is waiting for this association to consume the packet it peeked.
+            // A failed Datagram handshake must discard it, otherwise it retries the same
+            // packet forever and prevents other local sources from making progress.
+            let _ = self.recv_socket.try_recv_from(&mut [0u8; 65536]);
+        }
         if let Some(keys_to_delete) = self.keys_to_delete.upgrade() {
             keys_to_delete.write().push(self.peer);
         }
@@ -133,6 +140,12 @@ impl PinnedDrop for UdpStream {
 }
 
 impl UdpStream {
+    /// Datagram transport owns a bidirectional activity watchdog instead.
+    pub(crate) fn disable_inbound_watchdog(&mut self) {
+        self.watchdog_deadline = None;
+        self.drop_unread_initial_packet = true;
+    }
+
     fn new(
         recv_socket: Arc<UdpSocket>,
         send_socket: Arc<UdpSocket>,
@@ -153,7 +166,8 @@ impl UdpStream {
             watchdog_deadline: watchdog_deadline
                 .map(|timeout| tokio::time::interval_at(tokio::time::Instant::now() + timeout, timeout)),
             data_read_before_deadline: false,
-            has_been_notified: false,
+            has_read_packet: false,
+            drop_unread_initial_packet: false,
             pending_notification: None,
             io: io.clone(),
             keys_to_delete,
@@ -166,7 +180,6 @@ impl UdpStream {
         (s, io)
     }
 
-    #[cfg_attr(not(target_os = "linux"), expect(dead_code))]
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.send_socket.local_addr()
     }
@@ -204,6 +217,7 @@ impl AsyncRead for UdpStream {
 
         let peer = ready!(project.recv_socket.poll_recv_from(cx, obuf))?;
         debug_assert_eq!(peer, *project.peer);
+        *project.has_read_packet = true;
         *project.data_read_before_deadline = true;
 
         // re-arm notification
@@ -506,6 +520,29 @@ mod tests {
     use tokio::io::AsyncReadExt;
     use tokio::time::error::Elapsed;
     use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn failed_datagram_association_discards_initial_packet() {
+        let probe = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = probe.local_addr().unwrap();
+        drop(probe);
+        let listener = run_server(addr, None, |_| Ok(()), |socket| Ok(socket.clone()))
+            .await
+            .unwrap();
+        pin_mut!(listener);
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client.send_to(b"rejected", addr).await.unwrap();
+        let mut stream = listener.next().await.unwrap().unwrap();
+        stream.disable_inbound_watchdog();
+        drop(stream);
+        assert!(timeout(Duration::from_millis(50), listener.next()).await.is_err());
+        client.send_to(b"new-attempt", addr).await.unwrap();
+        let stream = listener.next().await.unwrap().unwrap();
+        pin_mut!(stream);
+        let mut buf = [0; 64];
+        let len = stream.read(&mut buf).await.unwrap();
+        assert_eq!(&buf[..len], b"new-attempt");
+    }
 
     #[tokio::test]
     async fn test_udp_server() {

@@ -1,8 +1,11 @@
 //! The client half of the webtransport transport: building the session-level CONNECT request,
 //! and opening one tunnel as a stream on an already-established session.
 
+use super::datagram::DatagramHub;
 use super::utils::{read_jwt_preamble, write_jwt_preamble};
+use super::{DatagramRead, DatagramWrite};
 use super::{WebTransportRead, WebTransportWrite};
+use crate::tunnel::LocalProtocol;
 use crate::tunnel::RemoteAddr;
 use crate::tunnel::client::{Client, ClientConfig};
 use crate::tunnel::transport::headers_from_file;
@@ -12,9 +15,57 @@ use hyper::Response;
 use hyper::header::{AUTHORIZATION, COOKIE, HeaderValue};
 use hyper::http::response::Parts;
 use log::debug;
+use std::sync::Arc;
 use url::{Host, Url};
 use uuid::Uuid;
 use web_transport_quinn::proto::ConnectRequest;
+
+pub(crate) async fn connect_datagram(
+    request_id: Uuid,
+    client: &Client<impl crate::TokioExecutorRef>,
+    dest_addr: &RemoteAddr,
+) -> anyhow::Result<(DatagramRead, DatagramWrite, Parts)> {
+    let session = {
+        let cnx = client
+            .cnx_pool
+            .get()
+            .await
+            .map_err(|err| anyhow!("cannot obtain WebTransport session: {err:?}"))?;
+        cnx.as_ref()
+            .and_then(|cnx| cnx.as_ref().right())
+            .cloned()
+            .ok_or_else(|| anyhow!("Datagram mode requires a WebTransport session"))?
+    };
+    let hub = {
+        let mut hubs = client.datagram_hubs.lock().unwrap();
+        hubs.retain(|_, hub| hub.strong_count() > 0);
+        match hubs.get(&session.stable_id()).and_then(std::sync::Weak::upgrade) {
+            Some(hub) => hub,
+            None => {
+                let hub = DatagramHub::new(session.clone());
+                hubs.insert(session.stable_id(), Arc::downgrade(&hub));
+                hub
+            }
+        }
+    };
+    let handshake = async {
+        let (mut send, recv) = session.open_bi().await?;
+        let id = u64::from(send.quic_id());
+        write_jwt_preamble(&mut send, &tunnel_to_jwt_token(request_id, dest_addr)).await?;
+        let timeout = match dest_addr.protocol {
+            LocalProtocol::Udp { timeout, .. } => timeout,
+            _ => unreachable!(),
+        };
+        let (mut read, write) = hub.register(id, recv, send, session.clone(), timeout)?;
+        read.wait_ready()
+            .await
+            .context("server does not support or rejected UDP Datagram mode")?;
+        anyhow::Ok((read, write, Response::new(()).into_parts().0))
+    };
+    tokio::time::timeout(client.config.timeout_connect, handshake)
+        .await
+        .context("timed out negotiating UDP Datagram mode; server may not support it")?
+}
 
 /// Build the session-level CONNECT request for a `wts://` server.
 ///

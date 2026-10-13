@@ -42,6 +42,7 @@ nodejs to use this tool, I remade it in ~~Haskell~~ Rust and improved it.
 * Support of mTLS with certificates auto-reload - [documentation here](https://github.com/erebe/wstunnel/blob/main/docs/using_mtls.md)
 * Support IPv6
 * Support for Websocket, HTTP2 and WebTransport as transport protocol (websocket is more performant)
+* Optional unreliable WebTransport Datagrams for forward UDP tunnels; stream forwarding remains the default
 * **Standalone binaries** (so just cp it where you want) [here](https://github.com/erebe/wstunnel/releases)
 
 ## Sponsors <a name="sponsors"></a>
@@ -124,6 +125,7 @@ Options:
           
           'udp://1212:1.1.1.1:53'          =>       listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
           'udp://1212:1.1.1.1:53?timeout_sec=10'    timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
+          'udp://1212:1.1.1.1:53?transport=datagram' use unreliable QUIC Datagrams (requires wts:// and an updated server). Default: stream.
           
           'socks5://[::1]:1212'            =>       listen locally with socks5 on port 1212 and forward dynamically requested tunnel
           'socks5://[::1]:1212?login=admin&password=admin' => listen locally with socks5 on port 1212 and only accept connection with login=admin and password=admin
@@ -440,6 +442,7 @@ docker pull ghcr.io/erebe/wstunnel:latest
 * [How to secure access of your wstunnel server](#secure)
 * [Use HTTP2 instead of websocket for transport protocol](#http2)
 * [Use WebTransport instead of websocket for transport protocol](#webtransport)
+* [Forward UDP over WebTransport Datagrams](#udp-datagram)
 * [Maximize your stealthiness/Make your traffic discrete](#stealth)
 
 ### Understand command line syntax <a name="syntax"></a>
@@ -759,6 +762,46 @@ wstunnel client -L socks5://127.0.0.1:8888 wts://myRemoteHost:8080
 
 mTLS, path prefix restrictions, restriction rules, and server certificate auto-reload all behave as they do
 over websocket.
+
+### Forward UDP over WebTransport Datagrams <a name="udp-datagram"></a>
+
+WebTransport uses reliable streams for TCP and, by default, for UDP. Forward UDP tunnels can
+opt into unreliable, unordered QUIC Datagrams by adding `?transport=datagram` to the client's
+`-L udp://...` URI. Both client and server must use a build containing this extension.
+
+Server (keep your existing TLS, authentication, and restriction options):
+
+```bash
+wstunnel server wts://0.0.0.0:8090/
+```
+
+Client, with RDP as an example of an application using both TCP and UDP:
+
+```bash
+wstunnel client \
+  -L tcp://127.0.0.1:43389:127.0.0.1:3389 \
+  -L "udp://127.0.0.1:43389:127.0.0.1:3389?transport=datagram" \
+  wts://server.example:8090/
+```
+
+Connect RDP to `127.0.0.1:43389`. TCP still uses a reliable stream. **The Datagram option is
+client-side only**; do not append it to the server command or the `wts://` server URL. The client
+announces the mode during tunnel setup. The server only needs WebTransport enabled.
+
+Omitting the option, or specifying `transport=stream`, preserves the existing UDP behavior.
+Datagram mode requires `wts://` and forward `udp://` tunnels; reverse, SOCKS, and transparent
+UDP remain stream based. Unsupported peers produce an error, with no automatic fallback.
+Packets exceeding the current Datagram size limit and packets overflowing receive queues
+are dropped. There is no fragmentation, retransmission, or reordering at the tunnel layer.
+`timeout_sec` defaults to 30 seconds and is refreshed by traffic in either direction;
+`timeout_sec=0` disables Datagram idle expiration.
+
+To verify actual Datagram traffic, add
+`--log-lvl "INFO,wstunnel::tunnel::transport::webtransport::datagram=TRACE"` to the client or
+server command and look for `UDP Datagram tx` and `UDP Datagram rx`. Association creation
+alone does not confirm successful end-to-end traffic. No measured RDP performance improvement
+is claimed; see [UDP Datagram documentation](docs/udp-datagram.md) for the protocol, limits,
+and validation results.
 
 ### Maximize your stealthiness/Make your traffic discrete <a name="stealth"></a>
 

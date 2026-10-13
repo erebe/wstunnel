@@ -3,7 +3,6 @@ use std::fs::File;
 use tokio_rustls::rustls::client::{EchConfig, EchMode};
 
 use log::warn;
-use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -13,6 +12,7 @@ use crate::tunnel::client::ClientConfig;
 use crate::tunnel::server::TlsServerConfig;
 use crate::tunnel::transport::TransportAddr;
 use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use tokio_rustls::rustls::server::danger::ClientCertVerifier;
@@ -76,8 +76,7 @@ pub fn load_certificates_from_pem(path: &Path) -> anyhow::Result<Vec<Certificate
     info!("Loading tls certificate from {:?}", path);
 
     let file = File::open(path)?;
-    let mut reader = BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader);
+    let certs = CertificateDer::pem_reader_iter(file);
 
     Ok(certs
         .into_iter()
@@ -95,9 +94,7 @@ pub fn load_private_key_from_file(path: &Path) -> anyhow::Result<PrivateKeyDer<'
     info!("Loading tls private key from {:?}", path);
 
     let file = File::open(path)?;
-    let mut reader = BufReader::new(file);
-
-    let Some(private_key) = rustls_pemfile::private_key(&mut reader)? else {
+    let Some(private_key) = PrivateKeyDer::pem_reader_iter(file).next().transpose()? else {
         return Err(anyhow!("No private key found in {path:?}"));
     };
 

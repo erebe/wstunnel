@@ -5,6 +5,7 @@ use crate::tunnel::client::connection_pool::L4StreamManager;
 use crate::tunnel::downstream_listeners::{DownstreamListener, DownstreamRead, DownstreamWrite};
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport::io::{TransportReader, TransportWriter};
+use crate::tunnel::transport::webtransport::datagram::DatagramHub;
 use crate::tunnel::transport::{TransportScheme, jwt_token_to_tunnel};
 use crate::tunnel::upstream_connectors::UpstreamConnector;
 use crate::tunnel::{LocalProtocol, RemoteAddr};
@@ -13,7 +14,9 @@ use futures_util::pin_mut;
 use hyper::header::COOKIE;
 use log::debug;
 use std::cmp::min;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::{Mutex, Weak};
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
@@ -28,6 +31,7 @@ pub struct Client<E: TokioExecutorRef = DefaultTokioExecutor> {
     reverse_tunnel_connection_retry_max_backoff: Duration,
     _tls_reloader: Arc<TlsReloader>,
     pub(crate) executor: E,
+    pub(crate) datagram_hubs: Arc<Mutex<HashMap<usize, Weak<DatagramHub>>>>,
 }
 
 impl<E: TokioExecutorRef> Client<E> {
@@ -57,6 +61,7 @@ impl<E: TokioExecutorRef> Client<E> {
             reverse_tunnel_connection_retry_max_backoff,
             _tls_reloader: Arc::new(tls_reloader),
             executor,
+            datagram_hubs: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -73,34 +78,59 @@ impl<E: TokioExecutorRef> Client<E> {
         // Connect to server with the correct protocol. Capture the result instead of `?`-ing it: on
         // failure we must still acknowledge the local handshake (e.g. send a SOCKS5 error reply)
         // before bubbling the error up.
-        let connect_result = match self.config.remote_addr.scheme() {
-            TransportScheme::Ws | TransportScheme::Wss => {
-                tunnel::transport::websocket::connect(request_id, self, remote_cfg)
-                    .await
-                    .map(|(r, w, response)| (TransportReader::Websocket(r), TransportWriter::Websocket(w), response))
+        let datagram = matches!(
+            remote_cfg.protocol,
+            LocalProtocol::Udp {
+                transport: crate::tunnel::UdpTransport::Datagram,
+                ..
             }
-            TransportScheme::Http | TransportScheme::Https => {
-                tunnel::transport::http2::connect(request_id, self, remote_cfg)
+        );
+        let connect_result = if datagram {
+            if !self.config.remote_addr.scheme().is_webtransport() {
+                Err(anyhow::anyhow!("UDP transport=datagram requires a wts:// server"))
+            } else {
+                tunnel::transport::webtransport::connect_datagram(request_id, self, remote_cfg)
                     .await
-                    .map(|(r, w, response)| (TransportReader::Http2(r), TransportWriter::Http2(w), response))
-            }
-            TransportScheme::Wts => tunnel::transport::webtransport::connect(request_id, self, remote_cfg)
-                .await
-                .map(|(r, w, response)| {
-                    if matches!(remote_cfg.protocol, LocalProtocol::Udp { .. } | LocalProtocol::TProxyUdp { .. }) {
+                    .map(|(r, w, response)| {
                         (
-                            TransportReader::WebTransportUdp(Box::new(r.into_udp_stream())),
-                            TransportWriter::WebTransportUdp(Box::new(w.into_udp_stream())),
+                            TransportReader::Datagram(Box::new(r)),
+                            TransportWriter::Datagram(Box::new(w)),
                             response,
                         )
-                    } else {
-                        (
-                            TransportReader::WebTransport(Box::new(r)),
-                            TransportWriter::WebTransport(Box::new(w)),
-                            response,
-                        )
-                    }
-                }),
+                    })
+            }
+        } else {
+            match self.config.remote_addr.scheme() {
+                TransportScheme::Ws | TransportScheme::Wss => {
+                    tunnel::transport::websocket::connect(request_id, self, remote_cfg)
+                        .await
+                        .map(|(r, w, response)| {
+                            (TransportReader::Websocket(r), TransportWriter::Websocket(w), response)
+                        })
+                }
+                TransportScheme::Http | TransportScheme::Https => {
+                    tunnel::transport::http2::connect(request_id, self, remote_cfg)
+                        .await
+                        .map(|(r, w, response)| (TransportReader::Http2(r), TransportWriter::Http2(w), response))
+                }
+                TransportScheme::Wts => tunnel::transport::webtransport::connect(request_id, self, remote_cfg)
+                    .await
+                    .map(|(r, w, response)| {
+                        if matches!(remote_cfg.protocol, LocalProtocol::Udp { .. } | LocalProtocol::TProxyUdp { .. }) {
+                            (
+                                TransportReader::WebTransportUdp(Box::new(r.into_udp_stream())),
+                                TransportWriter::WebTransportUdp(Box::new(w.into_udp_stream())),
+                                response,
+                            )
+                        } else {
+                            (
+                                TransportReader::WebTransport(Box::new(r)),
+                                TransportWriter::WebTransport(Box::new(w)),
+                                response,
+                            )
+                        }
+                    }),
+            }
         };
 
         let (local_rx, mut local_tx) = duplex_stream;

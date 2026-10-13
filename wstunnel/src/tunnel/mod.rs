@@ -3,6 +3,8 @@ pub mod client;
 pub mod downstream_listeners;
 pub mod server;
 mod tls_reloader;
+#[cfg(test)]
+pub(crate) use tls_reloader::TlsReloader as TestTlsReloader;
 pub mod transport;
 pub mod upstream_connectors;
 
@@ -13,6 +15,20 @@ use std::path::PathBuf;
 use std::time::Duration;
 use url::Host;
 
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UdpTransport {
+    #[default]
+    Stream,
+    Datagram,
+}
+
+impl UdpTransport {
+    pub fn is_stream(&self) -> bool {
+        *self == Self::Stream
+    }
+}
+
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum LocalProtocol {
     Tcp {
@@ -20,6 +36,8 @@ pub enum LocalProtocol {
     },
     Udp {
         timeout: Option<Duration>,
+        #[serde(default, skip_serializing_if = "UdpTransport::is_stream")]
+        transport: UdpTransport,
     },
     Stdio {
         proxy_protocol: bool,
@@ -83,7 +101,11 @@ impl Debug for LocalProtocol {
 
         match self {
             Self::Tcp { proxy_protocol } => f.debug_struct("Tcp").field("proxy_protocol", proxy_protocol).finish(),
-            Self::Udp { timeout } => f.debug_struct("Udp").field("timeout", timeout).finish(),
+            Self::Udp { timeout, transport } => f
+                .debug_struct("Udp")
+                .field("timeout", timeout)
+                .field("transport", transport)
+                .finish(),
             Self::Stdio { proxy_protocol } => f.debug_struct("Stdio").field("proxy_protocol", proxy_protocol).finish(),
             Self::Socks5 { timeout, credentials } => f
                 .debug_struct("Socks5")
@@ -149,6 +171,28 @@ pub fn try_to_sock_addr((host, port): (Host, u16)) -> anyhow::Result<SocketAddr>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn udp_stream_serialization_remains_compatible() {
+        let protocol = LocalProtocol::Udp {
+            timeout: None,
+            transport: UdpTransport::Stream,
+        };
+        let encoded = serde_yaml::to_string(&protocol).unwrap();
+        assert!(!encoded.contains("transport"));
+        assert_eq!(
+            serde_yaml::from_str::<LocalProtocol>("!Udp\ntimeout: null\n").unwrap(),
+            protocol
+        );
+        let protocol = LocalProtocol::Udp {
+            timeout: None,
+            transport: UdpTransport::Datagram,
+        };
+        assert_eq!(
+            serde_yaml::from_str::<LocalProtocol>(&serde_yaml::to_string(&protocol).unwrap()).unwrap(),
+            protocol
+        );
+    }
 
     #[test]
     fn debug_redacts_credentials() {

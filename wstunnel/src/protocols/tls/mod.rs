@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod pem_tests;
 mod server;
 mod utils;
 

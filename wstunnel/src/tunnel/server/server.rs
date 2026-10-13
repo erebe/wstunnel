@@ -19,7 +19,6 @@ use crate::tunnel::server::utils::{
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::upstream_connectors::{TcpUpstreamConnector, UdpUpstreamConnector, UpstreamConnector};
 use crate::tunnel::{LocalProtocol, RemoteAddr, try_to_sock_addr};
-use ahash::AHasher;
 use anyhow::{Context, anyhow};
 use arc_swap::ArcSwap;
 use futures_util::FutureExt;
@@ -33,8 +32,7 @@ use parking_lot::Mutex;
 use socket2::SockRef;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::hash::{Hash, Hasher};
-use std::net::{Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
@@ -44,7 +42,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tracing::{Instrument, Level, Span, error, info, span, warn};
-use url::{Host, Url};
+use url::Url;
 
 #[derive(Debug)]
 pub struct TlsServerConfig {
@@ -104,7 +102,7 @@ impl<E: crate::TokioExecutorRef> Server<E> {
             Pin<Box<dyn AsyncWrite + Send>>,
             bool,
         ),
-        HttpResponse,
+        Box<HttpResponse>,
     > {
         if let Some((x_forward_for, x_forward_for_str)) = extract_x_forwarded_for(req) {
             info!("Request X-Forwarded-For: {x_forward_for:?}");
@@ -123,7 +121,7 @@ impl<E: crate::TokioExecutorRef> Server<E> {
             warn!(
                 "Client requested upgrade path '{path_prefix}' does not match upgrade path restriction '{restrict_path}' (mTLS, etc.)"
             );
-            return Err(bad_request());
+            return Err(Box::new(bad_request()));
         }
 
         let jwt = extract_tunnel_info(req).map_err(|err| {
@@ -309,6 +307,10 @@ impl<E: crate::TokioExecutorRef> Server<E> {
             #[cfg(unix)]
             LocalProtocol::ReverseUnix { ref path } => {
                 use crate::tunnel::downstream_listeners::UnixDownstreamListener;
+                use ahash::AHasher;
+                use std::hash::{Hash, Hasher};
+                use std::net::Ipv6Addr;
+                use url::Host;
                 static SERVERS: LazyLock<ReverseTunnelServer<UnixDownstreamListener>> =
                     LazyLock::new(ReverseTunnelServer::new);
 

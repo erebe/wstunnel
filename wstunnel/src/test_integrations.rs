@@ -614,6 +614,452 @@ async fn test_udp_tunnel_webtransport(
     assert_eq!(&buf[..], b"world!");
 }
 
+#[rstest]
+#[timeout(Duration::from_secs(20))]
+#[tokio::test]
+#[serial]
+async fn test_udp_datagram_multi_association_oversize_and_empty(
+    server_webtransport: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let endpoint = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let endpoint_addr = endpoint.local_addr().unwrap();
+    let echo = tokio::spawn(async move {
+        let mut buf = [0; 65536];
+        loop {
+            let (len, peer) = endpoint.recv_from(&mut buf).await.unwrap();
+            endpoint.send_to(&buf[..len], peer).await.unwrap();
+        }
+    });
+    let echo_abort = echo.abort_handle();
+    defer! { echo_abort.abort(); };
+    let port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+    let client = client_webtransport(port, dns_resolver).await;
+    let tunnel_addr = free_addr().0;
+    let listener = UdpDownstreamListener::new(
+        tunnel_addr,
+        (Host::Ipv4(Ipv4Addr::LOCALHOST), endpoint_addr.port()),
+        Some(Duration::from_secs(1)),
+    )
+    .await
+    .unwrap()
+    .with_transport(crate::tunnel::UdpTransport::Datagram);
+    let tunnel_h = tokio::spawn(client.clone().run_tunnel(listener));
+    defer! { tunnel_h.abort(); };
+    let a = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let b = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    a.connect(tunnel_addr).await.unwrap();
+    b.connect(tunnel_addr).await.unwrap();
+    let mut buf = [0; 65536];
+    a.send(b"association-a").await.unwrap();
+    b.send(b"association-b").await.unwrap();
+    let len = a.recv(&mut buf).await.unwrap();
+    assert_eq!(&buf[..len], b"association-a");
+    let len = b.recv(&mut buf).await.unwrap();
+    assert_eq!(&buf[..len], b"association-b");
+    let hub = client
+        .datagram_hubs
+        .lock()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()
+        .upgrade()
+        .unwrap();
+    assert_eq!(hub.counters.created.load(Ordering::Relaxed), 2);
+    a.send(&vec![0x55; 60000]).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), a.recv(&mut buf))
+            .await
+            .is_err()
+    );
+    a.send(b"after-oversize").await.unwrap();
+    let len = a.recv(&mut buf).await.unwrap();
+    assert_eq!(&buf[..len], b"after-oversize");
+    assert_eq!(hub.counters.oversize.load(Ordering::Relaxed), 1);
+    a.send(b"").await.unwrap();
+    assert_eq!(a.recv(&mut buf).await.unwrap(), 0);
+    // Both directions can expire, then the same local source creates a fresh association.
+    tokio::time::sleep(Duration::from_millis(1300)).await;
+    a.send(b"after-idle").await.unwrap();
+    let len = a.recv(&mut buf).await.unwrap();
+    assert_eq!(&buf[..len], b"after-idle");
+    let created: u64 = client
+        .datagram_hubs
+        .lock()
+        .unwrap()
+        .values()
+        .filter_map(std::sync::Weak::upgrade)
+        .map(|hub| hub.counters.created.load(Ordering::Relaxed))
+        .sum();
+    assert!(created >= 3);
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(20))]
+#[tokio::test]
+#[serial]
+async fn test_udp_datagram_remote_activity_close_and_reconnect(
+    server_webtransport: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    use crate::tunnel::transport::io::{TransportRead, TransportWrite};
+    use crate::tunnel::transport::webtransport::connect_datagram;
+    let endpoint = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let endpoint_port = endpoint.local_addr().unwrap().port();
+    let producer = tokio::spawn(async move {
+        let mut buf = [0; 64];
+        loop {
+            let (_, peer) = endpoint.recv_from(&mut buf).await.unwrap();
+            // Only remote->local traffic for longer than the idle timeout.
+            for _ in 0..6 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                endpoint.send_to(b"remote-activity", peer).await.unwrap();
+            }
+        }
+    });
+    defer! { producer.abort(); };
+    let port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+    let client = client_webtransport(port, dns_resolver).await;
+    let target = RemoteAddr {
+        protocol: LocalProtocol::Udp {
+            timeout: Some(Duration::from_millis(350)),
+            transport: crate::tunnel::UdpTransport::Datagram,
+        },
+        host: Host::Ipv4(Ipv4Addr::LOCALHOST),
+        port: endpoint_port,
+    };
+    let (mut read, mut write, _) = connect_datagram(uuid::Uuid::now_v7(), &client, &target).await.unwrap();
+    let initial_session = {
+        let pooled = client.cnx_pool.get().await.unwrap();
+        pooled.as_ref().unwrap().as_ref().right().unwrap().clone()
+    };
+    initial_session
+        .send_datagram(bytes::Bytes::from_static(b"bad application header"))
+        .unwrap();
+    std::ops::Deref::deref(&initial_session)
+        .send_datagram(bytes::Bytes::from_static(&[0x3f, 1, 2, 3]))
+        .unwrap();
+    write.buf_mut().extend_from_slice(b"start");
+    write.write().await.unwrap();
+    for _ in 0..6 {
+        let mut buf = Vec::new();
+        read.copy(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"remote-activity");
+    }
+    let expired = read.copy(tokio::io::sink()).await.unwrap_err();
+    assert!(crate::tunnel::transport::webtransport::datagram::is_datagram_idle_timeout(
+        &expired
+    ));
+    drop(read);
+    drop(write);
+    let (mut read, mut write, _) = connect_datagram(uuid::Uuid::now_v7(), &client, &target).await.unwrap();
+    write.close().await.unwrap();
+    assert!(read.copy(tokio::io::sink()).await.is_err());
+    drop(read);
+    drop(write);
+    // Closing the underlying connection models loss of the server's session state.
+    let session = {
+        let pooled = client.cnx_pool.get().await.unwrap();
+        pooled.as_ref().unwrap().as_ref().right().unwrap().clone()
+    };
+    session.close(0, b"test reconnect");
+    let (mut read, mut write, _) = connect_datagram(uuid::Uuid::now_v7(), &client, &target).await.unwrap();
+    write.buf_mut().extend_from_slice(b"reconnected");
+    write.write().await.unwrap();
+    let mut buf = Vec::new();
+    read.copy(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"remote-activity");
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(20))]
+#[tokio::test]
+#[serial]
+async fn test_udp_datagram_buffer_reuse_and_error_cleanup(
+    server_webtransport: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    use crate::tunnel::transport::io::{TransportRead, TransportWrite};
+    use crate::tunnel::transport::webtransport::connect_datagram;
+    let endpoint = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let endpoint_port = endpoint.local_addr().unwrap().port();
+    let echo = tokio::spawn(async move {
+        let mut buf = [0; 65536];
+        loop {
+            let (len, peer) = endpoint.recv_from(&mut buf).await.unwrap();
+            endpoint.send_to(&buf[..len], peer).await.unwrap();
+        }
+    });
+    defer! { echo.abort(); };
+    let port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+    let client = client_webtransport(port, dns_resolver).await;
+    let target = RemoteAddr {
+        protocol: LocalProtocol::Udp {
+            timeout: None,
+            transport: crate::tunnel::UdpTransport::Datagram,
+        },
+        host: Host::Ipv4(Ipv4Addr::LOCALHOST),
+        port: endpoint_port,
+    };
+    let (mut read, mut write, _) = connect_datagram(uuid::Uuid::now_v7(), &client, &target).await.unwrap();
+    let session = {
+        let pooled = client.cnx_pool.get().await.unwrap();
+        pooled.as_ref().unwrap().as_ref().right().unwrap().clone()
+    };
+    let address = write.buf_mut().as_ptr() as usize;
+    let capacity = write.buf_mut().capacity();
+    for iteration in 0..8u8 {
+        let maximum = session.max_datagram_size() - 10;
+        for size in [0, 64, 960, 1180.min(maximum), maximum] {
+            let packet = vec![iteration; size];
+            write.buf_mut().extend_from_slice(&packet);
+            write.write().await.unwrap();
+            assert!(write.buf_mut().is_empty());
+            assert_eq!(write.buf_mut().as_ptr() as usize, address);
+            assert_eq!(write.buf_mut().capacity(), capacity);
+            let mut received = Vec::new();
+            read.copy(&mut received).await.unwrap();
+            assert_eq!(received, packet);
+        }
+    }
+    write.buf_mut().extend_from_slice(&vec![0x55; 60000]);
+    write.write().await.unwrap();
+    assert!(write.buf_mut().is_empty());
+    assert_eq!(write.buf_mut().as_ptr() as usize, address);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), read.copy(tokio::io::sink()))
+            .await
+            .is_err()
+    );
+    write.buf_mut().extend_from_slice(b"after-drop");
+    write.write().await.unwrap();
+    let mut received = Vec::new();
+    read.copy(&mut received).await.unwrap();
+    assert_eq!(&received, b"after-drop");
+    // Force the QUIC connection closed to exercise the send-error cleanup path.
+    std::ops::Deref::deref(&session).close(0u32.into(), b"test send error");
+    write.buf_mut().extend_from_slice(b"failed-send");
+    assert!(write.write().await.is_err());
+    assert!(write.buf_mut().is_empty());
+    assert_eq!(write.buf_mut().as_ptr() as usize, address);
+}
+
+#[rstest]
+#[case::fin("fin")]
+#[case::reset("reset")]
+#[case::unexpected_byte("byte")]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_udp_datagram_control_error_classification(
+    server_webtransport: Server,
+    dns_resolver: DnsResolver,
+    #[case] action: &'static str,
+) {
+    use crate::tunnel::transport::io::TransportRead;
+    use web_transport_quinn::quinn;
+    let tls = crate::protocols::tls::quic_server_config(server_webtransport.config.tls.as_ref().unwrap()).unwrap();
+    let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap();
+    let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+    config.transport_config(Arc::new(
+        crate::tunnel::transport::webtransport::mk_transport_config(None).unwrap(),
+    ));
+    let endpoint = quinn::Endpoint::server(config, server_webtransport.config.bind).unwrap();
+    let mut server = web_transport_quinn::Server::new(endpoint);
+    let port = server_webtransport.config.bind.port();
+    let (trigger, ready) = tokio::sync::oneshot::channel();
+    let server_h = tokio::spawn(async move {
+        let session = server.accept().await.unwrap().ok().await.unwrap();
+        let (mut send, mut recv) = session.accept_bi().await.unwrap();
+        crate::tunnel::transport::webtransport::read_jwt_preamble(&mut recv)
+            .await
+            .unwrap();
+        send.write_all(b"WUD1").await.unwrap();
+        ready.await.unwrap();
+        match action {
+            "fin" => {
+                send.finish().unwrap();
+            }
+            "reset" => {
+                send.reset(499).unwrap();
+            }
+            "byte" => {
+                send.write_all(&[0x7f]).await.unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let _streams = (send, recv);
+        session.closed().await;
+    });
+    defer! { server_h.abort(); };
+    let client = client_webtransport(port, dns_resolver).await;
+    let target = RemoteAddr {
+        protocol: LocalProtocol::Udp {
+            timeout: None,
+            transport: crate::tunnel::UdpTransport::Datagram,
+        },
+        host: Host::Ipv4(Ipv4Addr::LOCALHOST),
+        port: 1234,
+    };
+    let (mut read, _write, _) =
+        crate::tunnel::transport::webtransport::connect_datagram(uuid::Uuid::now_v7(), &client, &target)
+            .await
+            .unwrap();
+    trigger.send(()).unwrap();
+    let err = read.copy(tokio::io::sink()).await.unwrap_err();
+    match action {
+        "fin" => assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe),
+        "byte" => assert_eq!(err.kind(), std::io::ErrorKind::InvalidData),
+        "reset" => {
+            assert_ne!(err.kind(), std::io::ErrorKind::BrokenPipe);
+            // Tokio AsyncRead delegates to raw Quinn, so the source carries the
+            // HTTP/3-mapped reset code rather than the WebTransport code 499.
+            match err
+                .get_ref()
+                .and_then(|source| source.downcast_ref::<quinn::ReadError>())
+            {
+                Some(quinn::ReadError::Reset(code)) => {
+                    assert_eq!(web_transport_quinn::proto::error_from_http3(code.into_inner()), Some(499))
+                }
+                _ => panic!("reset source lost: {err}"),
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[rstest]
+#[case::unsupported_quic(false, false)]
+#[case::wrong_protocol_version(true, true)]
+#[case::legacy_server_without_ack(true, false)]
+#[timeout(Duration::from_secs(15))]
+#[tokio::test]
+#[serial]
+async fn test_udp_datagram_unsupported_peer(
+    server_webtransport: Server,
+    dns_resolver: DnsResolver,
+    #[case] supports_datagrams: bool,
+    #[case] wrong_ack: bool,
+) {
+    use web_transport_quinn::quinn;
+    let tls = crate::protocols::tls::quic_server_config(server_webtransport.config.tls.as_ref().unwrap()).unwrap();
+    let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap();
+    let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+    let mut transport = crate::tunnel::transport::webtransport::mk_transport_config(None).unwrap();
+    if !supports_datagrams {
+        transport.datagram_receive_buffer_size(None);
+    }
+    config.transport_config(Arc::new(transport));
+    let endpoint = quinn::Endpoint::server(config, server_webtransport.config.bind).unwrap();
+    let mut server = web_transport_quinn::Server::new(endpoint);
+    let port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(async move {
+        let session = server.accept().await.unwrap().ok().await.unwrap();
+        let (mut send, mut recv) = session.accept_bi().await.unwrap();
+        crate::tunnel::transport::webtransport::read_jwt_preamble(&mut recv)
+            .await
+            .unwrap();
+        if wrong_ack {
+            send.write_all(b"WUD0").await.unwrap();
+        }
+        let _streams = (send, recv);
+        session.closed().await;
+    });
+    defer! { server_h.abort(); };
+    let mut client = client_webtransport(port, dns_resolver).await;
+    Arc::make_mut(&mut client.config).timeout_connect = Duration::from_millis(250);
+    let target = RemoteAddr {
+        protocol: LocalProtocol::Udp {
+            timeout: None,
+            transport: crate::tunnel::UdpTransport::Datagram,
+        },
+        host: Host::Ipv4(Ipv4Addr::LOCALHOST),
+        port: 1234,
+    };
+    let result = crate::tunnel::transport::webtransport::connect_datagram(uuid::Uuid::now_v7(), &client, &target).await;
+    let err = match result {
+        Err(err) => err,
+        Ok(_) => panic!("unsupported peer accepted Datagram mode"),
+    };
+    let error = format!("{err:#}");
+    if !supports_datagrams {
+        assert!(error.contains("does not support QUIC Datagrams"), "{error}");
+    } else if wrong_ack {
+        assert!(error.contains("did not acknowledge"), "{error}");
+    } else {
+        assert!(error.contains("timed out negotiating"), "{error}");
+    }
+}
+
+#[rstest]
+#[timeout(Duration::from_secs(20))]
+#[tokio::test]
+#[serial]
+async fn test_udp_datagram_coexists_with_tcp(
+    server_webtransport: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    let endpoint = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_addr = endpoint.local_addr().unwrap();
+    let udp_endpoint = tokio::net::UdpSocket::bind(target_addr).await.unwrap();
+    let echo = tokio::spawn(async move {
+        let tcp = async {
+            let (mut stream, _) = endpoint.accept().await.unwrap();
+            let mut buf = [0; 10];
+            stream.read_exact(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"tcp-stream");
+            stream.write_all(&buf).await.unwrap();
+        };
+        let udp = async {
+            let mut buf = [0; 64];
+            let (len, peer) = udp_endpoint.recv_from(&mut buf).await.unwrap();
+            assert_eq!(&buf[..len], b"udp-datagram");
+            udp_endpoint.send_to(&buf[..len], peer).await.unwrap();
+        };
+        tokio::join!(tcp, udp);
+    });
+    defer! { echo.abort(); };
+    let port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+    let client = client_webtransport(port, dns_resolver).await;
+    let bind = free_addr().0;
+    let tcp = TcpDownstreamListener::new(bind, (Host::Ipv4(Ipv4Addr::LOCALHOST), target_addr.port()), false)
+        .await
+        .unwrap();
+    let udp = UdpDownstreamListener::new(bind, (Host::Ipv4(Ipv4Addr::LOCALHOST), target_addr.port()), None)
+        .await
+        .unwrap()
+        .with_transport(crate::tunnel::UdpTransport::Datagram);
+    let tcp_h = tokio::spawn(client.clone().run_tunnel(tcp));
+    let udp_h = tokio::spawn(client.run_tunnel(udp));
+    defer! { tcp_h.abort(); udp_h.abort(); };
+    let mut tcp = TcpStream::connect(bind).await.unwrap();
+    let udp = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    udp.connect(bind).await.unwrap();
+    let (tcp_sent, udp_sent) = tokio::join!(tcp.write_all(b"tcp-stream"), udp.send(b"udp-datagram"));
+    tcp_sent.unwrap();
+    udp_sent.unwrap();
+    let mut tcp_buf = [0; 10];
+    tcp.read_exact(&mut tcp_buf).await.unwrap();
+    assert_eq!(&tcp_buf, b"tcp-stream");
+    let mut udp_buf = [0; 64];
+    let len = udp.recv(&mut udp_buf).await.unwrap();
+    assert_eq!(&udp_buf[..len], b"udp-datagram");
+    // The receive assertions above also verify both echo branches.
+}
+
 /// Perform a SOCKS5 no-auth greeting + CONNECT to `dst`, and return the reply code byte (0x00 =
 /// success, non-zero = failure per RFC 1928). Drains the full reply, including the bound address.
 async fn socks5_handshake_connect(

@@ -254,7 +254,7 @@ mod tests {
                     r#match: vec![MatchConfig::Any],
                     allow: vec![AllowConfig::Tunnel(AllowTunnelConfig {
                         protocol: vec![TunnelProtocol::Tcp],
-                        port: vec![80..=80],
+                        port: std::iter::once(80..=80).collect(),
                         cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
                         host: Regex::new("example.com").unwrap(),
                     })],
@@ -265,7 +265,7 @@ mod tests {
                     r#match: vec![MatchConfig::Any],
                     allow: vec![AllowConfig::ReverseTunnel(AllowReverseTunnelConfig {
                         protocol: vec![ReverseTunnelProtocol::Tcp],
-                        port: vec![80..=80],
+                        port: std::iter::once(80..=80).collect(),
                         cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
                         port_mapping: Default::default(),
                         unix_path: default_host(),
@@ -375,7 +375,7 @@ mod tests {
     fn test_reverse_tunnel_is_allowed() {
         let config = AllowReverseTunnelConfig {
             protocol: vec![ReverseTunnelProtocol::Tcp],
-            port: vec![80..=80],
+            port: std::iter::once(80..=80).collect(),
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 8).unwrap())],
             port_mapping: Default::default(),
             unix_path: default_host(),
@@ -403,7 +403,7 @@ mod tests {
     fn test_reverse_tunnel_is_not_allowed() {
         let config = AllowReverseTunnelConfig {
             protocol: vec![ReverseTunnelProtocol::Tcp],
-            port: vec![80..=80],
+            port: std::iter::once(80..=80).collect(),
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
             port_mapping: Default::default(),
             unix_path: default_host(),
@@ -507,7 +507,7 @@ mod tests {
     fn test_tunnel_is_allowed() {
         let config = AllowTunnelConfig {
             protocol: vec![TunnelProtocol::Tcp],
-            port: vec![80..=80],
+            port: std::iter::once(80..=80).collect(),
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 8).unwrap())],
             host: Regex::new(".*").unwrap(),
         };
@@ -543,7 +543,7 @@ mod tests {
     fn test_tunnel_is_not_allowed() {
         let config = AllowTunnelConfig {
             protocol: vec![TunnelProtocol::Tcp],
-            port: vec![80..=80],
+            port: std::iter::once(80..=80).collect(),
             cidr: vec![IpNet::from(Ipv4Net::new([127, 0, 0, 1].into(), 24).unwrap())],
             host: Regex::new("example.com").unwrap(),
         };
@@ -586,7 +586,10 @@ mod tests {
 
         // wrong protocol - local
         let remote = RemoteAddr {
-            protocol: LocalProtocol::Udp { timeout: None },
+            protocol: LocalProtocol::Udp {
+                timeout: None,
+                transport: Default::default(),
+            },
             host: Host::Ipv4([127, 0, 0, 1].into()),
             port: 80,
         };

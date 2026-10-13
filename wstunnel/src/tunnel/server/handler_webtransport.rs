@@ -2,11 +2,13 @@ use crate::executor::TokioExecutorRef;
 use crate::protocols::tls;
 use crate::restrictions::types::RestrictionsRules;
 use crate::tunnel::LocalProtocol;
+use crate::tunnel::UdpTransport;
 use crate::tunnel::server::Server;
 use crate::tunnel::server::utils::{extract_path_prefix, matches_any_restriction};
 use crate::tunnel::tls_reloader::TlsReloader;
 use crate::tunnel::transport;
 use crate::tunnel::transport::tunnel_to_jwt_token;
+use crate::tunnel::transport::webtransport::datagram::DatagramHub;
 use crate::tunnel::transport::webtransport::{
     WebTransportRead, WebTransportUdpRead, WebTransportUdpWrite, WebTransportWrite, bind_udp_socket,
     mk_transport_config, read_jwt_preamble, write_jwt_preamble,
@@ -171,6 +173,7 @@ async fn handle_session(
         .ok()
         .await
         .with_context(|| format!("Cannot accept the webtransport session from {client_addr}"))?;
+    let datagram_hub = DatagramHub::new(session.clone());
 
     // One tunnel per stream. Accepting the session commits nothing upstream, so there is no need to
     // bound how long the client takes to open the first one; an idle session costs a QUIC
@@ -190,6 +193,7 @@ async fn handle_session(
         let session_path = session_path.clone();
         let session_headers = session_headers.clone();
         let restrict_path = restrict_path.clone();
+        let datagram_hub = datagram_hub.clone();
         let span = span!(Level::INFO, "tunnel", peer = client_addr.to_string());
         server.executor.clone().spawn(
             async move {
@@ -202,6 +206,7 @@ async fn handle_session(
                     &session_path,
                     session_headers,
                     (send, recv),
+                    datagram_hub,
                 )
                 .await
                 {
@@ -224,6 +229,7 @@ async fn wt_server_connect(
     session_path: &str,
     session_headers: hyper::HeaderMap,
     (mut send, mut recv): (web_transport_quinn::SendStream, web_transport_quinn::RecvStream),
+    datagram_hub: Arc<DatagramHub>,
 ) -> anyhow::Result<()> {
     // The client announces the destination for this stream before anything else, since the
     // session-level CONNECT is shared and cannot carry it.
@@ -275,7 +281,24 @@ async fn wt_server_connect(
     }
 
     let (close_tx, close_rx) = oneshot::channel::<()>();
-    if matches!(
+    if let LocalProtocol::Udp {
+        transport: UdpTransport::Datagram,
+        timeout,
+    } = remote_addr.protocol
+    {
+        let id = u64::from(send.quic_id());
+        let (read, mut write) = datagram_hub.register(id, recv, send, session, timeout)?;
+        write
+            .acknowledge()
+            .await
+            .context("cannot acknowledge UDP Datagram association")?;
+        server
+            .executor
+            .spawn(transport::io::propagate_remote_to_local(local_tx, read, close_rx).instrument(Span::current()));
+        server.executor.spawn(
+            transport::io::propagate_local_to_remote(local_rx, write, close_tx, None).instrument(Span::current()),
+        );
+    } else if matches!(
         remote_addr.protocol,
         LocalProtocol::Udp { .. } | LocalProtocol::TProxyUdp { .. }
     ) {

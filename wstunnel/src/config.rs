@@ -19,6 +19,7 @@ pub struct ClientCreationRequest {
     ///
     /// 'udp://1212:1.1.1.1:53'          =>       listen locally on udp on port 1212 and forward to cloudflare dns 1.1.1.1 on port 53
     /// 'udp://1212:1.1.1.1:53?timeout_sec=10'    timeout_sec on udp force close the tunnel after 10sec. Set it to 0 to disable the timeout [default: 30]
+    /// 'udp://1212:1.1.1.1:53?transport=datagram' use unreliable QUIC Datagrams (requires wts:// and an updated server). Default: stream.
     ///
     /// 'socks5://[::1]:1212'            =>       listen locally with socks5 on port 1212 and forward dynamically requested tunnel
     /// 'socks5://[::1]:1212?login=admin&password=admin' => listen locally with socks5 on port 1212 and only accept connection with login=admin and password=admin
@@ -433,8 +434,8 @@ pub struct LocalToRemote {
 #[cfg(feature = "clap")]
 mod parsers {
     use super::LocalToRemote;
-    use crate::tunnel::LocalProtocol;
     use crate::tunnel::transport::TransportScheme;
+    use crate::tunnel::{LocalProtocol, UdpTransport};
     use base64::Engine;
     use hyper::http::{HeaderName, HeaderValue};
     use std::cmp::max;
@@ -583,6 +584,16 @@ mod parsers {
                 Ok(LocalToRemote {
                     local_protocol: LocalProtocol::Udp {
                         timeout: get_timeout(&options),
+                        transport: match options.get("transport").map(String::as_str) {
+                            None | Some("stream") => UdpTransport::Stream,
+                            Some("datagram") => UdpTransport::Datagram,
+                            Some(value) => {
+                                return Err(Error::new(
+                                    ErrorKind::InvalidInput,
+                                    format!("invalid UDP transport '{value}': expected stream or datagram"),
+                                ));
+                            }
+                        },
                     },
                     local: local_bind,
                     remote: (dest_host, dest_port),
@@ -675,7 +686,19 @@ mod parsers {
         let proto = parse_tunnel_arg(arg)?;
         let local_protocol = match proto.local_protocol {
             LocalProtocol::Tcp { .. } => LocalProtocol::ReverseTcp {},
-            LocalProtocol::Udp { timeout } => LocalProtocol::ReverseUdp { timeout },
+            LocalProtocol::Udp {
+                timeout,
+                transport: UdpTransport::Stream,
+            } => LocalProtocol::ReverseUdp { timeout },
+            LocalProtocol::Udp {
+                transport: UdpTransport::Datagram,
+                ..
+            } => {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "Datagram transport is supported only for forward UDP tunnels",
+                ));
+            }
             LocalProtocol::Socks5 { timeout, credentials } => LocalProtocol::ReverseSocks5 { timeout, credentials },
             LocalProtocol::HttpProxy {
                 timeout,
@@ -770,13 +793,34 @@ mod parsers {
     #[cfg(test)]
     mod test {
         use super::{LocalToRemote, parse_local_bind, parse_tunnel_arg, parse_tunnel_dest};
-        use crate::tunnel::LocalProtocol;
+        use crate::tunnel::{LocalProtocol, UdpTransport};
         use collection_macros::btreemap;
         use std::collections::BTreeMap;
         use std::io;
         use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
         use test_case::test_case;
         use url::Host;
+
+        #[test]
+        fn udp_transport_is_opt_in_and_validated() {
+            for option in ["", "?transport=stream"] {
+                let tunnel = parse_tunnel_arg(&format!("udp://127.0.0.1:1234:127.0.0.1:4321{option}")).unwrap();
+                assert!(matches!(
+                    tunnel.local_protocol,
+                    LocalProtocol::Udp {
+                        transport: UdpTransport::Stream,
+                        ..
+                    }
+                ));
+            }
+            let arg = "udp://127.0.0.1:1234:127.0.0.1:4321?transport=datagram&timeout_sec=2";
+            let tunnel = parse_tunnel_arg(arg).unwrap();
+            assert!(
+                matches!(tunnel.local_protocol, LocalProtocol::Udp { transport: UdpTransport::Datagram, timeout: Some(timeout) } if timeout.as_secs() == 2)
+            );
+            assert!(parse_tunnel_arg("udp://1234:localhost:4321?transport=invalid").is_err());
+            assert!(super::parse_reverse_tunnel_arg(arg).is_err());
+        }
 
         #[test_case("localhost:443" => (Host::Domain("localhost".to_string()), 443, BTreeMap::new()) ; "with domain")]
         #[test_case("localhost:443?timeout_sec=0" => (Host::Domain("localhost".to_string()), 443, btreemap! { "timeout_sec".to_string() => "0".to_string() } ) ; "with domain and options")]
@@ -810,14 +854,14 @@ mod parsers {
         ; "with no local bind")]
         #[test_case("udp://[::1]:443:toto.com:4443?timeout_sec=30" =>
             LocalToRemote {
-                local_protocol: LocalProtocol::Udp { timeout: Some(std::time::Duration::from_secs(30)) },
+                local_protocol: LocalProtocol::Udp { timeout: Some(std::time::Duration::from_secs(30)), transport: UdpTransport::Stream },
                 local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0)),
                 remote: (Host::Domain("toto.com".to_string()), 4443),
             }
         ; "with fully defined tunnel")]
         #[test_case("udp://[::1]:443:[::1]:4443?timeout_sec=30" =>
             LocalToRemote {
-                local_protocol: LocalProtocol::Udp { timeout: Some(std::time::Duration::from_secs(30)) },
+                local_protocol: LocalProtocol::Udp { timeout: Some(std::time::Duration::from_secs(30)), transport: UdpTransport::Stream },
                 local: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 443, 0, 0)),
                 remote: (Host::Ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 4443),
             }

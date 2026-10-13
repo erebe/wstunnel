@@ -14,12 +14,15 @@ use tokio::sync::Notify;
 use web_transport_quinn::{RecvStream, SendStream, Session};
 
 mod client;
+pub(crate) mod datagram;
 mod endpoint;
 mod udp;
 pub mod utils;
 
 pub use client::connect;
+pub(crate) use client::connect_datagram;
 pub(crate) use client::mk_connect_request;
+pub use datagram::{DatagramRead, DatagramWrite};
 pub use endpoint::WebTransportEndpoint;
 pub use udp::{WebTransportUdpRead, WebTransportUdpWrite};
 pub(crate) use utils::{bind_udp_socket, mk_transport_config};

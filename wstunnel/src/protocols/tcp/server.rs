@@ -249,9 +249,7 @@ mod tests {
         }
 
         fn ready_conditions(&self) -> Vec<WaitFor> {
-            vec![WaitFor::Duration {
-                length: Duration::from_secs(5),
-            }]
+            Vec::new()
         }
 
         fn cmd(&self) -> impl IntoIterator<Item = impl Into<Cow<'_, str>>> {
@@ -279,6 +277,19 @@ mod tests {
             "host" => 8080,
             _ => mitm_proxy.get_host_port_ipv4(8080).await.unwrap(),
         };
+
+        // Container startup does not mean mitmdump has bound its socket yet.
+        // Poll the same endpoint used below instead of assuming a fixed delay.
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if TcpStream::connect(("127.0.0.1", proxy_port)).await.is_ok() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("mitmproxy did not begin listening within 30 seconds");
 
         // bind to a dynamic port - avoid conflicts
         let server = TcpListener::bind((host, 0)).await.unwrap();

@@ -33,7 +33,7 @@ pub(super) async fn ws_server_upgrade(
         .await
     {
         Ok(ret) => ret,
-        Err(err) => return err,
+        Err(err) => return *err,
     };
 
     let (response, fut) = match fastwebsockets::upgrade::upgrade(&mut req) {

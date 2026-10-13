@@ -1,6 +1,6 @@
 use crate::protocols::udp;
 use crate::protocols::udp::{UdpStream, UdpStreamWriter};
-use crate::tunnel::{LocalProtocol, RemoteAddr};
+use crate::tunnel::{LocalProtocol, RemoteAddr, UdpTransport};
 use anyhow::{Context, anyhow};
 use std::io;
 use std::net::SocketAddr;
@@ -14,6 +14,7 @@ pub struct UdpDownstreamListener {
     listener: Pin<Box<dyn Stream<Item = io::Result<UdpStream>> + Send>>,
     dest: (Host, u16),
     timeout: Option<Duration>,
+    transport: UdpTransport,
 }
 
 impl UdpDownstreamListener {
@@ -30,7 +31,13 @@ impl UdpDownstreamListener {
             listener: Box::pin(listener),
             dest,
             timeout,
+            transport: UdpTransport::Stream,
         })
+    }
+
+    pub fn with_transport(mut self, transport: UdpTransport) -> Self {
+        self.transport = transport;
+        self
     }
 }
 
@@ -41,13 +48,19 @@ impl Stream for UdpDownstreamListener {
         let this = unsafe { self.get_unchecked_mut() };
         let ret = ready!(unsafe { Pin::new_unchecked(&mut this.listener) }.poll_next(cx));
         let ret = match ret {
-            Some(Ok(stream)) => {
+            Some(Ok(mut stream)) => {
+                if this.transport == UdpTransport::Datagram {
+                    stream.disable_inbound_watchdog();
+                }
                 let (host, port) = this.dest.clone();
                 let stream_writer = stream.writer();
                 Some(anyhow::Ok((
                     (stream, stream_writer),
                     RemoteAddr {
-                        protocol: LocalProtocol::Udp { timeout: this.timeout },
+                        protocol: LocalProtocol::Udp {
+                            timeout: this.timeout,
+                            transport: this.transport,
+                        },
                         host,
                         port,
                     },

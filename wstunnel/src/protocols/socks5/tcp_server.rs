@@ -74,6 +74,7 @@ impl Socks5Stream {
             Self::Tcp { .. } => LocalProtocol::Tcp { proxy_protocol: false }, // TODO: Implement proxy protocol
             Self::Udp(s) => LocalProtocol::Udp {
                 timeout: s.0.watchdog_deadline.as_ref().map(|x| x.period()),
+                transport: Default::default(),
             },
         }
     }

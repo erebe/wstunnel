@@ -91,6 +91,19 @@ pub async fn create_client(
     .expect("cannot create dns resolver");
 
     let transport_scheme = TransportScheme::from_str(args.remote_addr.scheme()).expect("invalid scheme in server url");
+    if !transport_scheme.is_webtransport()
+        && args.local_to_remote.iter().any(|tunnel| {
+            matches!(
+                tunnel.local_protocol,
+                LocalProtocol::Udp {
+                    transport: crate::tunnel::UdpTransport::Datagram,
+                    ..
+                }
+            )
+        })
+    {
+        return Err(anyhow!("UDP transport=datagram requires a wts:// server"));
+    }
     if transport_scheme.is_webtransport() {
         // QUIC runs over UDP, so an HTTP CONNECT proxy cannot carry it.
         if http_proxy.is_some() {
@@ -432,8 +445,10 @@ async fn create_client_tunnels(
             LocalProtocol::TProxyTcp | LocalProtocol::TProxyUdp { .. } => {
                 panic!("Transparent proxy is not available for non Linux platform")
             }
-            LocalProtocol::Udp { timeout } => {
-                let server = UdpDownstreamListener::new(tunnel.local, tunnel.remote.clone(), *timeout).await?;
+            LocalProtocol::Udp { timeout, transport } => {
+                let server = UdpDownstreamListener::new(tunnel.local, tunnel.remote.clone(), *timeout)
+                    .await?
+                    .with_transport(*transport);
                 spawn_tunnel! {
                     if let Err(err) = client.run_tunnel(server).await {
                         error!("{:?}", err);

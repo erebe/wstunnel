@@ -29,7 +29,7 @@ pub(super) async fn http_server_upgrade(
         .await
     {
         Ok(ret) => ret,
-        Err(err) => return err,
+        Err(err) => return *err,
     };
 
     let req_content_type = req.headers_mut().remove(CONTENT_TYPE);

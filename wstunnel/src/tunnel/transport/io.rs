@@ -1,7 +1,7 @@
 use crate::tunnel::transport::http2::{Http2TransportRead, Http2TransportWrite};
 use crate::tunnel::transport::websocket::{WebsocketTransportRead, WebsocketTransportWrite};
 use crate::tunnel::transport::webtransport::{
-    WebTransportRead, WebTransportUdpRead, WebTransportUdpWrite, WebTransportWrite,
+    DatagramRead, DatagramWrite, WebTransportRead, WebTransportUdpRead, WebTransportUdpWrite, WebTransportWrite,
 };
 use bytes::{BufMut, BytesMut};
 use futures_util::{FutureExt, pin_mut};
@@ -20,6 +20,9 @@ use tracing::{error, info, warn};
 pub(super) static MAX_PACKET_LENGTH: usize = 64 * 1024;
 
 pub trait TransportWrite: Send + 'static {
+    fn allows_empty_packets(&self) -> bool {
+        false
+    }
     fn buf_mut(&mut self) -> &mut BytesMut;
     fn write(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
     fn ping(&mut self) -> impl Future<Output = Result<(), std::io::Error>> + Send;
@@ -42,6 +45,7 @@ pub enum TransportReader {
     // variants, and would otherwise inflate the enum for every tunnel.
     WebTransport(Box<WebTransportRead>),
     WebTransportUdp(Box<WebTransportUdpRead>),
+    Datagram(Box<DatagramRead>),
 }
 
 impl TransportRead for TransportReader {
@@ -51,6 +55,7 @@ impl TransportRead for TransportReader {
             Self::Http2(s) => s.copy(writer).await,
             Self::WebTransport(s) => s.copy(writer).await,
             Self::WebTransportUdp(s) => s.copy(writer).await,
+            Self::Datagram(s) => s.copy(writer).await,
         }
     }
 }
@@ -61,15 +66,20 @@ pub enum TransportWriter {
     // Boxed for the same reason as `TunnelReader::WebTransport`.
     WebTransport(Box<WebTransportWrite>),
     WebTransportUdp(Box<WebTransportUdpWrite>),
+    Datagram(Box<DatagramWrite>),
 }
 
 impl TransportWrite for TransportWriter {
+    fn allows_empty_packets(&self) -> bool {
+        matches!(self, Self::Datagram(_))
+    }
     fn buf_mut(&mut self) -> &mut BytesMut {
         match self {
             Self::Websocket(s) => s.buf_mut(),
             Self::Http2(s) => s.buf_mut(),
             Self::WebTransport(s) => s.buf_mut(),
             Self::WebTransportUdp(s) => s.buf_mut(),
+            Self::Datagram(s) => s.buf_mut(),
         }
     }
 
@@ -79,6 +89,7 @@ impl TransportWrite for TransportWriter {
             Self::Http2(s) => s.write().await,
             Self::WebTransport(s) => s.write().await,
             Self::WebTransportUdp(s) => s.write().await,
+            Self::Datagram(s) => s.write().await,
         }
     }
 
@@ -88,6 +99,7 @@ impl TransportWrite for TransportWriter {
             Self::Http2(s) => s.ping().await,
             Self::WebTransport(s) => s.ping().await,
             Self::WebTransportUdp(s) => s.ping().await,
+            Self::Datagram(s) => s.ping().await,
         }
     }
 
@@ -97,6 +109,7 @@ impl TransportWrite for TransportWriter {
             Self::Http2(s) => s.close().await,
             Self::WebTransport(s) => s.close().await,
             Self::WebTransportUdp(s) => s.close().await,
+            Self::Datagram(s) => s.close().await,
         }
     }
 
@@ -106,6 +119,7 @@ impl TransportWrite for TransportWriter {
             Self::Http2(s) => s.pending_operations_notify(),
             Self::WebTransport(s) => s.pending_operations_notify(),
             Self::WebTransportUdp(s) => s.pending_operations_notify(),
+            Self::Datagram(s) => s.pending_operations_notify(),
         }
     }
 
@@ -115,6 +129,7 @@ impl TransportWrite for TransportWriter {
             Self::Http2(s) => s.handle_pending_operations().await,
             Self::WebTransport(s) => s.handle_pending_operations().await,
             Self::WebTransportUdp(s) => s.handle_pending_operations().await,
+            Self::Datagram(s) => s.handle_pending_operations().await,
         }
     }
 }
@@ -177,7 +192,7 @@ pub async fn propagate_local_to_remote(
         };
 
         let _read_len = match read_len {
-            Ok(0) => break,
+            Ok(0) if !ws_tx.allows_empty_packets() => break,
             Ok(read_len) => read_len,
             Err(err) => {
                 warn!("error while reading incoming bytes from local tx tunnel: {}", err);
@@ -217,6 +232,9 @@ pub async fn propagate_remote_to_local(
 
         if let Err(err) = msg {
             match err.kind() {
+                ErrorKind::TimedOut if super::webtransport::datagram::is_datagram_idle_timeout(&err) => {
+                    debug!("UDP Datagram association closed after idle timeout");
+                }
                 ErrorKind::NotConnected => debug!("Connection closed frame received"),
                 ErrorKind::BrokenPipe => debug!("Remote side closed connection"),
                 ErrorKind::UnexpectedEof => debug!("Remote side closed connection {err}"),
