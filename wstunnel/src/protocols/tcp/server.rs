@@ -12,7 +12,7 @@ use crate::protocols::dns::DnsResolver;
 use crate::somark::SoMark;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpSocket, TcpStream};
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::time::{sleep, timeout};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::log::info;
@@ -208,10 +208,29 @@ pub async fn connect_with_http_proxy(
     Ok(socket)
 }
 
+/// Size of the listen queue for incoming connections.
+/// The OS default (128 on Linux) is too small for a reverse tunnel: a burst of visitors fills it
+/// faster than connections are handed over to the client, and the kernel then silently drops SYNs.
+/// Clients only notice that after seconds of SYN retransmission, which looks like a hang.
+const LISTEN_BACKLOG: u32 = 1024;
+
 #[cfg_attr(not(target_os = "linux"), expect(unused_variables))]
 pub async fn run_server(bind: SocketAddr, ip_transparent: bool) -> Result<TcpListenerStream, anyhow::Error> {
-    let listener = TcpListener::bind(bind)
-        .await
+    let socket = if bind.is_ipv4() {
+        TcpSocket::new_v4()
+    } else {
+        TcpSocket::new_v6()
+    }
+    .with_context(|| format!("Cannot create TCP socket {bind:?}"))?;
+    // std::net::TcpListener::bind sets it too, so this keeps the previous behaviour
+    socket
+        .set_reuseaddr(true)
+        .with_context(|| format!("Cannot set SO_REUSEADDR on {bind:?}"))?;
+    socket
+        .bind(bind)
+        .with_context(|| format!("Cannot bind TCP server {bind:?}"))?;
+    let listener = socket
+        .listen(LISTEN_BACKLOG)
         .with_context(|| format!("Cannot create TCP server {bind:?}"))?;
 
     info!("Starting TCP server listening cnx on {}", listener.local_addr().unwrap_or(bind));
@@ -235,6 +254,7 @@ mod tests {
     use testcontainers::core::WaitFor;
     use testcontainers::runners::AsyncRunner;
     use testcontainers::{ContainerAsync, Image, ImageExt};
+    use tokio::net::TcpListener;
 
     #[derive(Debug, Clone, Default)]
     pub struct MitmProxy;
