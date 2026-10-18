@@ -237,6 +237,12 @@ impl<E: TokioExecutorRef> Client<E> {
                 }
                 Err(_) => {
                     // Timeout waiting for new reverse tunnel, retrying immediately
+                    event!(
+                        parent: &span,
+                        Level::DEBUG,
+                        "No response for the reverse tunnel request after {:?}, retrying",
+                        REVERSE_TUNNEL_REPLY_TIMEOUT
+                    );
                     continue;
                 }
             };
