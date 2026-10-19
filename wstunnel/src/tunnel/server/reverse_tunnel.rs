@@ -159,10 +159,21 @@ impl<T: DownstreamListener> ReverseTunnelServer<T> {
             cnx_awaiter
         };
 
-        let mut cnx = cnx
-            .recv()
-            .await
-            .map_err(|_| anyhow!("listening reverse server stopped"))?;
+        // Waiting for a visitor cannot last forever: nothing here notices that the client went
+        // away, because the request is still pending and hyper keeps this future alive instead of
+        // cancelling it. A client that died while waiting would stay in the pool of awaiters and
+        // take incoming connections away from the live ones, which then fail with a closed
+        // session. Giving up after the idle timeout drops that awaiter; a client that is still
+        // alive simply re-sends its reverse tunnel request.
+        let mut cnx = match time::timeout(idle_timeout, cnx.recv()).await {
+            Ok(cnx) => cnx.map_err(|_| anyhow!("listening reverse server stopped"))?,
+            Err(_) => {
+                return Err(anyhow!(
+                    "no connection to forward after {}s, client should ask again",
+                    idle_timeout.as_secs()
+                ));
+            }
+        };
         let _ = cnx.0.1.on_tunnel_ready(Ok(())).await;
         Ok(cnx)
     }
