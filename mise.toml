@@ -25,7 +25,7 @@ run = """
 [tasks.docker-release]
 description = "Build and push wstunnel docker image"
 usage = '''
-arg "image_tag" "tag of the image"
+arg "<image_tag>" help="tag of the image"
 '''
 run = """
  docker buildx create  --name builder  --driver=kubernetes --platform=linux/arm64   '--driver-opt="nodeselector=kubernetes.io/arch=arm64","tolerations=key=kubernetes.io/hostname,value=server","requests.cpu=16","requests.memory=16G"' --node=build-arm64
@@ -35,7 +35,7 @@ run = """
    --platform linux/arm/v7,linux/arm64,linux/amd64 \
    --cache-from type=registry,ref=ghcr.io/erebe/wstunnel:cache \
    --cache-to type=registry,mode=max,image-manifest=true,oci-mediatypes=true,ref=ghcr.io/erebe/wstunnel:cache \
-   -t ghcr.io/erebe/wstunnel:$usage_image_tag \
+   -t ghcr.io/erebe/wstunnel:{{ usage.image_tag | quote }} \
    -t ghcr.io/erebe/wstunnel:latest \
    --push .
  docker buildx rm builder
@@ -44,26 +44,31 @@ run = """
 [tasks.publish-release]
 description = "Push a new release of wstunnel"
 usage = '''
-arg "version" "version of wstunnel to release"
-flag "-f --force" default=""
+arg "<version>" help="version of wstunnel to release"
+flag "-f --force"
 '''
-run = """
-if [ '$usage_force' = 'true' ]; then
-  export FORCE="-f"
-fi
+run = '''
+version={{ usage.version | quote }}
+FORCE=""
+{% if usage.force %}
+FORCE="-f"
+{% endif %}
 
-sed -i 's/^version = .*/version = "$usage_version"/g' wstunnel-cli/Cargo.toml wstunnel/Cargo.toml
+sed -i "s/^version = .*/version = \"$version\"/g" wstunnel-cli/Cargo.toml wstunnel/Cargo.toml
 cargo fmt --all -- --check --color=always || (echo "Use cargo fmt to format your code"; exit 1)
 #cargo clippy --all -- -D warnings || (echo "Solve your clippy warnings to succeed"; exit 1)
 
 git add wstunnel/Cargo.* wstunnel-cli/Cargo.* Cargo.*
-git commit -m 'Bump version v'$usage_version
-git tag $FORCE v$usage_version -m 'version v'$usage_version
+git commit -m "Bump version v$version"
+git tag $FORCE "v$version" -m "version v$version"
 git push $FORCE
-git push $FORCE origin v$usage_version
-"""
+git push $FORCE origin "v$version"
+'''
 
 [tasks.bench]
 description = "End-to-end benchmark with iperf3 (throughput, cpu, memory). See docs/BENCHMARKING.md"
 usage = 'flag "--args <args>" help="passed through to scripts/bench.sh"'
-run = "./scripts/bench.sh $usage_args"
+run = '''
+args={{ usage.args | default(value="") | quote }}
+./scripts/bench.sh $args
+'''
