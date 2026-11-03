@@ -451,10 +451,10 @@ mod parsers {
     pub fn parse_duration_sec(arg: &str) -> Result<Duration, io::Error> {
         use std::io::Error;
 
-        let (arg, multiplier) = match &arg[max(0, arg.len() - 1)..] {
-            "s" => (&arg[..arg.len() - 1], 1),
-            "m" => (&arg[..arg.len() - 1], 60),
-            "h" => (&arg[..arg.len() - 1], 3600),
+        let (arg, multiplier) = match arg.as_bytes().last() {
+            Some(b's') => (&arg[..arg.len() - 1], 1),
+            Some(b'm') => (&arg[..arg.len() - 1], 60),
+            Some(b'h') => (&arg[..arg.len() - 1], 3600),
             _ => (arg, 1),
         };
 
@@ -465,7 +465,14 @@ mod parsers {
             ));
         };
 
-        Ok(Duration::from_secs(secs * multiplier))
+        let Some(secs) = secs.checked_mul(multiplier) else {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("duration of {secs} is too large to fit in seconds"),
+            ));
+        };
+
+        Ok(Duration::from_secs(secs))
     }
 
     pub fn parse_local_bind(arg: &str) -> Result<(SocketAddr, &str), io::Error> {
@@ -720,6 +727,16 @@ mod parsers {
             ));
         };
 
+        let key = match HeaderName::from_str(key) {
+            Ok(key) => key,
+            Err(err) => {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("cannot parse http header name from {key} due to {err:?}"),
+                ));
+            }
+        };
+
         let value = match HeaderValue::from_str(value.trim()) {
             Ok(value) => value,
             Err(err) => {
@@ -730,7 +747,7 @@ mod parsers {
             }
         };
 
-        Ok((HeaderName::from_str(key).unwrap(), value))
+        Ok((key, value))
     }
 
     pub fn parse_http_credentials(arg: &str) -> Result<HeaderValue, io::Error> {
@@ -769,12 +786,16 @@ mod parsers {
 
     #[cfg(test)]
     mod test {
-        use super::{LocalToRemote, parse_local_bind, parse_tunnel_arg, parse_tunnel_dest};
+        use super::{
+            HeaderName, HeaderValue, LocalToRemote, parse_duration_sec, parse_http_headers, parse_local_bind,
+            parse_tunnel_arg, parse_tunnel_dest,
+        };
         use crate::tunnel::LocalProtocol;
         use collection_macros::btreemap;
         use std::collections::BTreeMap;
         use std::io;
         use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+        use std::time::Duration;
         use test_case::test_case;
         use url::Host;
 
@@ -824,6 +845,49 @@ mod parsers {
         ; "with full ipv6 tunnel")]
         fn test_parse_tunnel_arg(input: &str) -> LocalToRemote {
             parse_tunnel_arg(input).unwrap()
+        }
+
+        #[test]
+        fn test_parse_duration_sec() {
+            // The unit suffix keeps its current meaning, and a bare number is in seconds
+            assert_eq!(parse_duration_sec("45").unwrap(), Duration::from_secs(45));
+            assert_eq!(parse_duration_sec("0").unwrap(), Duration::from_secs(0));
+            assert_eq!(parse_duration_sec("30s").unwrap(), Duration::from_secs(30));
+            assert_eq!(parse_duration_sec("5m").unwrap(), Duration::from_secs(300));
+            assert_eq!(parse_duration_sec("2h").unwrap(), Duration::from_secs(7200));
+
+            // A unit with no number, an unknown unit and an uppercase unit are invalid values
+            assert!(parse_duration_sec("s").is_err());
+            assert!(parse_duration_sec("30S").is_err());
+            assert!(parse_duration_sec("30s ").is_err());
+
+            // Those must be reported as invalid values, not panic on the string indexing or on
+            // the multiplication
+            assert!(parse_duration_sec("").is_err());
+            assert!(parse_duration_sec("30é").is_err());
+            assert!(parse_duration_sec("é").is_err());
+            assert!(parse_duration_sec("18446744073709551615h").is_err());
+        }
+
+        #[test]
+        fn test_parse_http_headers() {
+            let (name, value) = parse_http_headers("Host: example.com").unwrap();
+            assert_eq!(name, HeaderName::from_static("host"));
+            assert_eq!(value, HeaderValue::from_static("example.com"));
+
+            // A header without a value is still accepted, the value is just empty
+            let (name, value) = parse_http_headers("X-Test:").unwrap();
+            assert_eq!(name, HeaderName::from_static("x-test"));
+            assert_eq!(value, HeaderValue::from_static(""));
+
+            // An invalid header name must be reported as an invalid value, not panic
+            assert!(parse_http_headers("foo bar: baz").is_err());
+            assert!(parse_http_headers(": baz").is_err());
+            assert!(parse_http_headers("X-Test@: baz").is_err());
+
+            // Same for an invalid header value, and for a header with no ':' at all
+            assert!(parse_http_headers("X-Test: bad\nvalue").is_err());
+            assert!(parse_http_headers("X-Test").is_err());
         }
     }
 }
