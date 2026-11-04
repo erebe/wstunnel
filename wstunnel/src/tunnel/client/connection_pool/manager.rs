@@ -144,7 +144,14 @@ impl ManageConnection for L4StreamManager {
             // so a peer that accepts the connection but never completes the
             // handshake is dropped instead of held.
             let tls_stream = match tokio::time::timeout(timeout, tls::connect(self, tcp_stream)).await {
-                Ok(res) => res?,
+                Ok(Ok(tls_stream)) => tls_stream,
+                Ok(Err(err)) => {
+                    // The connection pool retries failed connections and discards this error,
+                    // so without this log a rejected server certificate (or any other handshake
+                    // failure) would be completely silent on the client side.
+                    warn!("TLS handshake with the server failed: {err:?}");
+                    return Err(err);
+                }
                 Err(_) => {
                     warn!("Timed out after {timeout:?} doing the TLS handshake with the server");
                     return Err(anyhow!("Timed out doing the TLS handshake with the server"));

@@ -737,3 +737,106 @@ async fn test_socks5_tunnel_unreachable_target_replies_error(
     assert_ne!(rep, 0x00, "reply must report failure when the target is unreachable");
     assert_eq!(rep, 0x01, "expected GeneralFailure reply code");
 }
+
+/// Log records captured through the `log` facade (tracing events are bridged to it),
+/// so tests can assert on what was actually logged.
+static CAPTURED_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+struct CapturingLogger;
+
+impl log::Log for CapturingLogger {
+    fn enabled(&self, _metadata: &log::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if let Ok(mut logs) = CAPTURED_LOGS.lock() {
+            logs.push(format!("{} {}", record.level(), record.args()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
+static LOG_CAPTURE_INIT: std::sync::Once = std::sync::Once::new();
+
+fn init_log_capture() {
+    LOG_CAPTURE_INIT.call_once(|| {
+        let _ = log::set_logger(&CAPTURING_LOGGER);
+        log::set_max_level(log::LevelFilter::Trace);
+    });
+    CAPTURED_LOGS.lock().unwrap().clear();
+}
+
+/// Regression test for https://github.com/erebe/wstunnel/issues/562
+///
+/// With certificate verification enabled, a server presenting an untrusted (self-signed)
+/// certificate made the client fail without logging anything: the connection pool retries
+/// the connection and discards the handshake error. The rejection, with its reason, must
+/// be logged on the client side.
+#[rstest]
+#[timeout(Duration::from_secs(30))]
+#[tokio::test]
+#[serial]
+async fn test_tls_rejected_certificate_is_logged_on_client(
+    server_webtransport: Server,
+    no_restrictions: RestrictionsRules,
+    dns_resolver: DnsResolver,
+) {
+    use bb8::ManageConnection;
+
+    init_log_capture();
+
+    let server_port = server_webtransport.config.bind.port();
+    let server_h = tokio::spawn(server_webtransport.serve(no_restrictions));
+    defer! { server_h.abort(); };
+
+    // The server fixture serves TLS with the embedded self-signed certificate, which a
+    // verifying client must reject (unknown CA).
+    let tls_connector =
+        crate::protocols::tls::tls_connector(true, TransportScheme::Wss.alpn_protocols(), true, None, None, None)
+            .unwrap();
+    let tls = TlsClientConfig {
+        tls_sni_disabled: false,
+        tls_sni_override: None,
+        tls_verify_certificate: true,
+        tls_connector: Arc::new(parking_lot::RwLock::new(tls_connector)),
+        tls_certificate_path: None,
+        tls_key_path: None,
+    };
+    let client_config = ClientConfig {
+        remote_addr: TransportAddr::new(TransportScheme::Wss, Host::Ipv4(Ipv4Addr::LOCALHOST), server_port, Some(tls))
+            .unwrap(),
+        socket_so_mark: SoMark::new(None),
+        http_upgrade_path_prefix: "wstunnel".to_string(),
+        http_upgrade_credentials: None,
+        http_headers: HashMap::new(),
+        http_headers_file: None,
+        http_header_host: HeaderValue::from_str(&format!("127.0.0.1:{server_port}")).unwrap(),
+        timeout_connect: Duration::from_secs(10),
+        websocket_ping_frequency: Some(Duration::from_secs(10)),
+        websocket_mask_frame: false,
+        dns_resolver,
+        http_proxy: None,
+        webtransport: None,
+    };
+
+    let manager = crate::tunnel::client::connection_pool::L4StreamManager::new(Arc::new(client_config));
+    let err = match manager.connect().await {
+        Ok(_) => panic!("the client must reject the server's self-signed certificate"),
+        Err(err) => err,
+    };
+
+    assert!(
+        format!("{err:?}").contains("UnknownIssuer"),
+        "the handshake error should name the certificate rejection reason, got: {err:?}"
+    );
+
+    let logs = CAPTURED_LOGS.lock().unwrap().join("\n");
+    assert!(
+        logs.lines()
+            .any(|line| line.contains("TLS handshake") && line.contains("UnknownIssuer")),
+        "the certificate rejection should be logged on the client, captured logs:\n{logs}"
+    );
+}
