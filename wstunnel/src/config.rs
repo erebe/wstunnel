@@ -437,7 +437,6 @@ mod parsers {
     use crate::tunnel::transport::TransportScheme;
     use base64::Engine;
     use hyper::http::{HeaderName, HeaderValue};
-    use std::cmp::max;
     use std::collections::BTreeMap;
     use std::io;
     use std::io::ErrorKind;
