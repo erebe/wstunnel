@@ -450,24 +450,24 @@ mod parsers {
     pub fn parse_duration_sec(arg: &str) -> Result<Duration, io::Error> {
         use std::io::Error;
 
-        let (arg, multiplier) = match arg.as_bytes().last() {
+        let (digits, multiplier) = match arg.as_bytes().last() {
             Some(b's') => (&arg[..arg.len() - 1], 1),
             Some(b'm') => (&arg[..arg.len() - 1], 60),
             Some(b'h') => (&arg[..arg.len() - 1], 3600),
             _ => (arg, 1),
         };
 
-        let Ok(secs) = arg.parse::<u64>() else {
+        let Ok(secs) = digits.parse::<u64>() else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("cannot parse duration of seconds from {arg}"),
+                format!("cannot parse duration of seconds from {digits}"),
             ));
         };
 
         let Some(secs) = secs.checked_mul(multiplier) else {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("duration of {secs} is too large to fit in seconds"),
+                format!("duration of {arg} is too large to fit in seconds"),
             ));
         };
 
@@ -726,22 +726,22 @@ mod parsers {
             ));
         };
 
-        let key = match HeaderName::from_str(key) {
-            Ok(key) => key,
-            Err(err) => {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidInput,
-                    format!("cannot parse http header name from {key} due to {err:?}"),
-                ));
-            }
-        };
-
         let value = match HeaderValue::from_str(value.trim()) {
             Ok(value) => value,
             Err(err) => {
                 return Err(io::Error::new(
                     ErrorKind::InvalidInput,
                     format!("cannot parse http header value from {value} due to {err:?}"),
+                ));
+            }
+        };
+
+        let key = match HeaderName::from_str(key) {
+            Ok(key) => key,
+            Err(err) => {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("cannot parse http header name from {key} due to {err:?}"),
                 ));
             }
         };
@@ -847,46 +847,201 @@ mod parsers {
         }
 
         #[test]
-        fn test_parse_duration_sec() {
+        fn test_parse_duration_sec_accepts_all_units() {
             // The unit suffix keeps its current meaning, and a bare number is in seconds
             assert_eq!(parse_duration_sec("45").unwrap(), Duration::from_secs(45));
             assert_eq!(parse_duration_sec("0").unwrap(), Duration::from_secs(0));
             assert_eq!(parse_duration_sec("30s").unwrap(), Duration::from_secs(30));
             assert_eq!(parse_duration_sec("5m").unwrap(), Duration::from_secs(300));
             assert_eq!(parse_duration_sec("2h").unwrap(), Duration::from_secs(7200));
-
-            // A unit with no number, an unknown unit and an uppercase unit are invalid values
-            assert!(parse_duration_sec("s").is_err());
-            assert!(parse_duration_sec("30S").is_err());
-            assert!(parse_duration_sec("30s ").is_err());
-
-            // Those must be reported as invalid values, not panic on the string indexing or on
-            // the multiplication
-            assert!(parse_duration_sec("").is_err());
-            assert!(parse_duration_sec("30é").is_err());
-            assert!(parse_duration_sec("é").is_err());
-            assert!(parse_duration_sec("18446744073709551615h").is_err());
         }
 
         #[test]
-        fn test_parse_http_headers() {
+        fn test_parse_duration_sec_rejects_unknown_units() {
+            // A unit with no number, an unknown unit and an uppercase unit are invalid values
+            for arg in ["s", "30S", "30s ", "30ms", "1d"] {
+                let err = parse_duration_sec(arg).unwrap_err();
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{arg}");
+            }
+        }
+
+        #[test]
+        fn test_parse_duration_sec_does_not_panic_on_empty_or_unicode_input() {
+            // The last byte is matched instead of slicing, so a multi-byte character at the end
+            // of the argument, or right before the unit, goes through the invalid-value path.
+            for arg in ["", "é", "30é", "é30", "és", "30és"] {
+                let err = parse_duration_sec(arg).unwrap_err();
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{arg}");
+            }
+        }
+
+        #[test]
+        fn test_parse_duration_sec_accepts_the_largest_representable_values() {
+            assert_eq!(
+                parse_duration_sec("18446744073709551615").unwrap(),
+                Duration::from_secs(u64::MAX)
+            );
+            assert_eq!(
+                parse_duration_sec("18446744073709551615s").unwrap(),
+                Duration::from_secs(u64::MAX)
+            );
+
+            let max_minutes = u64::MAX / 60;
+            assert_eq!(
+                parse_duration_sec(&format!("{max_minutes}m")).unwrap(),
+                Duration::from_secs(max_minutes * 60)
+            );
+
+            let max_hours = u64::MAX / 3600;
+            assert_eq!(
+                parse_duration_sec(&format!("{max_hours}h")).unwrap(),
+                Duration::from_secs(max_hours * 3600)
+            );
+        }
+
+        #[test]
+        fn test_parse_duration_sec_rejects_values_above_the_representable_maximum() {
+            for arg in [
+                "18446744073709551616",
+                "18446744073709551616s",
+                "307445734561825861m",
+                "5124095576030432h",
+            ] {
+                let err = parse_duration_sec(arg).unwrap_err();
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{arg}");
+            }
+        }
+
+        #[test]
+        fn test_parse_duration_sec_distinguishes_parse_from_multiplication_overflow() {
+            let parse_err = parse_duration_sec("18446744073709551616m").unwrap_err();
+            assert_eq!(parse_err.kind(), io::ErrorKind::InvalidInput);
+            assert!(parse_err.to_string().contains("cannot parse"), "{parse_err}");
+
+            let mul_err = parse_duration_sec("5124095576030432h").unwrap_err();
+            assert_eq!(mul_err.kind(), io::ErrorKind::InvalidInput);
+            assert!(mul_err.to_string().contains("too large"), "{mul_err}");
+            assert!(mul_err.to_string().contains("5124095576030432h"), "{mul_err}");
+        }
+
+        #[test]
+        fn test_parse_http_headers_accepts_valid_input() {
             let (name, value) = parse_http_headers("Host: example.com").unwrap();
             assert_eq!(name, HeaderName::from_static("host"));
             assert_eq!(value, HeaderValue::from_static("example.com"));
 
-            // A header without a value is still accepted, the value is just empty
-            let (name, value) = parse_http_headers("X-Test:").unwrap();
-            assert_eq!(name, HeaderName::from_static("x-test"));
-            assert_eq!(value, HeaderValue::from_static(""));
+            // Names are normalized by HeaderName, values are not
+            let (name, value) = parse_http_headers("X-Custom-Header: Value").unwrap();
+            assert_eq!(name, HeaderName::from_static("x-custom-header"));
+            assert_eq!(value, HeaderValue::from_static("Value"));
 
-            // An invalid header name must be reported as an invalid value, not panic
-            assert!(parse_http_headers("foo bar: baz").is_err());
-            assert!(parse_http_headers(": baz").is_err());
-            assert!(parse_http_headers("X-Test@: baz").is_err());
+            // Only the first colon separates the pair, later colons belong to the value
+            let (_, value) = parse_http_headers("X-Test: a:b:c").unwrap();
+            assert_eq!(value, HeaderValue::from_static("a:b:c"));
+        }
 
-            // Same for an invalid header value, and for a header with no ':' at all
-            assert!(parse_http_headers("X-Test: bad\nvalue").is_err());
-            assert!(parse_http_headers("X-Test").is_err());
+        #[test]
+        fn test_parse_http_headers_accepts_an_empty_value() {
+            for arg in ["X-Test:", "X-Test:   "] {
+                let (name, value) = parse_http_headers(arg).unwrap();
+                assert_eq!(name, HeaderName::from_static("x-test"), "{arg}");
+                assert_eq!(value, HeaderValue::from_static(""), "{arg}");
+            }
+        }
+
+        #[test]
+        fn test_parse_http_headers_trims_surrounding_whitespace() {
+            // The value is trimmed before validation, so surrounding CR/LF and Unicode
+            // whitespace are removed rather than rejected
+            for arg in [
+                "X-Test: \r\nvalue\r\n",
+                "X-Test: \u{00A0}value\u{00A0}",
+                "X-Test:   value   ",
+            ] {
+                let (_, value) = parse_http_headers(arg).unwrap();
+                assert_eq!(value, HeaderValue::from_static("value"), "{arg}");
+            }
+        }
+
+        #[test]
+        fn test_parse_http_headers_rejects_invalid_names() {
+            for arg in ["foo bar: baz", ": baz", "X-Test@: baz", "X-Test : baz"] {
+                let err = parse_http_headers(arg).unwrap_err();
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{arg}");
+            }
+        }
+
+        #[test]
+        fn test_parse_http_headers_rejects_invalid_values() {
+            for arg in ["X-Test: bad\nvalue", "X-Test: bad\rvalue"] {
+                let err = parse_http_headers(arg).unwrap_err();
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{arg}");
+            }
+
+            let err = parse_http_headers("X-Test").unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        }
+
+        #[test]
+        fn test_parse_http_headers_keeps_value_error_precedence() {
+            // The value is validated before the name, as it was before the name stopped being
+            // unwrapped, so an input with both parts invalid still reports the value error
+            let err = parse_http_headers("foo bar: bad\nvalue").unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+            assert!(err.to_string().contains("header value"), "{err}");
+        }
+
+        #[test]
+        fn test_clap_reports_parser_rejections_as_value_validation_errors() {
+            use super::super::ClientCreationRequest;
+            use clap::Parser;
+            use clap::error::ErrorKind as ClapErrorKind;
+
+            #[derive(Debug, Parser)]
+            struct ClientArgs {
+                #[command(flatten)]
+                client: ClientCreationRequest,
+            }
+
+            let parsed = ClientArgs::try_parse_from([
+                "wstunnel",
+                "--connection-retry-max-backoff",
+                "2h",
+                "-H",
+                "X-Test: value",
+                "ws://localhost:8080",
+            ])
+            .unwrap();
+            assert_eq!(parsed.client.connection_retry_max_backoff, Duration::from_secs(7200));
+            assert_eq!(
+                parsed.client.http_headers,
+                vec![(HeaderName::from_static("x-test"), HeaderValue::from_static("value"))]
+            );
+
+            for args in [
+                [
+                    "wstunnel",
+                    "--connection-retry-max-backoff",
+                    "30é",
+                    "ws://localhost:8080",
+                ],
+                [
+                    "wstunnel",
+                    "--websocket-ping-frequency",
+                    "18446744073709551615h",
+                    "ws://localhost:8080",
+                ],
+                ["wstunnel", "-H", "foo bar: baz", "ws://localhost:8080"],
+                [
+                    "wstunnel",
+                    "--http-headers",
+                    "X-Test: bad\nvalue",
+                    "ws://localhost:8080",
+                ],
+            ] {
+                let err = ClientArgs::try_parse_from(args).unwrap_err();
+                assert_eq!(err.kind(), ClapErrorKind::ValueValidation, "{args:?}");
+            }
         }
     }
 }
